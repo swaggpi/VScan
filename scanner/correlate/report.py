@@ -126,16 +126,31 @@ def _severity_text(finding: Finding) -> str:
     return label
 
 
-def _reach_text(finding: Finding) -> str:
-    """Render the reachability cell for one finding."""
-    if not finding.reachable:
-        return "not reachable from a public entry point"
-    via = ", ".join(finding.reachable_entrypoints) or "a public entry point"
-    path = " -> ".join(finding.example_path)
-    text = f"REACHABLE via {via}"
-    if path:
-        text += f"  [{path}]"
-    return text
+def _reach_text(finding: Finding, verdict: str | None = None) -> str:
+    """Render the reachability cell for one finding.
+
+    ``verdict`` is the dependency's three-way reachability verdict
+    (``reachable`` / ``potentially_reachable`` / ``unreachable``) from
+    :class:`~scanner.reachability.RepoReachability.verdict_by_dep`. When given,
+    the not-reachable branch distinguishes an honest, fully-resolved
+    "unreachable" from a conservative "potentially reachable". When omitted the
+    original wording is preserved.
+    """
+    if finding.reachable:
+        via = ", ".join(finding.reachable_entrypoints) or "a public entry point"
+        path = " -> ".join(finding.example_path)
+        text = f"REACHABLE via {via}"
+        if path:
+            text += f"  [{path}]"
+        return text
+    if verdict == "potentially_reachable":
+        return (
+            "potentially reachable: no resolved path reaches it, but unresolved "
+            "call paths on the reachable frontier could (unknown call paths)"
+        )
+    if verdict == "unreachable":
+        return "not reachable from a public entry point (reachable call graph fully resolved)"
+    return "not reachable from a public entry point"
 
 
 def format_report(
@@ -185,6 +200,7 @@ def format_report(
 
     lines.append("Findings (highest priority first)")
     lines.append("-" * 72)
+    verdicts = reach.repo.verdict_by_dep
     for index, finding in enumerate(ranked, start=1):
         cves = ", ".join(finding.cve_ids) or finding.vuln_id
         kev_badge = "  [KEV: actively exploited]" if finding.kev else ""
@@ -199,7 +215,7 @@ def format_report(
             f"[{finding.ecosystem}] -- {cves}{kev_badge}"
         )
         lines.append(f"    severity: {_severity_text(finding)}   {epss_text}")
-        lines.append(f"    {_reach_text(finding)}")
+        lines.append(f"    {_reach_text(finding, verdicts.get(finding.dependency_id))}")
         if finding.fixed_versions:
             lines.append(f"    fixed in: {', '.join(finding.fixed_versions)}")
         if finding.summary:
@@ -218,4 +234,20 @@ def _reachability_block(reach: ReachabilityResult) -> list[str]:
             lines.append(f"  - {dep['name']} {dep['version']} [{dep['ecosystem']}]")
     else:
         lines.append("  (none)")
+
+    # Three-way verdict recap (additive). "unreachable" is only honest when the
+    # whole reachable region is fully resolved; otherwise non-reached deps are
+    # "potentially reachable" because an unresolved call could still reach them.
+    counts = reach.repo.verdict_counts
+    if counts:
+        lines.append("")
+        lines.append("Three-way verdict (per declared dependency):")
+        lines.append(f"  reachable:              {counts.get('reachable', 0)}")
+        lines.append(f"  potentially reachable:  {counts.get('potentially_reachable', 0)}")
+        lines.append(f"  unreachable:            {counts.get('unreachable', 0)}")
+        if not reach.repo.reachable_region_fully_resolved:
+            lines.append(
+                "  note: the reachable call graph contains unresolved call sites, so "
+                "non-reached deps are reported as potentially reachable, not unreachable."
+            )
     return lines

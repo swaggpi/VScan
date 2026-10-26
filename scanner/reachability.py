@@ -28,6 +28,38 @@ state plainly that reachability here is a *lower bound*: we under-approximate
 and never claim a dependency is definitely *not* reachable when unresolved calls
 exist on the reachable set.
 
+Three-way verdict (soundness)
+-----------------------------
+On top of the binary reachable/unreachable split we assign every declared
+dependency one of three *sound* verdicts -- the model every mature
+reachability-based SCA tool uses:
+
+* ``reachable`` -- a path of resolved ``route_to_handler``/``calls`` edges runs
+  from a public entry point to the dependency. (What we have always computed.)
+* ``unreachable`` -- the dependency is reached by no resolved path AND the
+  entire reachable code region (every function reachable from ANY entry point)
+  is *fully resolved*: not a single unresolved call sits anywhere on that
+  frontier. Only under that zero-unknowns condition can we honestly claim an
+  unknown edge could not possibly branch to it.
+* ``potentially_reachable`` -- the dependency is reached by no resolved path,
+  but at least one unresolved call exists on the reachable frontier. An edge we
+  could not resolve might lead to unseen code that reaches the dependency, so we
+  refuse to rule it out. This is the honest conservative answer.
+
+The precise ``unreachable`` rule, stated once: a non-reached dependency is
+``unreachable`` *if and only if* the sum of ``unresolved_call_count`` over every
+function reachable from any entry point equals zero. If even one reachable
+function carries an unresolved call, every non-reached dependency (including
+ones with no call site at all) is ``potentially_reachable``, never
+``unreachable``. The per-entry-point verdict applies the identical rule scoped
+to that single entry point's reachable set.
+
+This layer is strictly additive: ``reachable_deps``/``unreachable_deps`` keep
+their original meaning (``unreachable_deps`` is still exactly declared-minus-
+reachable, which the correlator reads), while the verdict is extra, richer
+information exposed as ``verdict_by_dep``/``verdict_counts`` on the repo roll-up
+and as a ``verdict`` field on each reached-dependency record.
+
 The result is JSON-serializable via :meth:`ReachabilityResult.to_dict`.
 """
 
@@ -43,6 +75,23 @@ from .graph import Edge, KnowledgeGraph
 # followed from a given node (routes first, then calls).
 _TRAVERSAL_KINDS: frozenset[str] = frozenset({"route_to_handler", "calls"})
 
+# The three sound verdicts (see the module docstring for the exact rule).
+REACHABLE: str = "reachable"
+POTENTIALLY_REACHABLE: str = "potentially_reachable"
+UNREACHABLE: str = "unreachable"
+
+
+def _classify(reached: bool, region_fully_resolved: bool) -> str:
+    """Apply the three-way rule for one (region, dependency) pair.
+
+    ``reached`` -- a resolved path reaches the dependency in this region.
+    ``region_fully_resolved`` -- the region has zero unresolved calls anywhere
+    on its frontier. ``unreachable`` is only ever returned under that condition.
+    """
+    if reached:
+        return REACHABLE
+    return UNREACHABLE if region_fully_resolved else POTENTIALLY_REACHABLE
+
 
 @dataclass
 class ReachedDependency:
@@ -55,6 +104,9 @@ class ReachedDependency:
     symbol: str | None  # the called symbol on the shortest-path edge
     symbols: list[str]  # every distinct symbol reaching this dep from the set
     example_path: list[str]  # node ids: entrypoint -> ... -> dependency
+    # A reached dependency is, by definition, ``reachable``; the field is
+    # carried explicitly so every dependency record speaks the verdict model.
+    verdict: str = REACHABLE
 
 
 @dataclass
@@ -68,6 +120,11 @@ class EntrypointReachability:
     reachable_function_count: int
     reachable_dependencies: list[ReachedDependency]
     unresolved_calls_encountered: int
+    # True iff this entry point's reachable region has zero unresolved calls, so
+    # an ``unreachable`` verdict for a non-reached dep is honest for this route.
+    fully_resolved: bool = True
+    # Per-(entry point, dependency) verdict across all declared dependencies.
+    verdict_by_dep: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -81,6 +138,16 @@ class RepoReachability:
     reachable_deps: list[dict[str, Any]] = field(default_factory=list)
     unreachable_deps: list[dict[str, Any]] = field(default_factory=list)
     deps_without_call_site: list[dict[str, Any]] = field(default_factory=list)
+
+    # Three-way verdict layer (strictly additive; the lists above are unchanged).
+    # True iff the whole reachable region across ALL entry points is fully
+    # resolved -- the condition under which a non-reached dep may be
+    # ``unreachable`` rather than ``potentially_reachable``.
+    reachable_region_fully_resolved: bool = True
+    # dep id -> "reachable" | "potentially_reachable" | "unreachable".
+    verdict_by_dep: dict[str, str] = field(default_factory=dict)
+    # verdict label -> number of declared deps with that verdict.
+    verdict_counts: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -133,9 +200,17 @@ def _unresolved_count(graph: KnowledgeGraph, fn_id: str) -> int:
 
 
 def _reachability_for_entrypoint(
-    graph: KnowledgeGraph, ep_id: str, adjacency: dict[str, list[Edge]]
-) -> EntrypointReachability:
-    """Compute reachability from a single entrypoint via BFS over existing edges."""
+    graph: KnowledgeGraph,
+    ep_id: str,
+    adjacency: dict[str, list[Edge]],
+    declared_dep_ids: set[str],
+) -> tuple[EntrypointReachability, set[str]]:
+    """Compute reachability from a single entrypoint via BFS over existing edges.
+
+    Returns the :class:`EntrypointReachability` plus the set of function node ids
+    reachable from this entry point, so the caller can union reachable regions
+    across entry points for the repo-wide verdict.
+    """
     ep = graph.get_node(ep_id)
     assert ep is not None
 
@@ -182,7 +257,17 @@ def _reachability_for_entrypoint(
 
     unresolved_total = sum(_unresolved_count(graph, fn) for fn in reachable_functions)
 
-    return EntrypointReachability(
+    # Per-(entry point, dependency) verdict. "unreachable" only when THIS entry
+    # point's reachable region carries no unresolved call; otherwise a non-reached
+    # dependency is "potentially_reachable".
+    fully_resolved = unresolved_total == 0
+    reached_ids = {dep.id for dep in reachable_dependencies}
+    verdict_by_dep = {
+        dep_id: _classify(dep_id in reached_ids, fully_resolved)
+        for dep_id in declared_dep_ids
+    }
+
+    result = EntrypointReachability(
         id=ep_id,
         method=str(ep.attrs.get("method", "?")),
         path=str(ep.attrs.get("path", "?")),
@@ -190,7 +275,10 @@ def _reachability_for_entrypoint(
         reachable_function_count=len(reachable_functions),
         reachable_dependencies=reachable_dependencies,
         unresolved_calls_encountered=unresolved_total,
+        fully_resolved=fully_resolved,
+        verdict_by_dep=verdict_by_dep,
     )
+    return result, reachable_functions
 
 
 def _reached_dependency(
@@ -242,11 +330,16 @@ def compute_reachability(graph: KnowledgeGraph) -> ReachabilityResult:
     module docstring for the traversal and honesty model.
     """
     adjacency = _build_adjacency(graph)
+    declared_dep_ids = {n.id for n in graph.nodes_of_kind("dependency")}
 
-    entrypoints = [
-        _reachability_for_entrypoint(graph, ep.id, adjacency)
-        for ep in sorted(graph.nodes_of_kind("entrypoint"), key=lambda n: n.id)
-    ]
+    entrypoints: list[EntrypointReachability] = []
+    reachable_region: set[str] = set()  # union of functions reachable from ANY ep
+    for ep in sorted(graph.nodes_of_kind("entrypoint"), key=lambda n: n.id):
+        ep_result, ep_functions = _reachability_for_entrypoint(
+            graph, ep.id, adjacency, declared_dep_ids
+        )
+        entrypoints.append(ep_result)
+        reachable_region |= ep_functions
 
     # Repo-wide: deps reachable from ANY entrypoint vs. declared-but-unreached.
     reachable_any: set[str] = set()
@@ -254,7 +347,6 @@ def compute_reachability(graph: KnowledgeGraph) -> ReachabilityResult:
         for dep in ep_result.reachable_dependencies:
             reachable_any.add(dep.id)
 
-    declared_dep_ids = {n.id for n in graph.nodes_of_kind("dependency")}
     unreachable = declared_dep_ids - reachable_any
 
     # Deps with no incoming ``calls`` edge at all (declared/imported but with no
@@ -272,10 +364,31 @@ def compute_reachability(graph: KnowledgeGraph) -> ReachabilityResult:
         out.sort(key=lambda d: (str(d["ecosystem"]), str(d["name"])))
         return out
 
+    # Three-way verdict (additive). The whole reachable region is "fully
+    # resolved" only when no function reachable from any entry point carries an
+    # unresolved call; that is the exact condition for an honest "unreachable".
+    region_fully_resolved = (
+        sum(_unresolved_count(graph, fn) for fn in reachable_region) == 0
+    )
+    verdict_by_dep = {
+        dep_id: _classify(dep_id in reachable_any, region_fully_resolved)
+        for dep_id in declared_dep_ids
+    }
+    verdict_counts = {
+        REACHABLE: 0,
+        POTENTIALLY_REACHABLE: 0,
+        UNREACHABLE: 0,
+    }
+    for verdict in verdict_by_dep.values():
+        verdict_counts[verdict] += 1
+
     repo = RepoReachability(
         reachable_deps=_summaries(reachable_any),
         unreachable_deps=_summaries(unreachable),
         deps_without_call_site=_summaries(without_call_site),
+        reachable_region_fully_resolved=region_fully_resolved,
+        verdict_by_dep=verdict_by_dep,
+        verdict_counts=verdict_counts,
     )
 
     return ReachabilityResult(entrypoints=entrypoints, repo=repo)
