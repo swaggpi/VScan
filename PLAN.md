@@ -118,3 +118,16 @@ Run `vulnreach scan <repo>` (+ a report command) and get:
 - **Don't over-claim transitive-dep reachability** (Semgrep's caution); be honest in copy.
 - **Coverage/confidence report**: files parsed vs failed, % call sites resolved, count+reasons
   for unknown. Add to the overview output (F) — it is part of an "in-depth overview".
+
+## Mandate update (user, overnight)
+Run until told to stop. After the core (C correlator, D agent layer, three-way
+reachability, F integration+overview+report) is DONE and SOLID, take on the
+stretch items previously deferred, each sound + tested + reviewed:
+- E2a JS cross-file call resolution (build a repo-wide JS function/export index;
+  resolve imports of local modules to real functions). Must not add false edges.
+- E2b Go cross-file call resolution (package-level symbol index).
+- E-prov edge/verdict provenance tiers (resolved_static / overapprox / unknown+reason).
+- E-pycg deeper Python resolution (PyCG-style assignment graph) where it buys recall.
+- More framework route coverage (A3 Tier-2/3: DRF routers, Laravel/Gin groups, etc.)
+Order by value×safety; stop any item that cannot be made sound and move on.
+Non-negotiable: never fabricate an edge/verdict to look more complete.
