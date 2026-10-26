@@ -1,9 +1,11 @@
-"""Command-line interface: ``vulnreach scan`` and ``vulnreach reachability``.
+"""Command-line interface: ``scan``, ``reachability`` and ``audit``.
 
 ``scan`` builds the knowledge graph for a target repository, writes it as JSON,
 and prints a human-readable summary to stderr. ``reachability`` builds the same
 graph, computes which public entry points reach which functions and
-dependencies, and prints a readable report (or JSON).
+dependencies, and prints a readable report (or JSON). ``audit`` is the headline
+"full scan": it correlates the dependency graph against public vulnerability
+databases and joins the findings with reachability to produce a ranked report.
 """
 
 from __future__ import annotations
@@ -13,6 +15,8 @@ import json
 import sys
 from typing import Sequence
 
+from .correlate import correlate_full
+from .correlate import report as correlate_report
 from .graph import KnowledgeGraph
 from .reachability import ReachabilityResult, compute_reachability
 from .scan import scan_repo
@@ -148,6 +152,35 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Print JSON to stdout instead of the text report.",
     )
 
+    audit_parser = subparsers.add_parser(
+        "audit",
+        help="Full scan: correlate dependencies against vuln databases and "
+        "reachability, then print a ranked report.",
+    )
+    audit_parser.add_argument("repo_path", help="Path to the repository to scan.")
+    audit_parser.add_argument(
+        "-o",
+        "--output",
+        default=None,
+        help="Optional path to write the full audit result as JSON.",
+    )
+    audit_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print JSON to stdout instead of the text report.",
+    )
+    audit_parser.add_argument(
+        "--offline",
+        action="store_true",
+        help="Do not query any network database; still print graph + reachability.",
+    )
+    audit_parser.add_argument(
+        "--nvd",
+        action="store_true",
+        help="Best-effort NVD numeric CVSS lookups (rate-limited; reads "
+        "NVD_API_KEY from the environment if set).",
+    )
+
     args = parser.parse_args(argv)
 
     if args.command == "scan":
@@ -181,6 +214,36 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(payload)
         else:
             print(_format_reachability(result, args.repo_path))
+        return 0
+
+    if args.command == "audit":
+        try:
+            graph = scan_repo(args.repo_path)
+        except (NotADirectoryError, FileNotFoundError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+
+        reach = compute_reachability(graph)
+        correlation = correlate_full(
+            graph, offline=args.offline, use_nvd=args.nvd
+        )
+
+        if args.output or args.json:
+            payload = json.dumps(
+                correlate_report.audit(graph, correlation, reach), indent=2
+            )
+            if args.output:
+                with open(args.output, "w", encoding="utf-8") as handle:
+                    handle.write(payload)
+            if args.json:
+                print(payload)
+                return 0
+
+        print(
+            correlate_report.format_report(
+                args.repo_path, graph, correlation, reach
+            )
+        )
         return 0
 
     parser.error(f"unknown command: {args.command}")  # pragma: no cover
