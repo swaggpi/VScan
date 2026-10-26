@@ -256,3 +256,97 @@ def test_handbuilt_one_unknown_marks_hidden_potentially_reachable():
     ep = _entrypoint(result, "ep:GET:/x")
     assert ep.fully_resolved is False
     assert ep.verdict_by_dep["dep:PyPI:hidden"] == POTENTIALLY_REACHABLE
+
+
+# -- soundness regression: the four BLOCKER cases that used to yield a confident
+# ``unreachable`` even though nothing could be soundly ruled out. Each builds a
+# tiny graph directly (as ``_verdict_graph`` does) and must yield
+# ``potentially_reachable`` for the non-reached dep, NEVER ``unreachable``.
+
+
+def test_zero_entrypoints_is_not_fully_resolved():
+    # A repo on an unrecognized framework: NO entry points at all. ``hidden`` is
+    # called from a function the scan could not fully resolve. Summing unresolved
+    # calls only over the (empty) reached region would call the region "fully
+    # resolved" and stamp ``hidden`` unreachable -- the exact false negative.
+    g = KnowledgeGraph()
+    g.add_node(
+        "fn:a.py:orphan", "function", "orphan", unresolved_call_count=1
+    )
+    g.add_node("dep:PyPI:hidden", "dependency", "hidden", version="1.0", ecosystem="PyPI")
+    g.add_edge("fn:a.py:orphan", "dep:PyPI:hidden", "calls", symbol="hidden.run")
+    result = compute_reachability(g)
+    assert result.repo.has_entrypoints is False
+    assert result.repo.reachable_region_fully_resolved is False
+    assert result.repo.verdict_by_dep["dep:PyPI:hidden"] == POTENTIALLY_REACHABLE
+    assert result.repo.verdict_counts[UNREACHABLE] == 0
+
+
+def test_entrypoint_without_handler_edge_is_not_fully_resolved():
+    # An entry point whose handler the scan could not resolve: it carries an
+    # ``unresolved_handler`` attr and has NO ``route_to_handler`` edge. Its
+    # reachable set is unknown, so a non-reached dep must stay potentially.
+    g = KnowledgeGraph()
+    g.add_node(
+        "ep:GET:/y",
+        "entrypoint",
+        "GET /y",
+        method="GET",
+        path="/y",
+        unresolved_handler="someDynamicView",
+    )
+    g.add_node("dep:PyPI:hidden", "dependency", "hidden", version="1.0", ecosystem="PyPI")
+    result = compute_reachability(g)
+    assert result.repo.reachable_region_fully_resolved is False
+    assert result.repo.has_entrypoints is True
+    assert result.repo.entrypoints_without_handler == 1
+    assert result.repo.nodes_with_unresolved_routes == 1
+    assert result.repo.verdict_by_dep["dep:PyPI:hidden"] == POTENTIALLY_REACHABLE
+    # The per-entry-point verdict agrees: this route cannot be fully traced.
+    ep = _entrypoint(result, "ep:GET:/y")
+    assert ep.fully_resolved is False
+    assert ep.verdict_by_dep["dep:PyPI:hidden"] == POTENTIALLY_REACHABLE
+
+
+def test_dangling_handler_edge_is_not_fully_resolved():
+    # An entry point with a ``route_to_handler`` edge whose target node is ABSENT
+    # (dangling). BFS silently skips it, so the old rule saw a clean, fully
+    # resolved region. The handler body is unknown -> potentially, not unreachable.
+    g = KnowledgeGraph()
+    g.add_node("ep:GET:/z", "entrypoint", "GET /z", method="GET", path="/z")
+    g.add_edge("ep:GET:/z", "fn:missing.py:gone", "route_to_handler")  # target absent
+    g.add_node("dep:PyPI:hidden", "dependency", "hidden", version="1.0", ecosystem="PyPI")
+    result = compute_reachability(g)
+    assert result.repo.reachable_region_fully_resolved is False
+    assert result.repo.entrypoints_without_handler == 1
+    assert result.repo.nodes_with_unresolved_routes == 0
+    assert result.repo.verdict_by_dep["dep:PyPI:hidden"] == POTENTIALLY_REACHABLE
+    ep = _entrypoint(result, "ep:GET:/z")
+    assert ep.fully_resolved is False
+
+
+def test_unresolved_routes_attr_is_not_fully_resolved():
+    # A module node carrying a real-but-unreadable route (e.g. flask-restful's
+    # ``add_resource`` with no literal path). A fully-wired entry point reaches
+    # ``reached``; ``hidden`` is reached by no resolved path. The un-read route
+    # could wire to code reaching ``hidden``, so it must stay potentially.
+    g = KnowledgeGraph()
+    g.add_node("ep:GET:/w", "entrypoint", "GET /w", method="GET", path="/w")
+    g.add_node("fn:v.py:view", "function", "view")
+    g.add_node(
+        "mod:app",
+        "module",
+        "app",
+        unresolved_routes=["add_resource(SecretResource): no string-literal path argument"],
+    )
+    g.add_node("dep:PyPI:reached", "dependency", "reached", version="1.0", ecosystem="PyPI")
+    g.add_node("dep:PyPI:hidden", "dependency", "hidden", version="2.0", ecosystem="PyPI")
+    g.add_edge("ep:GET:/w", "fn:v.py:view", "route_to_handler")
+    g.add_edge("fn:v.py:view", "dep:PyPI:reached", "calls", symbol="reached.go")
+    result = compute_reachability(g)
+    assert result.repo.reachable_region_fully_resolved is False
+    assert result.repo.entrypoints_without_handler == 0
+    assert result.repo.nodes_with_unresolved_routes == 1
+    assert result.repo.unresolved_calls == 0
+    assert result.repo.verdict_by_dep["dep:PyPI:reached"] == REACHABLE
+    assert result.repo.verdict_by_dep["dep:PyPI:hidden"] == POTENTIALLY_REACHABLE

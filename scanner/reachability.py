@@ -37,22 +37,46 @@ reachability-based SCA tool uses:
 * ``reachable`` -- a path of resolved ``route_to_handler``/``calls`` edges runs
   from a public entry point to the dependency. (What we have always computed.)
 * ``unreachable`` -- the dependency is reached by no resolved path AND the
-  entire reachable code region (every function reachable from ANY entry point)
-  is *fully resolved*: not a single unresolved call sits anywhere on that
-  frontier. Only under that zero-unknowns condition can we honestly claim an
-  unknown edge could not possibly branch to it.
+  entire reachable code region is *fully resolved* (see the rule below). Only
+  under that condition can we honestly claim an unknown edge could not possibly
+  branch to it.
 * ``potentially_reachable`` -- the dependency is reached by no resolved path,
-  but at least one unresolved call exists on the reachable frontier. An edge we
-  could not resolve might lead to unseen code that reaches the dependency, so we
-  refuse to rule it out. This is the honest conservative answer.
+  but the reachable region is *not* fully resolved: something we could not
+  resolve (an unknown call, an un-wired route, or a missing entry point) might
+  lead to unseen code that reaches the dependency, so we refuse to rule it out.
+  This is the honest conservative answer.
 
-The precise ``unreachable`` rule, stated once: a non-reached dependency is
-``unreachable`` *if and only if* the sum of ``unresolved_call_count`` over every
-function reachable from any entry point equals zero. If even one reachable
-function carries an unresolved call, every non-reached dependency (including
-ones with no call site at all) is ``potentially_reachable``, never
-``unreachable``. The per-entry-point verdict applies the identical rule scoped
-to that single entry point's reachable set.
+The precise ``fully resolved`` rule, stated once. The reachable region is fully
+resolved -- and only then may a non-reached dependency be ``unreachable`` rather
+than ``potentially_reachable`` -- when ALL of the following hold:
+
+1. at least one ``entrypoint`` node is detected in the graph (a repo with zero
+   entry points -- e.g. an unrecognized framework -- is NEVER fully resolved; we
+   have not found the front door, so we cannot claim anything is unreachable);
+2. every ``entrypoint`` is soundly wired to a handler we can traverse: it has at
+   least one ``route_to_handler`` edge whose target is an *existing* ``function``
+   node, and it does not carry an ``unresolved_handler`` attribute. An entry
+   point with no outgoing ``route_to_handler`` edge, a dangling edge (target node
+   absent), or an unresolved/inline handler we cannot step into leaves its own
+   reachable set unknown;
+3. no node (module or entry point) carries a non-empty ``unresolved_routes`` or
+   ``unresolved_handler`` attribute -- a route we could see but could not read
+   (e.g. ``add_resource`` with no literal path) may wire to code reaching the
+   dependency;
+4. the sum of ``unresolved_call_count`` over every function reachable from any
+   entry point is zero -- not one unresolved call sits on the frontier.
+
+If any condition fails, every non-reached dependency (including ones with no
+call site at all) is ``potentially_reachable``, never ``unreachable``. A reached
+dependency is always ``reachable``. ``RepoReachability`` records WHY a region is
+not fully resolved (``has_entrypoints``, ``entrypoints_without_handler``,
+``nodes_with_unresolved_routes``, ``unresolved_calls``) so a report can say so.
+
+The per-entry-point verdict applies the analogous rule scoped to that single
+entry point: that entry point must have a resolved handler and no
+``unresolved_handler``, and its own reachable set must carry zero unresolved
+calls. (The repo-wide ``unresolved_routes`` guard -- a hidden *other* route -- is
+a repo concern, not something that entry point's own traversal could reach.)
 
 This layer is strictly additive: ``reachable_deps``/``unreachable_deps`` keep
 their original meaning (``unreachable_deps`` is still exactly declared-minus-
@@ -85,8 +109,10 @@ def _classify(reached: bool, region_fully_resolved: bool) -> str:
     """Apply the three-way rule for one (region, dependency) pair.
 
     ``reached`` -- a resolved path reaches the dependency in this region.
-    ``region_fully_resolved`` -- the region has zero unresolved calls anywhere
-    on its frontier. ``unreachable`` is only ever returned under that condition.
+    ``region_fully_resolved`` -- the region satisfies every soundness guard (an
+    entry point exists and is wired to a traversable handler, no un-read routes,
+    zero unresolved calls; see the module docstring). ``unreachable`` is only
+    ever returned under that condition.
     """
     if reached:
         return REACHABLE
@@ -142,12 +168,21 @@ class RepoReachability:
     # Three-way verdict layer (strictly additive; the lists above are unchanged).
     # True iff the whole reachable region across ALL entry points is fully
     # resolved -- the condition under which a non-reached dep may be
-    # ``unreachable`` rather than ``potentially_reachable``.
-    reachable_region_fully_resolved: bool = True
+    # ``unreachable`` rather than ``potentially_reachable``. See the module
+    # docstring for the exact (four-part) rule.
+    reachable_region_fully_resolved: bool = False
     # dep id -> "reachable" | "potentially_reachable" | "unreachable".
     verdict_by_dep: dict[str, str] = field(default_factory=dict)
     # verdict label -> number of declared deps with that verdict.
     verdict_counts: dict[str, int] = field(default_factory=dict)
+
+    # Why the region is (not) fully resolved -- each is a reason a confident
+    # ``unreachable`` is withheld. When the region IS fully resolved,
+    # ``has_entrypoints`` is True and the three counts are all zero.
+    has_entrypoints: bool = False
+    entrypoints_without_handler: int = 0
+    nodes_with_unresolved_routes: int = 0
+    unresolved_calls: int = 0
 
 
 @dataclass
@@ -197,6 +232,29 @@ def _unresolved_count(graph: KnowledgeGraph, fn_id: str) -> int:
         return count
     unresolved = node.attrs.get("unresolved_calls")
     return len(unresolved) if isinstance(unresolved, list) else 0
+
+
+def _has_resolved_handler(
+    graph: KnowledgeGraph, ep_id: str, adjacency: dict[str, list[Edge]]
+) -> bool:
+    """True iff the entry point is soundly wired to a traversable handler.
+
+    That means at least one ``route_to_handler`` edge out of the entry point
+    whose target is an *existing* ``function`` node, AND the entry point carries
+    no ``unresolved_handler`` attribute. An entry point with no such edge (none
+    emitted, a dangling target, or an unresolved/inline handler) leaves its own
+    reachable set unknown, so it is NOT soundly resolved.
+    """
+    ep = graph.get_node(ep_id)
+    if ep is not None and ep.attrs.get("unresolved_handler"):
+        return False
+    for edge in adjacency.get(ep_id, []):
+        if edge.kind != "route_to_handler":
+            continue
+        dst = graph.get_node(edge.dst)
+        if dst is not None and dst.kind == "function":
+            return True
+    return False
 
 
 def _reachability_for_entrypoint(
@@ -258,9 +316,12 @@ def _reachability_for_entrypoint(
     unresolved_total = sum(_unresolved_count(graph, fn) for fn in reachable_functions)
 
     # Per-(entry point, dependency) verdict. "unreachable" only when THIS entry
-    # point's reachable region carries no unresolved call; otherwise a non-reached
-    # dependency is "potentially_reachable".
-    fully_resolved = unresolved_total == 0
+    # point is soundly wired to a traversable handler AND its reachable region
+    # carries no unresolved call; otherwise a non-reached dependency is
+    # "potentially_reachable" (we cannot fully trace what this route reaches).
+    fully_resolved = _has_resolved_handler(graph, ep_id, adjacency) and (
+        unresolved_total == 0
+    )
     reached_ids = {dep.id for dep in reachable_dependencies}
     verdict_by_dep = {
         dep_id: _classify(dep_id in reached_ids, fully_resolved)
@@ -365,10 +426,29 @@ def compute_reachability(graph: KnowledgeGraph) -> ReachabilityResult:
         return out
 
     # Three-way verdict (additive). The whole reachable region is "fully
-    # resolved" only when no function reachable from any entry point carries an
-    # unresolved call; that is the exact condition for an honest "unreachable".
+    # resolved" -- the sole condition under which a non-reached dep may be
+    # honestly ``unreachable`` -- only when ALL four guards below hold. Each
+    # failing guard is a distinct reason an unknown edge might still branch to a
+    # non-reached dep, so we record the counts as WHY. (See the module docstring
+    # for the full statement.)
+    entrypoint_nodes = graph.nodes_of_kind("entrypoint")
+    has_entrypoints = len(entrypoint_nodes) > 0
+    entrypoints_without_handler = sum(
+        1
+        for ep in entrypoint_nodes
+        if not _has_resolved_handler(graph, ep.id, adjacency)
+    )
+    nodes_with_unresolved_routes = sum(
+        1
+        for n in graph.nodes
+        if n.attrs.get("unresolved_routes") or n.attrs.get("unresolved_handler")
+    )
+    unresolved_calls = sum(_unresolved_count(graph, fn) for fn in reachable_region)
     region_fully_resolved = (
-        sum(_unresolved_count(graph, fn) for fn in reachable_region) == 0
+        has_entrypoints
+        and entrypoints_without_handler == 0
+        and nodes_with_unresolved_routes == 0
+        and unresolved_calls == 0
     )
     verdict_by_dep = {
         dep_id: _classify(dep_id in reachable_any, region_fully_resolved)
@@ -389,6 +469,10 @@ def compute_reachability(graph: KnowledgeGraph) -> ReachabilityResult:
         reachable_region_fully_resolved=region_fully_resolved,
         verdict_by_dep=verdict_by_dep,
         verdict_counts=verdict_counts,
+        has_entrypoints=has_entrypoints,
+        entrypoints_without_handler=entrypoints_without_handler,
+        nodes_with_unresolved_routes=nodes_with_unresolved_routes,
+        unresolved_calls=unresolved_calls,
     )
 
     return ReachabilityResult(entrypoints=entrypoints, repo=repo)
