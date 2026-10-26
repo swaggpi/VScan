@@ -30,3 +30,6 @@ test-corpus/
 
 # browser automation artifacts
 .playwright-mcp/
+
+# overnight research scratch (not part of the project)
+.research/
