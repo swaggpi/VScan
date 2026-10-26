@@ -152,3 +152,13 @@ CLI: `vulnreach scan|reachability|audit [--explain] [--offline] [--nvd] [-o] [--
 - E2a JS cross-file resolution (sound; scan.py JS export index + analyzer).
 - NEXT: E2b Go cross-file (reuse the scan.py index pattern); then more route coverage;
   then F morning report (MORNING.md) + attempt push (was auto-flagged).
+
+## E4 fix wave (in progress)
+- JS cross-file: DONE + committed (b6b83db); express-es6 0->5 route_to_handler.
+- Dispatched 4 fix agents for the review findings: FixR reachability unsound-unreachable
+  BLOCKER; FixP python route bugs (set methods, as_view, add_resource gating, prefix
+  flagging, record unresolved routes); FixC correlator (malformed-JSON never-raises,
+  batch misalignment/wrong-dep, fixed_versions leak, cache fail-soft, skipped-version
+  notice, verdict in JSON); FixAgent (#13 dep-fallback wording, output anti-spoof,
+  offline heuristic word-boundary+negation). Each confined to its own files.
+- After all 4 land: full-suite compose check, commit, then F morning report (MORNING.md).
