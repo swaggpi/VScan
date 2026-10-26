@@ -162,3 +162,13 @@ CLI: `vulnreach scan|reachability|audit [--explain] [--offline] [--nvd] [-o] [--
   notice, verdict in JSON); FixAgent (#13 dep-fallback wording, output anti-spoof,
   offline heuristic word-boundary+negation). Each confined to its own files.
 - After all 4 land: full-suite compose check, commit, then F morning report (MORNING.md).
+
+## Checkpoint (overnight, later)
+- DONE + committed: all 4 E4 review fixes (reachability blocker, python routes, correlator,
+  agent tier); MORNING.md; JS cross-file; Go cross-file. 157 tests pass.
+- IN PROGRESS: dashboard vuln overlay (audit --bundle export + viewer overlay of
+  reachable-vulnerable deps).
+- REMAINING optional stretch: coverage/confidence report; more route coverage (DRF/Laravel/
+  Gin groups); PHP cross-file (hard, low value). 
+- BLOCKED: git push (auto-flagged every attempt) -> user must `git push origin
+  worktree-scanner-layer1`. 17+ commits local-only. Meta API key -> set LLM_* to activate agent.
