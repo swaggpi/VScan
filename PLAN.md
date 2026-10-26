@@ -91,3 +91,30 @@ Run `vulnreach scan <repo>` (+ a report command) and get:
 - Meta API: build to OpenAI-compatible chat completions; confirm exact endpoint/
   model in A2. Cannot test real calls (no key) — mock-verify + leave activation.
 - Keep each layer behind a clean seam; scanner stays network-free.
+
+## Progress log (overnight)
+- DONE: A1/A2/A3 research (notes in .research/). B reachability engine (committed:
+  `vulnreach reachability`, 77 tests). 
+- IN PROGRESS: C correlator (OSV+KEV+EPSS + `audit` + reachability join);
+  E3a Python registry routes (Flask-RESTful add_resource -> fixes redash 0-entrypoints,
+  add_url_rule/add_api_route, blueprint/APIRouter prefix composition).
+
+## Research-driven decisions (from A1 — apply in remaining work)
+- **Three-way reachability verdict** (A1 top [S]): reachable / potentially_reachable
+  (a path exists but crosses >=1 unresolved/unknown edge) / unreachable (ONLY when every
+  path is fully resolved with zero unknown edges). Upgrade `reachability.py` to this after
+  C lands (keep API additive so C's join doesn't break). This is the honest model every
+  mature tool (Endor/Socket/GitLab/govulncheck) uses.
+- **Edge/verdict provenance**: mark how each edge/verdict was derived (resolved_static vs
+  unknown+reason). Downstream (report, agent) keys off this.
+- **LLM scope (agent layer D)**: the LLM may ONLY look at `unknown`/unresolved edges and
+  may ONLY promote unknown -> potentially_reachable, or summarize exposure from docs. It
+  must NEVER produce a confident reachable verdict or silently add a `calls` edge. Keep its
+  output in a separate provenance tier. (A1: LLM4PFA/SEA support post-hoc unknown-resolution.)
+- **Symbol-level matching** (correlator): prefer matching the advisory's affected symbol,
+  not just package==vulnerable. (Refinement; package-level is the baseline.)
+- **Don't chase points-to** — name-resolution + light over-approx is the hackathon sweet
+  spot; biggest JS/Go/PHP gain is cross-file import resolution (E2, L-effort, optional).
+- **Don't over-claim transitive-dep reachability** (Semgrep's caution); be honest in copy.
+- **Coverage/confidence report**: files parsed vs failed, % call sites resolved, count+reasons
+  for unknown. Add to the overview output (F) — it is part of an "in-depth overview".
