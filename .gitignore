@@ -27,3 +27,6 @@ dashboard/dist/
 
 # cloned external repos for ad-hoc testing (untrusted, not part of the project)
 test-corpus/
+
+# browser automation artifacts
+.playwright-mcp/
