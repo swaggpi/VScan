@@ -15,7 +15,8 @@ import json
 import sys
 from typing import Sequence
 
-from .correlate import correlate_full
+from .agent import LLMClient, assess_findings
+from .correlate import CorrelationResult, correlate_full
 from .correlate import report as correlate_report
 from .graph import KnowledgeGraph
 from .reachability import ReachabilityResult, compute_reachability
@@ -117,6 +118,54 @@ def _format_reachability(result: ReachabilityResult, repo_path: str) -> str:
     return "\n".join(lines)
 
 
+def _format_assessments(
+    graph: KnowledgeGraph,
+    correlation: CorrelationResult,
+    reach: ReachabilityResult,
+    *,
+    offline: bool,
+) -> str:
+    """Render the advisory exposure assessments for the reachable findings.
+
+    Uses the configured model when available; otherwise the deterministic
+    offline heuristic. ``offline`` forces the heuristic (no network) regardless
+    of whether model env vars are set, matching ``audit --offline``.
+    """
+    client = LLMClient.disabled() if offline else LLMClient()
+    assessments = assess_findings(
+        graph, correlation.findings, reach, client=client
+    )
+
+    lines: list[str] = ["", "Exposure assessment (advisory tier)", "-" * 72]
+    if client.available():
+        lines.append("Model: configured via LLM_BASE_URL/LLM_API_KEY/LLM_MODEL.")
+    else:
+        lines.append(
+            "Note: using the offline heuristic (no model configured). Enable the "
+            "model by setting LLM_BASE_URL, LLM_API_KEY and LLM_MODEL."
+        )
+    lines.append(
+        "This tier is ADVISORY ONLY: it does not change the reachability verdict."
+    )
+    lines.append("")
+
+    if not assessments:
+        lines.append("No reachable findings to assess.")
+        return "\n".join(lines)
+
+    for index, a in enumerate(assessments, start=1):
+        ref = a.cve or a.vuln_id or "(no advisory id)"
+        via = ", ".join(a.reaching_entrypoints) or "a public entry point"
+        lines.append(f"{index:>2}. {a.dependency_name} -- {ref}")
+        lines.append(f"    reachable via: {via}")
+        lines.append(f"    exposure: {a.exposure}   authentication: {a.authentication}")
+        lines.append(f"    rationale: {a.rationale}")
+        lines.append(f"    summary: {a.summary}")
+        lines.append(f"    [provenance={a.provenance}; advisory={a.advisory}]")
+        lines.append("")
+    return "\n".join(lines)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="vulnreach",
@@ -179,6 +228,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="Best-effort NVD numeric CVSS lookups (rate-limited; reads "
         "NVD_API_KEY from the environment if set).",
+    )
+    audit_parser.add_argument(
+        "--explain",
+        "--assess",
+        dest="explain",
+        action="store_true",
+        help="Advisory LLM/offline exposure assessment of the reachable "
+        "findings (opt-in; uses the offline heuristic when no model is "
+        "configured via LLM_BASE_URL/LLM_API_KEY/LLM_MODEL).",
     )
 
     args = parser.parse_args(argv)
@@ -244,6 +302,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.repo_path, graph, correlation, reach
             )
         )
+        if args.explain:
+            print(_format_assessments(graph, correlation, reach, offline=args.offline))
         return 0
 
     parser.error(f"unknown command: {args.command}")  # pragma: no cover
