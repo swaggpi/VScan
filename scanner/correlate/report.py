@@ -104,12 +104,23 @@ def audit(
     """Run the join + ranking and return a JSON-serializable audit payload."""
     join_reachability(graph, correlation.findings, reach)
     ranked = rank_findings(correlation.findings)
+    verdicts = reach.repo.verdict_by_dep
+
+    def _finding_dict(finding: Finding) -> dict[str, Any]:
+        payload = finding.to_dict()
+        # Expose the three-way reachability verdict (reachable /
+        # potentially_reachable / unreachable) that the text report already shows.
+        payload["verdict"] = verdicts.get(finding.dependency_id) or (
+            "reachable" if finding.reachable else "unreachable"
+        )
+        return payload
+
     return {
         "offline": correlation.offline,
         "network_ok": correlation.network_ok,
         "notices": list(correlation.notices),
         "summary": build_summary(graph, ranked),
-        "findings": [f.to_dict() for f in ranked],
+        "findings": [_finding_dict(f) for f in ranked],
     }
 
 

@@ -14,8 +14,8 @@ import os
 
 import pytest
 
-from scanner.correlate import correlate, correlate_full
-from scanner.correlate import enrich, osv, report
+from scanner.correlate import Finding, correlate, correlate_full
+from scanner.correlate import cache, enrich, osv, report
 from scanner.reachability import compute_reachability
 from scanner.scan import scan_repo
 
@@ -250,3 +250,205 @@ def test_cli_offline_prints_graceful_message(capsys):
     # Reachability is still shown offline.
     assert "Reachability" in out
     assert "PyYAML" in out
+
+
+# -- regression tests for reproduced correctness/robustness bugs --------------
+
+
+class _FakeResp:
+    """Minimal urlopen() context-manager stub returning canned bytes."""
+
+    def __init__(self, body: bytes) -> None:
+        self._body = body
+
+    def read(self) -> bytes:
+        return self._body
+
+    def __enter__(self) -> "_FakeResp":
+        return self
+
+    def __exit__(self, *exc) -> bool:
+        return False
+
+
+# #8 -- querybatch length misalignment must never cross-attribute a vuln.
+
+
+def test_querybatch_length_mismatch_raises(monkeypatch):
+    # A short response for a 2-query chunk must raise rather than silently map
+    # the ids onto the wrong queries (and shift every later chunk).
+    monkeypatch.setattr(osv, "_post_json", lambda url, body: {"results": []})
+    with pytest.raises(osv.OsvNetworkError):
+        osv.query_batch(
+            [
+                {"package": {"name": "a", "ecosystem": "npm"}, "version": "1.0.0"},
+                {"package": {"name": "b", "ecosystem": "npm"}, "version": "2.0.0"},
+            ]
+        )
+
+
+def test_collect_degrades_on_querybatch_mismatch(monkeypatch):
+    # One result slot for two queries: collect must degrade (ok=False, empty),
+    # never attribute the lone (fully fetchable) vuln id to the wrong DepRef.
+    # fetch_vuln is mocked so that, without the length guard, the bug would
+    # surface as a successful-but-misattributed result rather than a network
+    # failure -- isolating the cross-attribution this test defends against.
+    monkeypatch.setattr(
+        osv, "_post_json", lambda url, body: {"results": [{"vulns": [{"id": "GHSA-x"}]}]}
+    )
+    monkeypatch.setattr(
+        osv,
+        "fetch_vuln",
+        lambda vuln_id: {
+            "id": "GHSA-x",
+            "summary": "misattributable advisory",
+            "affected": [{"package": {"name": "a", "ecosystem": "npm"}}],
+        },
+    )
+    deps = [
+        osv.DepRef(id="d1", name="a", version="1.0.0", ecosystem="npm"),
+        osv.DepRef(id="d2", name="b", version="2.0.0", ecosystem="npm"),
+    ]
+    result = osv.collect(deps)
+    assert result.ok is False
+    assert result.by_dep == {}
+
+
+# #7 -- the "never raises" contract holds on malformed (non-dict) JSON.
+
+
+def test_post_json_rejects_non_dict(monkeypatch):
+    monkeypatch.setattr(osv.urllib.request, "urlopen", lambda *a, **k: _FakeResp(b"[]"))
+    with pytest.raises(osv.OsvNetworkError):
+        osv._post_json("https://example.invalid", {})
+
+
+def test_get_json_rejects_non_dict(monkeypatch):
+    monkeypatch.setattr(
+        osv.urllib.request, "urlopen", lambda *a, **k: _FakeResp(b"\"a string\"")
+    )
+    with pytest.raises(osv.OsvNetworkError):
+        osv._get_json("https://example.invalid")
+
+
+def test_correlate_full_degrades_on_non_dict_batch(graph, monkeypatch):
+    # A list payload from querybatch must degrade gracefully, not crash the CLI
+    # with an AttributeError.
+    monkeypatch.setattr(osv.urllib.request, "urlopen", lambda *a, **k: _FakeResp(b"[]"))
+    result = correlate_full(graph)
+    assert result.network_ok is False
+    assert result.findings == []
+    assert result.notices
+
+
+def test_kev_rejects_non_dict(tmp_path, monkeypatch):
+    monkeypatch.setenv("VULNREACH_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setattr(enrich, "_get", lambda url, headers=None: b"[]")
+    with pytest.raises(enrich.EnrichNetworkError):
+        enrich.fetch_kev_catalog()
+
+
+def test_enrich_findings_never_raises_on_non_dict(tmp_path, monkeypatch):
+    # Both KEV and EPSS returning a non-dict JSON must degrade to notices, never
+    # raise out of enrich_findings.
+    monkeypatch.setenv("VULNREACH_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setattr(enrich, "_get", lambda url, headers=None: b"[]")
+    finding = Finding(
+        dependency_id="d",
+        dependency_name="x",
+        version="1",
+        ecosystem="npm",
+        vuln_id="GHSA",
+        cve_ids=[PYYAML_CVE],
+        summary="",
+        fixed_versions=[],
+    )
+    notices = enrich.enrich_findings([finding], use_nvd=False)
+    assert any("KEV" in n for n in notices)
+    assert any("EPSS" in n for n in notices)
+
+
+# #9 -- _fixed_versions must not leak other packages' fixes or GIT commit hashes.
+
+
+def test_fixed_versions_ignores_other_packages_and_git():
+    record = {
+        "id": "GHSA-z",
+        "affected": [
+            {  # unrelated package -- its fix must never be reported.
+                "package": {"name": "other-pkg", "ecosystem": "npm"},
+                "ranges": [
+                    {"type": "SEMVER", "events": [{"introduced": "0"}, {"fixed": "9.9.9"}]}
+                ],
+            },
+            {  # our package but a GIT range -- a commit hash, never a version.
+                "package": {"name": "lodash", "ecosystem": "npm"},
+                "ranges": [
+                    {"type": "GIT", "events": [{"introduced": "0"}, {"fixed": "deadbeefcafe0001"}]}
+                ],
+            },
+        ],
+    }
+    assert osv._fixed_versions(record, "lodash", "npm") == []
+
+
+def test_fixed_versions_reads_matching_version_range():
+    record = {
+        "id": "GHSA-ok",
+        "affected": [
+            {
+                "package": {"name": "lodash", "ecosystem": "npm"},
+                "ranges": [{"type": "SEMVER", "events": [{"fixed": "4.17.11"}]}],
+            }
+        ],
+    }
+    assert osv._fixed_versions(record, "lodash", "npm") == ["4.17.11"]
+
+
+# #10 -- cache must fail soft when its directory cannot be created.
+
+
+def test_cache_fails_soft_on_uncreatable_dir(tmp_path, monkeypatch):
+    blocker = tmp_path / "blocker"
+    blocker.write_text("not a directory")
+    monkeypatch.setenv("VULNREACH_CACHE_DIR", str(blocker / "sub"))
+    assert cache.get("some-key") is None  # no raise
+    cache.set("some-key", {"value": 1}, ttl=100)  # no raise
+    assert cache.get("some-key") is None
+
+
+# #11 -- non-concrete versions must be surfaced, not silently dropped.
+
+
+def test_skipped_non_concrete_versions_recorded(mocked_db):
+    deps = [
+        osv.DepRef(id="d1", name="lodash", version="^4.17.4", ecosystem="npm"),
+        osv.DepRef(id="d2", name="PyYAML", version="3.13", ecosystem="PyPI"),
+    ]
+    result = osv.collect(deps)
+    assert any("lodash" in s and "^4.17.4" in s for s in result.skipped)
+
+
+def test_caret_dependency_surfaced_in_notices(graph, mocked_db):
+    # The sample app declares ``requests>=2.20.0`` -- a range, not an exact pin.
+    # It must appear in a notice rather than being silently treated as clean.
+    result = correlate_full(graph)
+    assert any("no exact version" in n for n in result.notices)
+    assert any("requests" in n for n in result.notices)
+
+
+# #12 -- the three-way verdict must be exposed in the audit JSON payload.
+
+
+def test_audit_json_exposes_three_way_verdict(graph, mocked_db):
+    result = correlate_full(graph)
+    reach = compute_reachability(graph)
+    payload = report.audit(graph, result, reach)
+
+    valid = {"reachable", "potentially_reachable", "unreachable"}
+    assert payload["findings"]
+    for finding in payload["findings"]:
+        assert finding["verdict"] in valid
+
+    pyyaml = next(f for f in payload["findings"] if f["dependency_name"] == "PyYAML")
+    assert pyyaml["verdict"] == "reachable"

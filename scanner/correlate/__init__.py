@@ -151,6 +151,17 @@ def correlate_full(
             )
 
     notices = enrich.enrich_findings(findings, use_nvd=use_nvd)
+    if osv_result.skipped:
+        count = len(osv_result.skipped)
+        shown = ", ".join(osv_result.skipped[:10])
+        if count > 10:
+            shown += f", and {count - 10} more"
+        noun = "dependency" if count == 1 else "dependencies"
+        notices.insert(
+            0,
+            f"{count} {noun} skipped (no exact version): {shown}. "
+            "These were not checked against OSV.",
+        )
     return CorrelationResult(
         findings=findings,
         offline=False,

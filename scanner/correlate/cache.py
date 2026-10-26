@@ -55,8 +55,10 @@ def get(key: str) -> Any | None:
 
     Any read or decode error is swallowed and reported as a miss.
     """
-    path = _path_for(key)
     try:
+        # _path_for creates the cache dir; a dir that cannot be created (bad
+        # override path, read-only fs) must read as a miss, never raise.
+        path = _path_for(key)
         with path.open(encoding="utf-8") as handle:
             envelope = json.load(handle)
     except (OSError, ValueError):
@@ -76,8 +78,10 @@ def get(key: str) -> Any | None:
 def set(key: str, value: Any, *, ttl: float) -> None:
     """Store ``value`` under ``key`` for ``ttl`` seconds. Best-effort (never raises)."""
     envelope = {"expires": time.time() + ttl, "value": value}
-    path = _path_for(key)
     try:
+        # _path_for creates the cache dir; if it cannot be created the write is
+        # a no-op rather than an error (the cache must never break a scan).
+        path = _path_for(key)
         tmp = path.with_suffix(".json.tmp")
         with tmp.open("w", encoding="utf-8") as handle:
             json.dump(envelope, handle)

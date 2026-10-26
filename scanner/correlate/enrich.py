@@ -74,14 +74,16 @@ def fetch_kev_catalog() -> set[str]:
 
     try:
         payload = json.loads(_get(_KEV_URL).decode("utf-8"))
-    except (ValueError, EnrichNetworkError) as exc:
+        if not isinstance(payload, dict):
+            raise EnrichNetworkError("KEV catalog was not a JSON object")
+        cve_ids = [
+            str(entry["cveID"]).upper()
+            for entry in payload.get("vulnerabilities", [])
+            if isinstance(entry, dict) and entry.get("cveID")
+        ]
+    except (ValueError, AttributeError, TypeError, KeyError, EnrichNetworkError) as exc:
         raise EnrichNetworkError(f"KEV download failed: {exc}") from exc
 
-    cve_ids = [
-        str(entry["cveID"]).upper()
-        for entry in payload.get("vulnerabilities", [])
-        if isinstance(entry, dict) and entry.get("cveID")
-    ]
     cache.set("kev-catalog", cve_ids, ttl=_KEV_TTL)
     return set(cve_ids)
 
@@ -127,9 +129,12 @@ def query_epss(cve_ids: list[str]) -> dict[str, tuple[float | None, float | None
         query = urllib.parse.urlencode({"cve": ",".join(chunk), "limit": _EPSS_MAX_IDS})
         try:
             payload = json.loads(_get(f"{_EPSS_URL}?{query}").decode("utf-8"))
-        except ValueError as exc:
+            if not isinstance(payload, dict):
+                raise EnrichNetworkError("EPSS response was not a JSON object")
+            rows = payload.get("data", []) or []
+        except (ValueError, AttributeError, TypeError, KeyError, EnrichNetworkError) as exc:
             raise EnrichNetworkError(f"EPSS decode failed: {exc}") from exc
-        for row in payload.get("data", []):
+        for row in rows:
             if not isinstance(row, dict):
                 continue
             cve = str(row.get("cve", "")).upper()
@@ -166,10 +171,12 @@ def fetch_nvd_cvss(cve_id: str, api_key: str | None) -> tuple[float | None, str 
     headers = {"apiKey": api_key} if api_key else {}
     try:
         payload = json.loads(_get(f"{_NVD_URL}?{query}", headers=headers).decode("utf-8"))
-    except ValueError as exc:
+        if not isinstance(payload, dict):
+            raise EnrichNetworkError("NVD response was not a JSON object")
+        parsed = _parse_nvd(payload)
+    except (ValueError, AttributeError, TypeError, KeyError, EnrichNetworkError) as exc:
         raise EnrichNetworkError(f"NVD decode failed: {exc}") from exc
 
-    parsed = _parse_nvd(payload)
     cache.set(f"nvd:{cve_id}", list(parsed), ttl=_NVD_TTL)
     return parsed
 

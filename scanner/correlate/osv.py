@@ -70,6 +70,9 @@ class OsvResult:
 
     by_dep: dict[str, list[OsvVuln]]
     ok: bool
+    # Human-readable labels for deps we could not query (no exact version or no
+    # ecosystem). Surfaced as a notice so a skip never looks like a clean result.
+    skipped: list[str] = field(default_factory=list)
 
 
 # -- networking ---------------------------------------------------------------
@@ -86,9 +89,14 @@ def _post_json(url: str, body: dict[str, Any]) -> dict[str, Any]:
     )
     try:
         with urllib.request.urlopen(request, timeout=_TIMEOUT) as response:
-            return json.loads(response.read().decode("utf-8"))
+            payload = json.loads(response.read().decode("utf-8"))
     except (urllib.error.URLError, socket.timeout, TimeoutError, ValueError, OSError) as exc:
         raise OsvNetworkError(f"OSV POST {url} failed: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise OsvNetworkError(
+            f"OSV POST {url} returned non-object JSON ({type(payload).__name__})"
+        )
+    return payload
 
 
 def _get_json(url: str) -> dict[str, Any]:
@@ -96,9 +104,14 @@ def _get_json(url: str) -> dict[str, Any]:
     request = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
     try:
         with urllib.request.urlopen(request, timeout=_TIMEOUT) as response:
-            return json.loads(response.read().decode("utf-8"))
+            payload = json.loads(response.read().decode("utf-8"))
     except (urllib.error.URLError, socket.timeout, TimeoutError, ValueError, OSError) as exc:
         raise OsvNetworkError(f"OSV GET {url} failed: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise OsvNetworkError(
+            f"OSV GET {url} returned non-object JSON ({type(payload).__name__})"
+        )
+    return payload
 
 
 def query_batch(queries: list[dict[str, Any]]) -> list[list[str]]:
@@ -113,7 +126,16 @@ def query_batch(queries: list[dict[str, Any]]) -> list[list[str]]:
     for start in range(0, len(queries), _BATCH_CAP):
         chunk = queries[start : start + _BATCH_CAP]
         payload = _post_json(_QUERYBATCH_URL, {"queries": chunk})
-        for slot in payload.get("results", []):
+        slots = payload.get("results", [])
+        # OSV aligns results 1:1 with the chunk. A short/malformed response would
+        # shift every later chunk's ids onto the wrong dependency, so treat a
+        # length mismatch as a failed query rather than silently cross-attributing.
+        if not isinstance(slots, list) or len(slots) != len(chunk):
+            got = len(slots) if isinstance(slots, list) else "non-list"
+            raise OsvNetworkError(
+                f"OSV querybatch returned {got} results for a {len(chunk)}-query chunk"
+            )
+        for slot in slots:
             vulns = slot.get("vulns", []) if isinstance(slot, dict) else []
             results.append([v["id"] for v in vulns if isinstance(v, dict) and "id" in v])
     return results
@@ -180,31 +202,36 @@ def _pick_cvss_vector(record: dict[str, Any]) -> str | None:
 def _fixed_versions(record: dict[str, Any], name: str, ecosystem: str | None) -> list[str]:
     """Extract ``fixed`` versions for the affected package we actually queried.
 
-    Filters ``affected[]`` to the matching (ecosystem, normalized name) entry;
-    if nothing matches (name-normalization drift), falls back to all entries.
+    Filters ``affected[]`` to the matching (ecosystem, normalized name) entry
+    and reads ``fixed`` events only from ``ECOSYSTEM``/``SEMVER`` ranges. GIT
+    ranges carry commit hashes (not versions) and are ignored. When nothing
+    matches the queried package, returns ``[]`` rather than leaking fixes from
+    unrelated packages.
     """
     target = _normalize_name(name)
     fixed: list[str] = []
 
     def _collect(entry: dict[str, Any]) -> None:
         for rng in entry.get("ranges", []) or []:
+            if not isinstance(rng, dict):
+                continue
+            # Only version ranges carry usable fixed versions; GIT ranges carry
+            # commit hashes we must never surface as a "fixed in" version.
+            if str(rng.get("type", "")) not in ("ECOSYSTEM", "SEMVER"):
+                continue
             for event in rng.get("events", []) or []:
+                if not isinstance(event, dict):
+                    continue
                 value = event.get("fixed")
                 if value and value not in fixed:
                     fixed.append(value)
 
-    matched = False
     for entry in record.get("affected", []) or []:
         pkg = entry.get("package", {}) if isinstance(entry, dict) else {}
         eco_ok = ecosystem is None or str(pkg.get("ecosystem", "")) == ecosystem
         name_ok = _normalize_name(str(pkg.get("name", ""))) == target
         if eco_ok and name_ok:
-            matched = True
             _collect(entry)
-    if not matched:
-        for entry in record.get("affected", []) or []:
-            if isinstance(entry, dict):
-                _collect(entry)
     return fixed
 
 
@@ -310,8 +337,11 @@ def collect(deps: list[DepRef]) -> OsvResult:
     """
     queries: list[dict[str, Any]] = []
     refs: list[DepRef] = []
+    skipped: list[str] = []
     for dep in deps:
         if not dep.ecosystem or not is_concrete_version(dep.version):
+            label = f"{dep.name} {dep.version}" if dep.version else f"{dep.name} (no version)"
+            skipped.append(label)
             continue
         queries.append(
             {
@@ -322,7 +352,7 @@ def collect(deps: list[DepRef]) -> OsvResult:
         refs.append(dep)
 
     if not queries:
-        return OsvResult(by_dep={}, ok=True)
+        return OsvResult(by_dep={}, ok=True, skipped=skipped)
 
     try:
         id_lists = query_batch(queries)
@@ -335,7 +365,7 @@ def collect(deps: list[DepRef]) -> OsvResult:
                     unique_ids.append(vid)
         records = {vid: fetch_vuln(vid) for vid in unique_ids}
     except OsvNetworkError:
-        return OsvResult(by_dep={}, ok=False)
+        return OsvResult(by_dep={}, ok=False, skipped=skipped)
 
     by_dep: dict[str, list[OsvVuln]] = {}
     for ref, ids in zip(refs, id_lists):
@@ -349,4 +379,4 @@ def collect(deps: list[DepRef]) -> OsvResult:
                 vulns.append(parsed)
         if vulns:
             by_dep[ref.id] = merge_vulns(vulns)
-    return OsvResult(by_dep=by_dep, ok=True)
+    return OsvResult(by_dep=by_dep, ok=True, skipped=skipped)
