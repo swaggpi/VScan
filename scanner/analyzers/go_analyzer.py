@@ -32,18 +32,22 @@ For every ``.go`` file this analyzer emits:
 RESOLUTION BOUNDARY (what later layers would deepen)
 ==========================================================================
 
-This is a **single-file** analyzer. ``scan.py`` builds its cross-file
-``repo_index`` from Python files only, so it holds nothing for Go; Go->Go calls
-into functions declared in *other* files are therefore OUT of scope and are left
-unresolved rather than guessed. The one piece of cross-file reasoning done here
-is the import-path -> dependency mapping, which is reliable in Go because an
-import path names its module unambiguously.
+This analyzer resolves same-file calls/handlers directly and, when ``scan.py``
+has built a Go package index in ``repo_index`` (keys ``go_module`` and
+``go_packages``), SOUND cross-PACKAGE calls/handlers into *other* packages of
+the SAME module. Go is package (directory) based: a package spans every ``.go``
+file in one directory, and an import path under the module path names a LOCAL
+package to resolve; anything else is an external dependency (unchanged). The one
+other piece of cross-file reasoning is the import-path -> dependency mapping,
+reliable in Go because an import path names its module unambiguously.
 
 As with the Python analyzer, the CARDINAL RULE is: never emit a call / route /
 import edge that cannot be resolved soundly. A wrong edge is worse than a
 missing one for the reachability reasoning in later layers, so an unresolvable
 call is recorded in the ``unresolved_calls`` attribute of its source function
-node and NO edge is emitted.
+node and NO edge is emitted. A cross-package edge is emitted ONLY when the local
+import path resolves to a real repo package directory AND the exported name maps
+to exactly one function; otherwise it is recorded unresolved and no edge is made.
 
 RESOLVED
   * Imports: an import path whose longest matching prefix is a declared Go
@@ -53,14 +57,25 @@ RESOLVED
   * Calls: ``f(...)`` to a bare function declared in the same file; ``pkg.F(...)``
     where ``pkg`` is a dependency's local import name -> dep edge with the dotted
     ``symbol``.
+  * Cross-package calls: ``foo.Bar(...)`` where ``foo`` is a LOCAL package
+    binding (an import under the module path that resolves to a real repo package
+    directory, whose last-segment binding name matches the directory's declared
+    ``package`` name, or an explicit alias) and ``Bar`` is EXACTLY ONE exported
+    function in that package -> ``calls`` edge to that cross-file ``fn:`` id.
+  * Cross-package route handlers: a handler ``foo.Handler`` resolving the same
+    way -> ``route_to_handler`` edge to the cross-file ``fn:`` id.
 
 NOT RESOLVED (recorded, never guessed)
   * Method / field calls on a value of unknown type: ``c.Bind()``, ``r.POST()``
     (no type inference / points-to analysis is performed -- the receiver's type
     is not tracked).
   * Calls through an import whose module is not a declared dependency, and calls
-    whose callee is a bare name not declared in this file (it may live in another
-    Go file -- out of scope -- or be an unmodelled construct).
+    whose callee is a bare name not declared in this file.
+  * Cross-package references that are ambiguous, absent, unexported, through a
+    local import with no matching repo package dir, or where the declared package
+    name differs from the import's last path segment (and no alias disambiguates)
+    -> unresolved, never an edge. Dot-imports (``import . "..."``) and blank
+    imports (``import _ "..."``) bind no usable name and are never resolved.
   * A local binding that shadows an imported package name suppresses resolution
     through that import (the call is left unresolved rather than mis-attributed).
   * Standard-library calls (``fmt.Println``) and Go built-ins (``make``, ``len``,
@@ -137,11 +152,19 @@ class GoAnalyzer(LanguageAnalyzer):
 
         # -- imports: build local-name -> target map, emit dep edges ----------
         dep_index = self._go_dep_index(graph)
-        pkg_map, stdlib = self._process_imports(root, mod_id, dep_index, graph)
+        go_module = repo_index.get("go_module")
+        go_packages = repo_index.get("go_packages", {})
+        pkg_map, stdlib, local_pkg_map, unresolved_imports = self._process_imports(
+            root, mod_id, dep_index, graph, go_module, go_packages
+        )
         if stdlib:
             node = graph.get_node(mod_id)
             if node is not None:
                 node.attrs["stdlib_imports"] = sorted(stdlib)
+        if unresolved_imports:
+            node = graph.get_node(mod_id)
+            if node is not None:
+                node.attrs["unresolved_local_imports"] = sorted(unresolved_imports)
 
         # -- functions + declares edges ---------------------------------------
         functions = self._collect_functions(root)
@@ -172,7 +195,7 @@ class GoAnalyzer(LanguageAnalyzer):
                 continue
             for call in self._iter_calls(body):
                 result = self._resolve_call(
-                    call, pkg_map, stdlib, bound, local_funcs, relpath
+                    call, pkg_map, stdlib, bound, local_funcs, relpath, local_pkg_map
                 )
                 kind = result[0]
                 if kind == "fn":
@@ -192,7 +215,7 @@ class GoAnalyzer(LanguageAnalyzer):
 
         # -- entry points (routes) --------------------------------------------
         self._extract_routes(
-            root, functions, pkg_map, stdlib, local_funcs, relpath, graph
+            root, functions, pkg_map, stdlib, local_funcs, relpath, graph, local_pkg_map
         )
 
     # -- dependency index ------------------------------------------------------
@@ -253,16 +276,39 @@ class GoAnalyzer(LanguageAnalyzer):
         mod_id: str,
         dep_index: list[tuple[str, str]],
         graph: Any,
-    ) -> tuple[dict[str, tuple[str, str]], set[str]]:
+        go_module: str | None,
+        go_packages: dict[str, Any],
+    ) -> tuple[
+        dict[str, tuple[str, str]],
+        set[str],
+        dict[str, dict[str, Any]],
+        set[str],
+    ]:
         """Walk import declarations.
 
-        Returns ``(pkg_map, stdlib_paths)`` where ``pkg_map`` maps a local package
-        name -> ``(dep_node_id, import_path)`` for imports resolved to a declared
-        dependency, and ``stdlib_paths`` is the set of standard-library import
-        paths (so calls through them are recognised as not-a-dependency).
+        Returns ``(pkg_map, stdlib_paths, local_pkg_map, unresolved_imports)``:
+
+        * ``pkg_map`` maps a local package name -> ``(dep_node_id, import_path)``
+          for imports resolved to a declared external dependency;
+        * ``stdlib_paths`` is the set of standard-library import paths;
+        * ``local_pkg_map`` maps a local binding name -> ``{"exports":
+          {name: fn_id}, "import_path": str}`` for a LOCAL import (under the
+          module path) that resolves SOUNDLY to a real repo package directory;
+        * ``unresolved_imports`` collects the import paths of local imports that
+          could not be resolved soundly (recorded, never guessed).
+
+        An import is LOCAL when ``go_module`` is known and the path equals or is
+        under it. A local import resolves only when the repo package exists in
+        ``go_packages`` with an unambiguous declared ``package`` name, and either
+        an explicit alias is given or that declared name matches the import's
+        last path segment (the cardinal rule: a package-name/directory-name
+        mismatch with no alias is left unresolved rather than guessed). Dot and
+        blank imports bind no usable name and never resolve.
         """
         pkg_map: dict[str, tuple[str, str]] = {}
         stdlib: set[str] = set()
+        local_pkg_map: dict[str, dict[str, Any]] = {}
+        unresolved_imports: set[str] = set()
 
         for node in self._iter_type(root, "import_spec"):
             path_node = node.child_by_field_name("path")
@@ -276,16 +322,32 @@ class GoAnalyzer(LanguageAnalyzer):
             # import cannot be resolved back to, so it is tracked for no calls.
             name_node = node.child_by_field_name("name")
             alias: str | None = None
+            blank_or_dot = False
             if name_node is not None:
                 if name_node.type == "package_identifier":
                     alias = name_node.text.decode("utf-8")
                 else:
                     # ``_`` (blank_identifier) or ``.`` (dot import): no usable
                     # local name. Still classify for the stdlib record / edge.
-                    alias = None
+                    blank_or_dot = True
 
             if self._is_stdlib(import_path):
                 stdlib.add(import_path)
+                continue
+
+            # LOCAL package import (same module): resolve to a repo package, or
+            # record unresolved. Never an external-dep edge.
+            if go_module is not None and (
+                import_path == go_module or import_path.startswith(go_module + "/")
+            ):
+                self._resolve_local_import(
+                    import_path,
+                    alias,
+                    blank_or_dot,
+                    go_packages,
+                    local_pkg_map,
+                    unresolved_imports,
+                )
                 continue
 
             dep_id = self._match_dep(import_path, dep_index)
@@ -294,13 +356,75 @@ class GoAnalyzer(LanguageAnalyzer):
                 local = alias or self._default_package_name(import_path)
                 if local not in (".", "_"):
                     pkg_map[local] = (dep_id, import_path)
-            # Non-stdlib import with no matching declared dependency: not a
-            # dependency we know about -> no edge, no call resolution (calls
-            # through it stay unresolved). Nothing to record soundly.
+            # Non-stdlib, non-local import with no matching declared dependency:
+            # not a dependency we know about -> no edge, no call resolution
+            # (calls through it stay unresolved). Nothing to record soundly.
 
-        return pkg_map, stdlib
+        return pkg_map, stdlib, local_pkg_map, unresolved_imports
+
+    @staticmethod
+    def _resolve_local_import(
+        import_path: str,
+        alias: str | None,
+        blank_or_dot: bool,
+        go_packages: dict[str, Any],
+        local_pkg_map: dict[str, dict[str, Any]],
+        unresolved_imports: set[str],
+    ) -> None:
+        """Bind a LOCAL import to its repo package, or record it unresolved.
+
+        See :meth:`_process_imports` for the soundness conditions. A blank/dot
+        import, a missing repo package dir, an ambiguous declared package name,
+        or a package-name/last-segment mismatch (with no alias) all leave the
+        import unresolved: no binding is created, so calls through it stay
+        unresolved and no edge is ever fabricated.
+        """
+        if blank_or_dot:
+            # ``import . "..."`` / ``import _ "..."``: no usable local name.
+            unresolved_imports.add(import_path)
+            return
+        pkg_info = go_packages.get(import_path)
+        if pkg_info is None:
+            # Local import with no matching repo package directory.
+            unresolved_imports.add(import_path)
+            return
+        declared = pkg_info.get("package")
+        last_segment = import_path.rsplit("/", 1)[-1]
+        if alias is not None:
+            # An explicit alias binds the package regardless of its declared
+            # name, but we still need an unambiguous package behind the path.
+            if declared is None:
+                unresolved_imports.add(import_path)
+                return
+            binding = alias
+        else:
+            # Non-aliased: the binding name is the last path segment, which must
+            # match the directory's declared package name (cardinal rule).
+            if declared is None or declared != last_segment:
+                unresolved_imports.add(import_path)
+                return
+            binding = last_segment
+        local_pkg_map[binding] = {
+            "exports": pkg_info.get("exports", {}),
+            "import_path": import_path,
+        }
 
     # -- functions -------------------------------------------------------------
+
+    @staticmethod
+    def _package_name(root: Any) -> str | None:
+        """Declared ``package <name>`` of a Go source file, or ``None``.
+
+        Used by :func:`index_source` to key a directory's package by the name
+        imports actually bind to, so a package-name/directory-name mismatch can
+        be detected and left unresolved rather than guessed.
+        """
+        for child in root.children:
+            if child.type == "package_clause":
+                for c in child.children:
+                    if c.type == "package_identifier":
+                        return c.text.decode("utf-8")
+        return None
 
     def _collect_functions(self, root: Any) -> list[tuple[str, Any, bool, bool]]:
         """Return ``[(qualname, node, is_method, pointer_receiver), ...]``.
@@ -453,8 +577,10 @@ class GoAnalyzer(LanguageAnalyzer):
         bound: set[str],
         local_funcs: set[str],
         relpath: str,
+        local_pkg_map: dict[str, dict[str, Any]] | None = None,
     ) -> tuple[str, ...]:
         """Resolve one call. See the module docstring for the model."""
+        local_pkg_map = local_pkg_map or {}
         func = call.child_by_field_name("function")
         if func is None:
             return ("unresolved", "<call>")
@@ -484,6 +610,15 @@ class GoAnalyzer(LanguageAnalyzer):
             if root_name in bound:
                 # Local value shadows any package: unknown type -> unresolved.
                 return ("unresolved", f"{root_name}.{method}")
+            if root_name in local_pkg_map:
+                # Cross-package call: resolve only when the exported name maps to
+                # EXACTLY ONE function in that local package (the ``exports`` map
+                # already drops ambiguous names). Absent/unexported -> unresolved.
+                exports = local_pkg_map[root_name]["exports"]
+                target = exports.get(method)
+                if target is not None:
+                    return ("fn", target)
+                return ("unresolved", f"{root_name}.{method}")
             if root_name in pkg_map:
                 dep_id, _import_path = pkg_map[root_name]
                 return ("dep", dep_id, f"{root_name}.{method}")
@@ -507,7 +642,9 @@ class GoAnalyzer(LanguageAnalyzer):
         local_funcs: set[str],
         relpath: str,
         graph: Any,
+        local_pkg_map: dict[str, dict[str, Any]] | None = None,
     ) -> None:
+        local_pkg_map = local_pkg_map or {}
         # A verb call is a route only when its receiver was bound in-file to a
         # recognised router constructor; map each such name -> framework first.
         routers = self._router_vars(root, pkg_map, stdlib)
@@ -575,6 +712,7 @@ class GoAnalyzer(LanguageAnalyzer):
                     local_funcs,
                     relpath,
                     graph,
+                    local_pkg_map,
                 )
 
     def _router_vars(
@@ -669,16 +807,22 @@ class GoAnalyzer(LanguageAnalyzer):
         local_funcs: set[str],
         relpath: str,
         graph: Any,
+        local_pkg_map: dict[str, dict[str, Any]] | None = None,
     ) -> None:
         ep_id = f"ep:{http_method}:{path}"
+        local_pkg_map = local_pkg_map or {}
 
-        # Resolve the handler to a local function node only when it is a bare
-        # named reference to a function declared in THIS file AND that name is
-        # not locally bound. A locally-bound name (``handler := wrap(x)``) shadows
-        # the same-named function and has an unknown runtime target, so it is
-        # recorded as an unresolved handler with NO fabricated ``fn:`` edge (B6).
-        # A func literal is inline; a selector / cross-file name is not an edge.
-        handler_qual: str | None = None
+        # Resolve the handler to a function node only when it is an unambiguous
+        # named reference: a bare name declared in THIS file (and not locally
+        # shadowed -- B6), or a cross-PACKAGE selector ``foo.Handler`` where
+        # ``foo`` is a local package binding and ``Handler`` is EXACTLY ONE
+        # exported function. ``handler_fn_id`` is the full target id (same-file
+        # or cross-file); ``handler_repr`` is the textual name recorded on the
+        # entrypoint. A func literal is inline; anything else is unresolved with
+        # NO fabricated edge.
+        handler_fn_id: str | None = None
+        handler_repr: str | None = None
+        handler_file: str | None = None
         inline = False
         unresolved_handler: str | None = None
         if handler_arg is not None:
@@ -687,25 +831,47 @@ class GoAnalyzer(LanguageAnalyzer):
                 if cand in bound:
                     unresolved_handler = cand
                 elif cand in local_funcs:
-                    handler_qual = cand
+                    handler_fn_id = f"fn:{relpath}:{cand}"
+                    handler_repr = cand
+                    handler_file = relpath
                 else:
                     # Bare name not declared in this file: cross-file or unknown.
                     unresolved_handler = cand
+            elif handler_arg.type == "selector_expression":
+                operand = handler_arg.child_by_field_name("operand")
+                field = handler_arg.child_by_field_name("field")
+                if operand is not None and field is not None and operand.type == "identifier":
+                    pkg = operand.text.decode("utf-8")
+                    name = field.text.decode("utf-8")
+                    repr_ = f"{pkg}.{name}"
+                    if pkg not in bound and pkg in local_pkg_map:
+                        target = local_pkg_map[pkg]["exports"].get(name)
+                        if target is not None:
+                            handler_fn_id = target
+                            handler_repr = repr_
+                            handler_file = self._file_of_fn(target)
+                        else:
+                            unresolved_handler = repr_
+                    else:
+                        # Shadowed, a dependency selector, or unknown: no edge.
+                        unresolved_handler = repr_
+                else:
+                    unresolved_handler = self._node_repr(handler_arg)
             elif handler_arg.type == "func_literal":
                 inline = True
 
         existing = graph.get_node(ep_id)
         if existing is not None:
-            if handler_qual is not None and (
-                existing.attrs.get("handler") != handler_qual
-                or existing.attrs.get("handler_file") != relpath
+            if handler_fn_id is not None and (
+                existing.attrs.get("handler") != handler_repr
+                or existing.attrs.get("handler_file") != handler_file
             ):
                 collisions = existing.attrs.setdefault("handler_collisions", [])
-                entry = {"handler": handler_qual, "handler_file": relpath}
+                entry = {"handler": handler_repr, "handler_file": handler_file}
                 if entry not in collisions:
                     collisions.append(entry)
-            if handler_qual is not None:
-                graph.add_edge(ep_id, f"fn:{relpath}:{handler_qual}", "route_to_handler")
+            if handler_fn_id is not None:
+                graph.add_edge(ep_id, handler_fn_id, "route_to_handler")
             return
 
         attrs: dict[str, Any] = {
@@ -713,16 +879,24 @@ class GoAnalyzer(LanguageAnalyzer):
             "path": path,
             "framework": framework,
         }
-        if handler_qual is not None:
-            attrs["handler"] = handler_qual
-            attrs["handler_file"] = relpath
+        if handler_fn_id is not None:
+            attrs["handler"] = handler_repr
+            attrs["handler_file"] = handler_file
         if inline:
             attrs["inline_handler"] = True
         if unresolved_handler is not None:
             attrs["unresolved_handler"] = unresolved_handler
         graph.add_node(ep_id, "entrypoint", f"{http_method} {path}", **attrs)
-        if handler_qual is not None:
-            graph.add_edge(ep_id, f"fn:{relpath}:{handler_qual}", "route_to_handler")
+        if handler_fn_id is not None:
+            graph.add_edge(ep_id, handler_fn_id, "route_to_handler")
+
+    @staticmethod
+    def _file_of_fn(fn_id: str) -> str | None:
+        """Repo-relative file of a ``fn:{relpath}:{qual}`` id, or ``None``."""
+        if not fn_id.startswith("fn:"):
+            return None
+        rest = fn_id[3:]
+        return rest.rsplit(":", 1)[0] if ":" in rest else None
 
     # -- helpers ---------------------------------------------------------------
 
@@ -772,3 +946,49 @@ class GoAnalyzer(LanguageAnalyzer):
             return node.text.decode("utf-8")[:80]
         except Exception:  # pragma: no cover - text is bytes on real trees
             return "<expr>"
+
+
+# ---------------------------------------------------------------------------
+# Cross-package index (built by scan.py BEFORE per-file analysis)
+# ---------------------------------------------------------------------------
+
+_INDEX_ANALYZER: GoAnalyzer | None = None
+
+
+def index_source(relpath: str, source: str) -> tuple[str | None, dict[str, str]]:
+    """Return ``(package_name, {ExportedFunc: fn_id})`` for one Go source file.
+
+    Used by the orchestrator to build the per-package cross-file export index
+    before per-file analysis, so a ``foo.Bar()`` call or a ``foo.Handler`` route
+    handler in one package can resolve into a function EXPORTED by another
+    package of the same module.
+
+    Only EXPORTED (Capitalized) top-level *function* declarations are included;
+    methods are excluded (``pkg.Name`` can only name a package-level function,
+    never a method). The ``fn:`` id matches the id the analyzer emits for the
+    same declaration. A name that a single file declares more than once is
+    dropped (ambiguous). The caller merges across all files of a directory and
+    drops any name that is ambiguous across the package, honouring the cardinal
+    rule that a cross-package edge is emitted only for an exactly-one target.
+    """
+    global _INDEX_ANALYZER
+    if _INDEX_ANALYZER is None:
+        _INDEX_ANALYZER = GoAnalyzer()
+    analyzer = _INDEX_ANALYZER
+    root = get_parser("go").parse(source.encode("utf-8")).root_node
+    package = analyzer._package_name(root)
+    functions = analyzer._collect_functions(root)
+
+    seen: dict[str, str] = {}
+    dup: set[str] = set()
+    for qual, _node, is_method, _ptr in functions:
+        if is_method or "." in qual:
+            continue  # methods / qualified names are not package-level funcs
+        if not qual[:1].isupper():
+            continue  # unexported names are not reachable as ``pkg.Name``
+        fn_id = f"fn:{relpath}:{qual}"
+        if qual in seen:
+            dup.add(qual)
+        seen[qual] = fn_id
+    exports = {name: fid for name, fid in seen.items() if name not in dup}
+    return package, exports

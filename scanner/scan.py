@@ -11,7 +11,7 @@ import os
 from typing import Any
 
 from . import analyzers, manifests
-from .analyzers import javascript_analyzer, python_analyzer
+from .analyzers import go_analyzer, javascript_analyzer, python_analyzer
 from .docs import ingest_docs
 from .graph import KnowledgeGraph
 from .walker import FileInfo, walk_repo
@@ -68,6 +68,9 @@ def _build_repo_index(
         # JavaScript cross-file index (additive; Python keys above unchanged).
         "js_files": set(),  # set of repo-relative JS paths
         "js_modules": {},  # module_relpath -> {export_name: fn_id}
+        # Go cross-package index (additive; Python/JS keys above unchanged).
+        "go_module": None,  # the single module's path from go.mod, or None
+        "go_packages": {},  # local import path -> {package, exports{name: fn_id}}
     }
     source_cache: dict[str, str] = {}
 
@@ -99,7 +102,109 @@ def _build_repo_index(
         module_relpath, exports = javascript_analyzer.index_source(info.relpath, source)
         repo_index["js_modules"][module_relpath] = exports
 
+    # Go cross-package export index: built from Go files only, under its own
+    # keys so Python/JS resolution is untouched. Requires a single go.mod so the
+    # module path is unambiguous; grouped by directory, each dir resolved to its
+    # import path. Done BEFORE analyzers run so a cross-package call/handler can
+    # resolve into a function exported in another package of the same module.
+    _build_go_index(files, repo_index, source_cache)
+
     return repo_index, source_cache
+
+
+def _read_go_module_path(abspath: str) -> str | None:
+    """Return the ``module <path>`` declared by a go.mod file, or ``None``."""
+    source = _read_source(abspath)
+    if source is None:
+        return None
+    for line in source.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("module "):
+            parts = stripped.split()
+            if len(parts) >= 2:
+                return parts[1].strip('"')
+    return None
+
+
+def _rel_within(path: str, base: str) -> str | None:
+    """POSIX-style path of ``path`` relative to ``base`` if within it, else None.
+
+    Returns ``""`` when ``path == base``. Used to turn a Go file's directory
+    into its module-relative segment; a directory outside the module root (which
+    cannot belong to the module) yields ``None`` and is skipped.
+    """
+    rel = os.path.relpath(path or ".", base or ".")
+    if rel == os.pardir or rel.startswith(os.pardir + os.sep):
+        return None
+    rel = rel.replace(os.sep, "/")
+    return "" if rel == "." else rel
+
+
+def _build_go_index(
+    files: list[FileInfo],
+    repo_index: dict[str, Any],
+    source_cache: dict[str, str],
+) -> None:
+    """Populate ``go_module`` / ``go_packages`` on ``repo_index`` (additive).
+
+    Only a single-module repo is handled: with zero or several go.mod files the
+    module path is ambiguous, so no cross-package index is built and Go stays
+    single-file (sound by omission). Files are grouped by directory (one Go
+    package per directory); ``_test.go`` files are excluded (not part of the
+    importable package). A directory resolves only when its files agree on one
+    declared package name; an exported function name that is ambiguous across
+    the package's files is dropped.
+    """
+    go_mod_files = [f for f in files if os.path.basename(f.relpath) == "go.mod"]
+    if len(go_mod_files) != 1:
+        return
+    go_module = _read_go_module_path(go_mod_files[0].abspath)
+    if not go_module:
+        return
+    go_mod_dir = os.path.dirname(go_mod_files[0].relpath)
+
+    # dir relpath -> list of (relpath, source) for the package's Go files.
+    dir_files: dict[str, list[tuple[str, str]]] = {}
+    for info in files:
+        if info.language != "go":
+            continue
+        if os.path.basename(info.relpath).endswith("_test.go"):
+            continue
+        source = source_cache.get(info.relpath)
+        if source is None:
+            source = _read_source(info.abspath)
+        if source is None:
+            continue
+        source_cache[info.relpath] = source
+        dir_files.setdefault(os.path.dirname(info.relpath), []).append(
+            (info.relpath, source)
+        )
+
+    go_packages: dict[str, Any] = {}
+    for directory, members in dir_files.items():
+        rel = _rel_within(directory, go_mod_dir)
+        if rel is None:
+            continue  # outside the module root
+        import_path = go_module if rel == "" else f"{go_module}/{rel}"
+        package_names: set[str] = set()
+        name_to_ids: dict[str, set[str]] = {}
+        for relpath, source in members:
+            package_name, exports = go_analyzer.index_source(relpath, source)
+            if package_name is not None:
+                package_names.add(package_name)
+            for name, fn_id in exports.items():
+                name_to_ids.setdefault(name, set()).add(fn_id)
+        # A directory with conflicting declared package names is left unresolved.
+        package = next(iter(package_names)) if len(package_names) == 1 else None
+        merged = {
+            name: next(iter(ids))
+            for name, ids in name_to_ids.items()
+            if len(ids) == 1
+        }
+        go_packages[import_path] = {"package": package, "exports": merged}
+
+    repo_index["go_module"] = go_module
+    repo_index["go_packages"] = go_packages
 
 
 def scan_repo(repo_path: str) -> KnowledgeGraph:
