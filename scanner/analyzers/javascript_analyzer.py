@@ -24,16 +24,42 @@ file it emits, mirroring the Python analyzer's node/edge conventions:
   style routes (``app.get('/p', handler)``, ``router.post(...)`` ...).
 
 ==========================================================================
-SCOPE BOUNDARY (why this layer is breadth, not depth)
+CROSS-FILE RESOLUTION (SOUND, opt-in through the shared repo_index)
 ==========================================================================
 
-Analysis is strictly SINGLE-FILE. ``scan.py`` builds its cross-file
-``repo_index`` (modules/functions) from **Python files only**, so it never
-contains JavaScript functions from other files. Cross-file JS -> JS call
-resolution is therefore out of scope and is deliberately NOT attempted -- this
-matches the project's "Python is the one deep language; others are breadth"
-decision. Functions, routes and intra-file calls are resolved within the one
-file; import edges reach into dependency nodes created by the manifest adapter.
+``scan.py`` builds a JavaScript export index BEFORE any analyzer runs: for every
+``.js/.jsx/.mjs/.cjs`` file it calls :func:`index_source`, which returns that
+file's EXPORTED-name -> function-id map. The maps are stored on ``repo_index``
+under ``js_files`` (the set of repo-relative JS paths) and ``js_modules``
+(module_relpath -> {export_name: fn_id}). This mirrors the Python analyzer's
+``modules``/``functions`` index exactly; the Python keys are left untouched.
+
+With that index, this analyzer resolves cross-file calls and route handlers --
+but ONLY when both the module and the exported function are unambiguous:
+
+* A RELATIVE specifier (``./x``, ``../util/y``) is resolved to a real repo file
+  by trying ``x.js``/``x.jsx``/``x.mjs``/``x.cjs`` and ``x/index.*`` relative to
+  the importing file's directory, against ``js_files``. A bare specifier
+  (``lodash``, ``express``) is a package, not a cross-file target, and keeps the
+  existing dependency-import behaviour. A relative specifier that does not match
+  any repo file resolves to nothing -- no binding, no edge.
+* ``const ctrl = require('./c')`` / ``import * as ctrl from './c'`` bind a
+  cross-file NAMESPACE; ``ctrl.create()`` resolves to the single ``create``
+  export of that module. ``const {create} = require('./c')`` /
+  ``import {create} from './c'`` bind the export directly. ``import ctrl from
+  './c'`` (default) binds the module's default export when it is a function.
+* A route handler that is an imported binding (``app.post('/x', ctrl.create)``
+  or ``app.post('/x', create)``) resolves to the cross-file ``fn:`` id by the
+  same rules.
+
+If the export name is absent or maps to more than one function, or the
+specifier is dynamic/computed (``require(name)``) or does not resolve to a repo
+file, the reference is recorded as unresolved and NO edge is emitted. A named
+export is honoured only when its target is a function node this analyzer also
+emits (a declaration, a ``const``-assigned function, a class/object method);
+re-exports (``export ... from`` / ``module.exports = require(...)``) and
+anonymous ``module.exports = function(){}`` values are NOT followed. Intra-file
+points-to analysis remains out of scope.
 
 ==========================================================================
 WHAT CALL/ROUTE RESOLUTION DOES AND DOES NOT HANDLE
@@ -73,15 +99,17 @@ NOT RESOLVED (recorded as ``unresolved_calls``, never guessed)
     aliasing of an import (resolved for Python) is NOT followed here -- recorded.
   * A bare call to a function that is not a module/top-level declaration (a
     nested or out-of-scope function); it is recorded, never guessed.
-  * Relative imports (``./x``, ``../y``): no edge is fabricated. They cannot be
-    resolved soundly (the cross-file index is Python-only), so they are skipped.
+  * A relative import whose specifier does not resolve to a repo file, whose
+    export name is absent or ambiguous, or which is dynamic/computed: no edge is
+    fabricated -- the call/handler is recorded as unresolved.
 
-Cross-file JS resolution and intra-file points-to analysis are the clear future
-extensions; the ``unresolved_calls`` records mark exactly where they plug in.
+Intra-file points-to analysis remains the clear future extension; the
+``unresolved_calls`` records mark exactly where it plugs in.
 """
 
 from __future__ import annotations
 
+import posixpath
 from typing import Any
 
 from tree_sitter_language_pack import get_parser
@@ -176,6 +204,64 @@ def _normalize_specifier(spec: str) -> str | None:
     return parts[0]
 
 
+# Extensions tried when resolving an extension-less relative specifier, in the
+# Node resolution order (file first, then ``<dir>/index.<ext>``).
+_MODULE_SUFFIXES: tuple[str, ...] = (".js", ".jsx", ".mjs", ".cjs")
+
+
+def _resolve_relative_module(
+    spec: str, importer_relpath: str, js_files: set[str]
+) -> str | None:
+    """Resolve a relative specifier to a real repo JS file, or ``None``.
+
+    ``spec`` is a relative specifier (``./x`` / ``../util/y``). It is joined to
+    the importing file's directory and matched against ``js_files`` by trying
+    ``x.js/.jsx/.mjs/.cjs`` and ``x/index.*``. Returns the matched repo-relative
+    path, or ``None`` when nothing matches -- which keeps the import unresolved
+    (no binding, no fabricated edge).
+    """
+    base_dir = posixpath.dirname(importer_relpath)
+    target = posixpath.normpath(posixpath.join(base_dir, spec))
+    candidates: list[str] = []
+    if target.endswith(_MODULE_SUFFIXES):
+        candidates.append(target)
+    else:
+        candidates.extend(target + suf for suf in _MODULE_SUFFIXES)
+        candidates.extend(posixpath.join(target, "index" + suf) for suf in _MODULE_SUFFIXES)
+    for cand in candidates:
+        if cand in js_files:
+            return cand
+    return None
+
+
+_INDEX_ANALYZER: Any = None
+
+
+def index_source(relpath: str, source: str) -> tuple[str, dict[str, str]]:
+    """Return ``(module_relpath, {export_name: fn_id})`` for one JS source file.
+
+    Used by the orchestrator to build the cross-file export index before
+    per-file analysis, so a call or route handler in one file can resolve into a
+    function EXPORTED by another. The module key is the repo-relative path (the
+    same key used for ``mod:{relpath}``). An export name is included ONLY when it
+    maps to exactly one function node this analyzer also emits; ambiguous names,
+    re-exports and anonymous ``module.exports = function(){}`` values are
+    omitted (recorded as unresolved at the call site). Returns an empty map on a
+    parse that yields no functions.
+    """
+    global _INDEX_ANALYZER
+    if _INDEX_ANALYZER is None:
+        _INDEX_ANALYZER = JavaScriptAnalyzer()
+    analyzer = _INDEX_ANALYZER
+    root = analyzer._get_parser().parse(source.encode("utf-8")).root_node
+    functions = analyzer._collect_functions(root)
+    top_level = {
+        qual: f"fn:{relpath}:{qual}" for qual, _node, _body in functions if "." not in qual
+    }
+    exports = analyzer._collect_exports(root, top_level)
+    return relpath, exports
+
+
 @register
 class JavaScriptAnalyzer(LanguageAnalyzer):
     """Breadth JavaScript analyzer. See the module docstring for the model."""
@@ -208,7 +294,7 @@ class JavaScriptAnalyzer(LanguageAnalyzer):
 
         # 1. Imports -> symbol table (local name -> dependency descriptor) and
         #    dependency import edges.
-        symtab = self._build_symbol_table(root, mod_id, graph)
+        symtab = self._build_symbol_table(root, mod_id, graph, relpath, repo_index)
 
         # 2. Functions (+ declares edges). Nested functions are keyed by their
         #    enclosing qualname; ``local_functions`` holds only module/top-level
@@ -262,18 +348,33 @@ class JavaScriptAnalyzer(LanguageAnalyzer):
     # -- imports / symbol table ----------------------------------------------
 
     def _build_symbol_table(
-        self, root: Any, mod_id: str, graph: Any
+        self,
+        root: Any,
+        mod_id: str,
+        graph: Any,
+        relpath: str,
+        repo_index: dict[str, Any],
     ) -> dict[str, dict[str, Any]]:
         """Build ``{local_name: descriptor}`` and emit dependency ``imports`` edges.
 
         Descriptor types:
-          * ``dep``        -- a namespace binding (``import _ from 'lodash'`` or
-            ``const _ = require('lodash')``); ``base`` is the package name.
-          * ``dep_symbol`` -- a named binding (``import {merge} from 'lodash'`` or
-            ``const {merge} = require('lodash')``); ``symbol`` is ``pkg.name``.
+          * ``dep``        -- a package namespace binding (``import _ from
+            'lodash'`` / ``const _ = require('lodash')``); ``base`` is the name.
+          * ``dep_symbol`` -- a named package binding (``import {merge} from
+            'lodash'`` / ``const {merge} = require('lodash')``); ``symbol`` is
+            ``pkg.name``.
+          * ``xmod``       -- a cross-file namespace binding (``import * as ns
+            from './m'`` / ``const ns = require('./m')``); ``exports`` maps the
+            module's export names to ``fn:`` ids, and ``default_fn`` is the
+            default-export function id for a CommonJS namespace (``None`` for an
+            ESM namespace, which is not callable).
+          * ``xfn``        -- a direct cross-file function binding (``import
+            {create} from './m'`` / ``const {create} = require('./m')`` /
+            ``import create from './m'``); ``fn_id`` is the resolved function id.
 
         An ``imports`` edge is emitted only when a ``dep:npm:{pkg}`` node already
-        exists in the graph (created by the manifest adapter).
+        exists in the graph (created by the manifest adapter). Relative imports
+        bind cross-file descriptors but add no dependency edge.
         """
         symtab: dict[str, dict[str, Any]] = {}
         imported_pkgs: set[str] = set()
@@ -294,11 +395,21 @@ class JavaScriptAnalyzer(LanguageAnalyzer):
                 }
             imported_pkgs.add(pkg)
 
+        def bind_xmod(local: str, exports: dict[str, str], default_fn: str | None) -> None:
+            symtab[local] = {"type": "xmod", "exports": exports, "default_fn": default_fn}
+
+        def bind_xfn(local: str, fn_id: str) -> None:
+            symtab[local] = {"type": "xfn", "fn_id": fn_id}
+
         def walk(node: Any) -> None:
             if node.type == "import_statement":
-                self._handle_import_statement(node, bind_namespace, bind_symbol)
+                self._handle_import_statement(
+                    node, bind_namespace, bind_symbol, bind_xmod, bind_xfn, relpath, repo_index
+                )
             elif node.type == "variable_declarator":
-                self._handle_require_declarator(node, bind_namespace, bind_symbol)
+                self._handle_require_declarator(
+                    node, bind_namespace, bind_symbol, bind_xmod, bind_xfn, relpath, repo_index
+                )
             for child in node.children:
                 walk(child)
 
@@ -313,14 +424,26 @@ class JavaScriptAnalyzer(LanguageAnalyzer):
         return symtab
 
     def _handle_import_statement(
-        self, node: Any, bind_namespace: Any, bind_symbol: Any
+        self,
+        node: Any,
+        bind_namespace: Any,
+        bind_symbol: Any,
+        bind_xmod: Any,
+        bind_xfn: Any,
+        relpath: str,
+        repo_index: dict[str, Any],
     ) -> None:
         # The specifier is the trailing string of the import statement.
         spec = None
         for child in node.children:
             if child.type == "string":
                 spec = _string_literal_value(child)
-        pkg = _normalize_specifier(spec) if spec is not None else None
+        if spec is None:
+            return
+        if spec.startswith("."):
+            self._handle_relative_import(node, spec, relpath, repo_index, bind_xmod, bind_xfn)
+            return
+        pkg = _normalize_specifier(spec)
         if pkg is None:
             return
 
@@ -356,8 +479,66 @@ class JavaScriptAnalyzer(LanguageAnalyzer):
                     local = _node_text(alias_node) if alias_node is not None else imported
                     bind_symbol(local, imported, pkg)
 
+    def _handle_relative_import(
+        self,
+        node: Any,
+        spec: str,
+        relpath: str,
+        repo_index: dict[str, Any],
+        bind_xmod: Any,
+        bind_xfn: Any,
+    ) -> None:
+        """Bind cross-file descriptors for a resolved relative ESM import.
+
+        A specifier that does not resolve to a repo file binds nothing (the
+        reference stays unresolved). A named import whose export is absent or
+        ambiguous binds nothing; a default import binds only when the module's
+        default export is a function.
+        """
+        module_relpath = _resolve_relative_module(
+            spec, relpath, repo_index.get("js_files", set())
+        )
+        if module_relpath is None:
+            return
+        exports: dict[str, str] = repo_index.get("js_modules", {}).get(module_relpath, {})
+        default_fn = exports.get("default")
+
+        clause = next((c for c in node.children if c.type == "import_clause"), None)
+        if clause is None:
+            return  # side-effect import ``import './m'``: no binding
+        for part in clause.children:
+            if part.type == "identifier":
+                # Default import: binds to the module's default export function.
+                if default_fn is not None:
+                    bind_xfn(_node_text(part), default_fn)
+            elif part.type == "namespace_import":
+                for sub in part.children:
+                    if sub.type == "identifier":
+                        # ESM namespace is not callable -> no default_fn.
+                        bind_xmod(_node_text(sub), exports, None)
+            elif part.type == "named_imports":
+                for spec_node in part.children:
+                    if spec_node.type != "import_specifier":
+                        continue
+                    name_node = spec_node.child_by_field_name("name")
+                    alias_node = spec_node.child_by_field_name("alias")
+                    if name_node is None:
+                        continue
+                    imported = _node_text(name_node)
+                    local = _node_text(alias_node) if alias_node is not None else imported
+                    fn_id = exports.get(imported)
+                    if fn_id is not None:
+                        bind_xfn(local, fn_id)
+
     def _handle_require_declarator(
-        self, node: Any, bind_namespace: Any, bind_symbol: Any
+        self,
+        node: Any,
+        bind_namespace: Any,
+        bind_symbol: Any,
+        bind_xmod: Any,
+        bind_xfn: Any,
+        relpath: str,
+        repo_index: dict[str, Any],
     ) -> None:
         value = node.child_by_field_name("value")
         if value is None or value.type != "call_expression":
@@ -373,12 +554,20 @@ class JavaScriptAnalyzer(LanguageAnalyzer):
             if arg.type == "string":
                 spec = _string_literal_value(arg)
                 break
-        pkg = _normalize_specifier(spec) if spec is not None else None
-        if pkg is None:
+        if spec is None:
+            # Dynamic/computed require (``require(name)``): unresolvable, bind
+            # nothing so any call through the binding stays unresolved.
             return
-
         name_node = node.child_by_field_name("name")
         if name_node is None:
+            return
+
+        if spec.startswith("."):
+            self._handle_relative_require(name_node, spec, relpath, repo_index, bind_xmod, bind_xfn)
+            return
+
+        pkg = _normalize_specifier(spec)
+        if pkg is None:
             return
         if name_node.type == "identifier":
             bind_namespace(_node_text(name_node), pkg)
@@ -393,6 +582,45 @@ class JavaScriptAnalyzer(LanguageAnalyzer):
                     val = part.child_by_field_name("value")
                     if key is not None and val is not None and val.type == "identifier":
                         bind_symbol(_node_text(val), _node_text(key), pkg)
+
+    def _handle_relative_require(
+        self,
+        name_node: Any,
+        spec: str,
+        relpath: str,
+        repo_index: dict[str, Any],
+        bind_xmod: Any,
+        bind_xfn: Any,
+    ) -> None:
+        """Bind cross-file descriptors for a resolved relative CommonJS require.
+
+        ``const ns = require('./m')`` binds a namespace (``ns.member`` resolves,
+        and a bare ``ns()`` resolves when the module default-exports a function);
+        ``const { create } = require('./m')`` binds each export that resolves to
+        exactly one function. Unresolved specifiers/exports bind nothing.
+        """
+        module_relpath = _resolve_relative_module(
+            spec, relpath, repo_index.get("js_files", set())
+        )
+        if module_relpath is None:
+            return
+        exports: dict[str, str] = repo_index.get("js_modules", {}).get(module_relpath, {})
+        if name_node.type == "identifier":
+            bind_xmod(_node_text(name_node), exports, exports.get("default"))
+        elif name_node.type == "object_pattern":
+            for part in name_node.children:
+                if part.type == "shorthand_property_identifier_pattern":
+                    sym = _node_text(part)
+                    fn_id = exports.get(sym)
+                    if fn_id is not None:
+                        bind_xfn(sym, fn_id)
+                elif part.type == "pair_pattern":
+                    key = part.child_by_field_name("key")
+                    val = part.child_by_field_name("value")
+                    if key is not None and val is not None and val.type == "identifier":
+                        fn_id = exports.get(_node_text(key))
+                        if fn_id is not None:
+                            bind_xfn(_node_text(val), fn_id)
 
     # -- function discovery ---------------------------------------------------
 
@@ -504,6 +732,113 @@ class JavaScriptAnalyzer(LanguageAnalyzer):
             return True
 
         return False
+
+    # -- exports (cross-file index) -------------------------------------------
+
+    def _collect_exports(
+        self, root: Any, top_level: dict[str, str]
+    ) -> dict[str, str]:
+        """Map each EXPORTED name to the single function id it refers to.
+
+        ``top_level`` maps a module/top-level function qualname to its ``fn:``
+        id. An export resolves only to a name present there, so the target is
+        always a real function node. Names that would map to more than one
+        distinct function id are dropped (ambiguous -> unresolved), honouring the
+        cardinal rule.
+        """
+        candidates: dict[str, set[str]] = {}
+
+        def add(name: str | None, fn_id: str | None) -> None:
+            if name and fn_id:
+                candidates.setdefault(name, set()).add(fn_id)
+
+        def walk(node: Any) -> None:
+            if node.type == "export_statement":
+                self._collect_export_statement(node, top_level, add)
+            elif node.type == "assignment_expression":
+                self._collect_cjs_export(node, top_level, add)
+            for child in node.children:
+                walk(child)
+
+        walk(root)
+        return {name: next(iter(ids)) for name, ids in candidates.items() if len(ids) == 1}
+
+    def _collect_export_statement(
+        self, node: Any, top_level: dict[str, str], add: Any
+    ) -> None:
+        # Re-export (``export { x } from './y'``): cannot be followed soundly.
+        if node.child_by_field_name("source") is not None:
+            return
+        is_default = any(c.type == "default" for c in node.children)
+        decl = node.child_by_field_name("declaration")
+        if decl is not None:
+            if decl.type in ("function_declaration", "generator_function_declaration"):
+                name_node = decl.child_by_field_name("name")
+                if name_node is not None:
+                    local = _node_text(name_node)
+                    add("default" if is_default else local, top_level.get(local))
+            elif decl.type in ("lexical_declaration", "variable_declaration"):
+                for d in decl.children:
+                    if d.type != "variable_declarator":
+                        continue
+                    nn = d.child_by_field_name("name")
+                    if nn is not None and nn.type == "identifier":
+                        local = _node_text(nn)
+                        add("default" if is_default else local, top_level.get(local))
+            return
+        if is_default:
+            # ``export default <expr>``: only an identifier naming a top-level
+            # function is followed; anonymous expressions/objects are not.
+            for child in node.children:
+                if child.type == "identifier":
+                    add("default", top_level.get(_node_text(child)))
+            return
+        clause = next((c for c in node.children if c.type == "export_clause"), None)
+        if clause is None:
+            return
+        for spec_node in clause.children:
+            if spec_node.type != "export_specifier":
+                continue
+            name_node = spec_node.child_by_field_name("name")
+            alias_node = spec_node.child_by_field_name("alias")
+            if name_node is None:
+                continue
+            local = _node_text(name_node)
+            exported = _node_text(alias_node) if alias_node is not None else local
+            add(exported, top_level.get(local))
+
+    def _collect_cjs_export(
+        self, node: Any, top_level: dict[str, str], add: Any
+    ) -> None:
+        left = node.child_by_field_name("left")
+        right = node.child_by_field_name("right")
+        if left is None or left.type != "member_expression":
+            return
+        root, attrs = self._flatten_ref(left)
+        if root == "module" and attrs == ["exports"]:
+            if right is not None and right.type == "object":
+                self._collect_exports_object(right, top_level, add)
+            elif right is not None and right.type == "identifier":
+                add("default", top_level.get(_node_text(right)))
+        elif root == "exports" and len(attrs) == 1:
+            if right is not None and right.type == "identifier":
+                add(attrs[0], top_level.get(_node_text(right)))
+        elif root == "module" and len(attrs) == 2 and attrs[0] == "exports":
+            if right is not None and right.type == "identifier":
+                add(attrs[1], top_level.get(_node_text(right)))
+
+    def _collect_exports_object(
+        self, obj: Any, top_level: dict[str, str], add: Any
+    ) -> None:
+        for member in obj.children:
+            if member.type == "shorthand_property_identifier":
+                name = _node_text(member)
+                add(name, top_level.get(name))
+            elif member.type == "pair":
+                key = member.child_by_field_name("key")
+                value = member.child_by_field_name("value")
+                if key is not None and value is not None and value.type == "identifier":
+                    add(_node_text(key), top_level.get(_node_text(value)))
 
     # -- scope (bound names up the ancestor chain, for shadowing) -------------
 
@@ -643,21 +978,20 @@ class JavaScriptAnalyzer(LanguageAnalyzer):
         visit(root, None)
         return calls
 
-    def _callee_root_and_attrs(self, call: Any) -> tuple[str | None, list[str]]:
-        """Flatten the callee into ``(root_identifier, [attr, ...])``.
+    def _flatten_ref(self, node: Any) -> tuple[str | None, list[str]]:
+        """Flatten an identifier or member chain into ``(root, [attr, ...])``.
 
-        Returns ``(None, [])`` when the callee is not an identifier or a member
-        chain rooted at an identifier (e.g. ``this.x()``, ``obj[k]()``,
-        ``f()()``) -- such calls are unresolvable.
+        Returns ``(None, [])`` for anything that is not an identifier or a member
+        chain rooted at an identifier (e.g. ``this.x``, ``obj[k]``, ``f().x``) --
+        such references are unresolvable.
         """
-        func = call.child_by_field_name("function")
-        if func is None:
+        if node is None:
             return (None, [])
-        if func.type == "identifier":
-            return (_node_text(func), [])
-        if func.type == "member_expression":
+        if node.type == "identifier":
+            return (_node_text(node), [])
+        if node.type == "member_expression":
             attrs: list[str] = []
-            cur = func
+            cur = node
             while cur is not None and cur.type == "member_expression":
                 prop = cur.child_by_field_name("property")
                 if prop is None or prop.type != "property_identifier":
@@ -669,6 +1003,15 @@ class JavaScriptAnalyzer(LanguageAnalyzer):
                 return (_node_text(cur), attrs)
             return (None, [])
         return (None, [])
+
+    def _callee_root_and_attrs(self, call: Any) -> tuple[str | None, list[str]]:
+        """Flatten a call's callee into ``(root_identifier, [attr, ...])``.
+
+        Returns ``(None, [])`` when the callee is not an identifier or a member
+        chain rooted at an identifier (e.g. ``this.x()``, ``obj[k]()``,
+        ``f()()``) -- such calls are unresolvable.
+        """
+        return self._flatten_ref(call.child_by_field_name("function"))
 
     def _resolve_call(
         self,
@@ -690,16 +1033,54 @@ class JavaScriptAnalyzer(LanguageAnalyzer):
 
         if root in symtab:
             desc = symtab[root]
+            dtype = desc["type"]
             suffix = ("." + ".".join(attrs)) if attrs else ""
-            if desc["type"] == "dep":
+            if dtype == "dep":
                 return ("dep", desc["dep_id"], desc["base"] + suffix)
-            if desc["type"] == "dep_symbol":
+            if dtype == "dep_symbol":
                 return ("dep", desc["dep_id"], desc["symbol"] + suffix)
+            if dtype in ("xmod", "xfn"):
+                fn_id = self._resolve_ref_to_fn(root, attrs, symtab, local_functions)
+                if fn_id is not None:
+                    return ("fn", fn_id)
+                return ("unresolved", unresolved_repr)
 
         if not attrs and root in local_functions:
             return ("fn", local_functions[root])
 
         return ("unresolved", unresolved_repr)
+
+    def _resolve_ref_to_fn(
+        self,
+        root: str,
+        attrs: list[str],
+        symtab: dict[str, dict[str, Any]],
+        local_functions: dict[str, str],
+    ) -> str | None:
+        """Resolve a flattened reference to a single ``fn:`` id, else ``None``.
+
+        Handles cross-file namespace (``xmod``: ``ns.member`` or, for a CommonJS
+        namespace whose module exports a default function, a bare call) and
+        direct cross-file bindings (``xfn``), plus same-file top-level functions.
+        A dependency binding is never a function handler, so it returns ``None``.
+        Returns ``None`` whenever the reference is ambiguous or out of scope --
+        no edge is then emitted.
+        """
+        if root in symtab:
+            desc = symtab[root]
+            dtype = desc["type"]
+            if dtype == "xmod":
+                if len(attrs) == 1:
+                    return desc["exports"].get(attrs[0])
+                if not attrs:
+                    return desc.get("default_fn")
+                return None
+            if dtype == "xfn":
+                return desc["fn_id"] if not attrs else None
+            return None  # dep / dep_symbol: not a local function
+        if not attrs and root in local_functions:
+            return local_functions[root]
+        return None
 
     @staticmethod
     def _safe_call_repr(call: Any) -> str:
@@ -879,7 +1260,7 @@ class JavaScriptAnalyzer(LanguageAnalyzer):
 
         bound = self._bound_names_at(call)
         handler_kind, handler_repr, handler_fn_id = self._classify_handler(
-            handler_node, local_functions, bound
+            handler_node, local_functions, bound, symtab
         )
 
         existing = graph.get_node(ep_id)
@@ -917,27 +1298,35 @@ class JavaScriptAnalyzer(LanguageAnalyzer):
             graph.add_edge(ep_id, handler_fn_id, "route_to_handler")
 
     def _classify_handler(
-        self, handler_node: Any, local_functions: dict[str, str], bound: set[str]
+        self,
+        handler_node: Any,
+        local_functions: dict[str, str],
+        bound: set[str],
+        symtab: dict[str, dict[str, Any]],
     ) -> tuple[str, str | None, str | None]:
         """Return ``(kind, handler_repr, fn_id_or_None)`` for a route handler.
 
-        A named reference to a module/top-level function defined in this file
-        yields an edge. An inline anonymous function is flagged with no edge. A
-        name that is locally bound (a parameter/local that shadows the function),
-        or otherwise unknown (external / cross-file), is recorded as an
+        A reference that resolves to exactly one function -- a module/top-level
+        function in this file, or an unambiguous cross-file export reached
+        through an imported binding (``create`` / ``ctrl.create``) -- yields an
+        edge. An inline anonymous function is flagged with no edge. A name that
+        is locally bound (a parameter/local that shadows the function), a
+        dependency call, or an otherwise-unresolvable reference is recorded as an
         unresolved handler with no fabricated ``fn:`` edge.
         """
         if handler_node is None:
             return ("none", None, None)
-        if handler_node.type == "identifier":
-            name = _node_text(handler_node)
-            if name in bound:
-                # Parameter/local shadow: NOT the top-level function of that name.
-                return ("unresolved", name, None)
-            if name in local_functions:
-                return ("named", name, local_functions[name])
-            return ("unresolved", name, None)
+        root, attrs = self._flatten_ref(handler_node)
+        if root is not None:
+            repr_ = root if not attrs else root + "." + ".".join(attrs)
+            if root in bound:
+                # Parameter/local shadow: NOT the import/top-level of that name.
+                return ("unresolved", repr_, None)
+            fn_id = self._resolve_ref_to_fn(root, attrs, symtab, local_functions)
+            if fn_id is not None:
+                return ("named", repr_, fn_id)
+            return ("unresolved", repr_, None)
         if handler_node.type in ("arrow_function", "function_expression", "generator_function"):
             return ("inline", None, None)
-        # Member expression, call, etc.: record its text, fabricate no edge.
+        # Call, index access, etc.: record its text, fabricate no edge.
         return ("unresolved", _node_text(handler_node)[:80], None)

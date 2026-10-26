@@ -11,7 +11,7 @@ import os
 from typing import Any
 
 from . import analyzers, manifests
-from .analyzers import python_analyzer
+from .analyzers import javascript_analyzer, python_analyzer
 from .docs import ingest_docs
 from .graph import KnowledgeGraph
 from .walker import FileInfo, walk_repo
@@ -65,6 +65,9 @@ def _build_repo_index(
         "module_by_file": {},  # relpath -> module path
         "functions": {},  # relpath -> {qualnames}
         "import_index": python_analyzer.build_import_index(deps),
+        # JavaScript cross-file index (additive; Python keys above unchanged).
+        "js_files": set(),  # set of repo-relative JS paths
+        "js_modules": {},  # module_relpath -> {export_name: fn_id}
     }
     source_cache: dict[str, str] = {}
 
@@ -79,6 +82,22 @@ def _build_repo_index(
         repo_index["modules"][module_path] = info.relpath
         repo_index["module_by_file"][info.relpath] = module_path
         repo_index["functions"][info.relpath] = quals
+
+    # JavaScript export index: built from JS files only, stored under its own
+    # keys so Python resolution is untouched. Done BEFORE analyzers run so a
+    # cross-file call/handler can resolve into a function exported elsewhere.
+    for info in files:
+        if info.language != "javascript":
+            continue
+        source = source_cache.get(info.relpath)
+        if source is None:
+            source = _read_source(info.abspath)
+        if source is None:
+            continue
+        source_cache[info.relpath] = source
+        repo_index["js_files"].add(info.relpath)
+        module_relpath, exports = javascript_analyzer.index_source(info.relpath, source)
+        repo_index["js_modules"][module_relpath] = exports
 
     return repo_index, source_cache
 

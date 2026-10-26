@@ -1,0 +1,10 @@
+{
+  "name": "js-multifile-app",
+  "version": "1.0.0",
+  "description": "Multi-file Express app exercising sound cross-file JS resolution.",
+  "main": "server.js",
+  "dependencies": {
+    "express": "^4.16.0",
+    "lodash": "4.17.4"
+  }
+}
