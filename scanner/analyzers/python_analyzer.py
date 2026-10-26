@@ -303,9 +303,27 @@ class PythonAnalyzer(LanguageAnalyzer):
                 node.attrs["unresolved_calls"] = sorted(set(reprs))[:50]
                 node.attrs["unresolved_call_count"] = len(reprs)
 
-        # Entry points (routes).
+        # Entry points (routes). Decorator + Django detection is unchanged;
+        # registry-style registration (Flask-RESTful ``add_resource``,
+        # ``add_url_rule``, FastAPI ``add_api_route``) and blueprint/router
+        # prefix composition are resolved on top of the same node/edge shape.
         route_objects = self._route_objects(tree)
-        self._extract_routes(functions, relpath, graph, route_objects)
+        ctor_prefix = self._ctor_prefixes(tree)
+        mount_prefix = self._mount_prefixes(tree, route_objects)
+        self._extract_routes(
+            functions, relpath, graph, route_objects, ctor_prefix, mount_prefix
+        )
+        self._extract_registry_routes(
+            tree,
+            symtab,
+            relpath,
+            repo_index,
+            graph,
+            route_objects,
+            ctor_prefix,
+            mount_prefix,
+            mod_id,
+        )
         self._extract_django_urls(tree, symtab, relpath, repo_index, graph)
 
     # -- symbol table ---------------------------------------------------------
@@ -676,55 +694,94 @@ class PythonAnalyzer(LanguageAnalyzer):
                     objects[target.id] = framework
         return objects
 
+    def _emit_entrypoint(
+        self,
+        graph: Any,
+        method: str,
+        path: str,
+        framework: str,
+        relpath: str,
+        handler_qual: str | None = None,
+        handler_file: str | None = None,
+        extra: dict[str, Any] | None = None,
+    ) -> None:
+        """Emit (or merge into) an ``ep:`` node and its handler edge.
+
+        Shared by decorator and registry-style detection. When ``handler_qual``
+        is ``None`` the handler could not be soundly resolved, so no
+        ``route_to_handler`` edge is created (a missing edge beats a wrong one);
+        ``extra`` may then carry ``unresolved_handler`` for visibility.
+        """
+        ep_id = f"ep:{method}:{path}"
+        existing = graph.get_node(ep_id)
+        if existing is not None:
+            # Id collision: keep the first handler, never overwrite it. Record
+            # any additional handler declaring the same route so the clash is
+            # visible rather than silent (``handler_collisions`` convention).
+            if handler_qual is not None:
+                if (
+                    existing.attrs.get("handler") != handler_qual
+                    or existing.attrs.get("handler_file") != handler_file
+                ):
+                    collisions = existing.attrs.setdefault("handler_collisions", [])
+                    entry = {"handler": handler_qual, "handler_file": handler_file}
+                    if entry not in collisions:
+                        collisions.append(entry)
+                graph.add_edge(
+                    ep_id, f"fn:{handler_file}:{handler_qual}", "route_to_handler"
+                )
+            return
+
+        attrs: dict[str, Any] = {
+            "method": method,
+            "path": path,
+            "framework": framework,
+        }
+        if handler_qual is not None:
+            attrs["handler"] = handler_qual
+            attrs["handler_file"] = handler_file
+        if extra:
+            attrs.update(extra)
+        graph.add_node(ep_id, "entrypoint", f"{method} {path}", **attrs)
+        if handler_qual is not None:
+            graph.add_edge(
+                ep_id, f"fn:{handler_file}:{handler_qual}", "route_to_handler"
+            )
+
     def _extract_routes(
         self,
         functions: list[tuple[str, ast.AST]],
         relpath: str,
         graph: Any,
         route_objects: dict[str, str],
+        ctor_prefix: dict[str, tuple[str, str | None]],
+        mount_prefix: dict[str, tuple[str, str | None]],
     ) -> None:
         for qual, fnode in functions:
             for decorator in getattr(fnode, "decorator_list", []):
                 route = self._route_from_decorator(decorator, route_objects)
                 if route is None:
                     continue
-                methods, path, framework = route
+                methods, local_path, framework, obj_var = route
+                full_path, prefix_unresolved = self._compose_path(
+                    framework, obj_var, local_path, ctor_prefix, mount_prefix
+                )
+                extra = {"prefix_unresolved": True} if prefix_unresolved else None
                 for method in methods:
-                    ep_id = f"ep:{method}:{path}"
-                    existing = graph.get_node(ep_id)
-                    if existing is not None:
-                        # Id collision: keep the first handler, never overwrite
-                        # it. Record any additional handler declaring the same
-                        # route so the clash is visible rather than silent.
-                        if (
-                            existing.attrs.get("handler") != qual
-                            or existing.attrs.get("handler_file") != relpath
-                        ):
-                            collisions = existing.attrs.setdefault(
-                                "handler_collisions", []
-                            )
-                            entry = {"handler": qual, "handler_file": relpath}
-                            if entry not in collisions:
-                                collisions.append(entry)
-                        graph.add_edge(
-                            ep_id, f"fn:{relpath}:{qual}", "route_to_handler"
-                        )
-                        continue
-                    graph.add_node(
-                        ep_id,
-                        "entrypoint",
-                        f"{method} {path}",
-                        method=method,
-                        path=path,
-                        handler=qual,
+                    self._emit_entrypoint(
+                        graph,
+                        method,
+                        full_path,
+                        framework,
+                        relpath,
+                        handler_qual=qual,
                         handler_file=relpath,
-                        framework=framework,
+                        extra=extra,
                     )
-                    graph.add_edge(ep_id, f"fn:{relpath}:{qual}", "route_to_handler")
 
     def _route_from_decorator(
         self, decorator: ast.AST, route_objects: dict[str, str]
-    ) -> tuple[list[str], str, str] | None:
+    ) -> tuple[list[str], str, str, str] | None:
         if not isinstance(decorator, ast.Call):
             return None
         func = decorator.func
@@ -742,9 +799,505 @@ class PythonAnalyzer(LanguageAnalyzer):
 
         if attr_lower == "route":
             methods = self._methods_kwarg(decorator) or ["GET"]
-            return (methods, path, framework)
+            return (methods, path, framework, func.value.id)
         if attr_lower in _METHOD_DECORATORS:
-            return ([_METHOD_DECORATORS[attr_lower]], path, framework)
+            return ([_METHOD_DECORATORS[attr_lower]], path, framework, func.value.id)
+        return None
+
+    # -- registry-style route registration (non-decorator) --------------------
+
+    def _extract_registry_routes(
+        self,
+        tree: ast.AST,
+        symtab: dict[str, dict[str, Any]],
+        relpath: str,
+        repo_index: dict[str, Any],
+        graph: Any,
+        route_objects: dict[str, str],
+        ctor_prefix: dict[str, tuple[str, str | None]],
+        mount_prefix: dict[str, tuple[str, str | None]],
+        mod_id: str,
+    ) -> None:
+        """Detect route registration performed by a *call* rather than a decorator.
+
+        * Flask-RESTful ``<api>.add_resource(Cls, "/p", ...)`` (and subclass
+          wrappers such as ``add_org_resource``) where ``api`` is an ``Api``
+          instance or an instance of a subclass of ``Api``;
+        * Flask ``<app|bp>.add_url_rule("/p", view_func=f, methods=[...])``;
+        * FastAPI ``<app|router>.add_api_route("/p", handler, methods=[...])``.
+
+        Cardinal rule: only a recognised registrar call on a recognised receiver
+        with a STRING-LITERAL path produces an entrypoint, and a verb route is
+        only emitted when that verb method is actually defined on the resolved
+        Resource class. Everything else is recorded as unresolved, never guessed.
+        """
+        api_objects = self._api_objects(tree, symtab)
+        unresolved: list[str] = []
+
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if not (
+                isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name)
+            ):
+                continue
+            recv = func.value.id
+            meth = func.attr
+
+            if recv in api_objects and "resource" in meth.lower():
+                self._handle_add_resource(
+                    node, symtab, relpath, repo_index, graph, unresolved
+                )
+            elif recv in route_objects and meth == "add_url_rule":
+                self._handle_imperative_rule(
+                    node,
+                    symtab,
+                    relpath,
+                    repo_index,
+                    graph,
+                    route_objects[recv],
+                    recv,
+                    ctor_prefix,
+                    mount_prefix,
+                    unresolved,
+                    path_index=0,
+                    handler_index=2,
+                    handler_kwarg="view_func",
+                )
+            elif recv in route_objects and meth == "add_api_route":
+                self._handle_imperative_rule(
+                    node,
+                    symtab,
+                    relpath,
+                    repo_index,
+                    graph,
+                    route_objects[recv],
+                    recv,
+                    ctor_prefix,
+                    mount_prefix,
+                    unresolved,
+                    path_index=0,
+                    handler_index=1,
+                    handler_kwarg="endpoint",
+                )
+
+        if unresolved:
+            mod = graph.get_node(mod_id)
+            if mod is not None:
+                prior = mod.attrs.get("unresolved_routes", [])
+                mod.attrs["unresolved_routes"] = prior + unresolved
+
+    def _handle_add_resource(
+        self,
+        node: ast.Call,
+        symtab: dict[str, dict[str, Any]],
+        relpath: str,
+        repo_index: dict[str, Any],
+        graph: Any,
+        unresolved: list[str],
+    ) -> None:
+        if not node.args:
+            return
+        cls_arg = node.args[0]
+        # Every positional string-literal arg after the class is a mount path.
+        paths = [
+            a.value
+            for a in node.args[1:]
+            if isinstance(a, ast.Constant) and isinstance(a.value, str)
+        ]
+        resolved = self._resolve_class_verbs(cls_arg, symtab, relpath, repo_index)
+        if resolved is None:
+            unresolved.append(
+                f"add_resource: cannot resolve Resource class "
+                f"{self._safe_unparse(cls_arg)}"
+            )
+            return
+        cls_relpath, cls_name, verbs = resolved
+        if not paths:
+            unresolved.append(
+                f"add_resource({cls_name}): no string-literal path argument"
+            )
+            return
+        for path in paths:
+            for method, qual in verbs:
+                self._emit_entrypoint(
+                    graph,
+                    method,
+                    path,
+                    "flask-restful",
+                    relpath,
+                    handler_qual=qual,
+                    handler_file=cls_relpath,
+                )
+
+    def _handle_imperative_rule(
+        self,
+        node: ast.Call,
+        symtab: dict[str, dict[str, Any]],
+        relpath: str,
+        repo_index: dict[str, Any],
+        graph: Any,
+        framework: str,
+        recv: str,
+        ctor_prefix: dict[str, tuple[str, str | None]],
+        mount_prefix: dict[str, tuple[str, str | None]],
+        unresolved: list[str],
+        *,
+        path_index: int,
+        handler_index: int,
+        handler_kwarg: str,
+    ) -> None:
+        """Handle ``add_url_rule`` / ``add_api_route`` imperative registration."""
+        if len(node.args) <= path_index:
+            return
+        path_arg = node.args[path_index]
+        if not (isinstance(path_arg, ast.Constant) and isinstance(path_arg.value, str)):
+            unresolved.append(
+                f"{recv}.{node.func.attr}: non-literal path "  # type: ignore[attr-defined]
+                f"{self._safe_unparse(path_arg)}"
+            )
+            return
+        local_path = path_arg.value
+
+        view = self._kwarg_value(node, handler_kwarg)
+        if view is None and len(node.args) > handler_index:
+            view = node.args[handler_index]
+
+        full_path, prefix_unresolved = self._compose_path(
+            framework, recv, local_path, ctor_prefix, mount_prefix
+        )
+        base_extra: dict[str, Any] = {}
+        if prefix_unresolved:
+            base_extra["prefix_unresolved"] = True
+
+        # Class-based view: ``view_func=Cls.as_view('name')`` -> enumerate the
+        # HTTP-verb methods actually defined on the class.
+        if (
+            isinstance(view, ast.Call)
+            and isinstance(view.func, ast.Attribute)
+            and view.func.attr == "as_view"
+            and isinstance(view.func.value, ast.Name)
+        ):
+            resolved = self._resolve_class_verbs(
+                view.func.value, symtab, relpath, repo_index
+            )
+            if resolved is not None:
+                cls_relpath, _cls_name, verbs = resolved
+                for method, qual in verbs:
+                    self._emit_entrypoint(
+                        graph,
+                        method,
+                        full_path,
+                        framework,
+                        relpath,
+                        handler_qual=qual,
+                        handler_file=cls_relpath,
+                        extra=base_extra or None,
+                    )
+                return
+            unresolved.append(
+                f"{recv}.{node.func.attr}: cannot resolve view class "  # type: ignore[attr-defined]
+                f"{self._safe_unparse(view)}"
+            )
+
+        methods = self._methods_kwarg(node) or ["GET"]
+        handler_qual, handler_file = self._resolve_handler_ref(
+            view, symtab, relpath, repo_index
+        )
+        extra = dict(base_extra)
+        if handler_qual is None and view is not None:
+            extra["unresolved_handler"] = self._safe_unparse(view)
+        for method in methods:
+            self._emit_entrypoint(
+                graph,
+                method,
+                full_path,
+                framework,
+                relpath,
+                handler_qual=handler_qual,
+                handler_file=handler_file,
+                extra=extra or None,
+            )
+
+    def _resolve_class_verbs(
+        self,
+        cls_arg: ast.AST,
+        symtab: dict[str, dict[str, Any]],
+        relpath: str,
+        repo_index: dict[str, Any],
+    ) -> tuple[str, str, list[tuple[str, str]]] | None:
+        """Resolve a class reference to ``(relpath, class_name, [(VERB, qual)])``.
+
+        The HTTP-verb methods are those ``get/post/put/...`` methods actually
+        present on the class in the resolved file (per the cross-file index).
+        Returns ``None`` when the class or its file cannot be soundly resolved,
+        or when it defines no HTTP-verb method -- never inventing a method.
+        """
+        target_relpath: str | None = None
+        cls_name: str | None = None
+
+        if isinstance(cls_arg, ast.Name):
+            name = cls_arg.id
+            desc = symtab.get(name)
+            if desc is None:
+                # Not imported: a class defined in this same file (if at all).
+                target_relpath, cls_name = relpath, name
+            elif desc.get("type") == "external":
+                ref = desc.get("ref", "")
+                if "." not in ref:
+                    return None
+                module_part, cls_name = ref.rsplit(".", 1)
+                target_relpath = repo_index["modules"].get(module_part)
+            else:
+                # A function/module/dependency import is not a Resource class.
+                return None
+        elif isinstance(cls_arg, ast.Attribute) and isinstance(
+            cls_arg.value, ast.Name
+        ):
+            base = symtab.get(cls_arg.value.id)
+            if base and base.get("type") == "module" and base.get("relpath"):
+                target_relpath, cls_name = base["relpath"], cls_arg.attr
+        if not target_relpath or not cls_name:
+            return None
+
+        funcs = repo_index["functions"].get(target_relpath, set())
+        verbs: list[tuple[str, str]] = []
+        for lower, verb in _METHOD_DECORATORS.items():
+            qual = f"{cls_name}.{lower}"
+            if qual in funcs:
+                verbs.append((verb, qual))
+        if not verbs:
+            return None
+        return (target_relpath, cls_name, verbs)
+
+    @staticmethod
+    def _resolve_handler_ref(
+        view: ast.AST | None,
+        symtab: dict[str, dict[str, Any]],
+        relpath: str,
+        repo_index: dict[str, Any],
+    ) -> tuple[str | None, str | None]:
+        """Resolve a view/handler expression to ``(qual, relpath)`` or ``(None, None)``."""
+        if view is None:
+            return (None, None)
+        if isinstance(view, ast.Name):
+            desc = symtab.get(view.id)
+            if desc and desc.get("type") == "func":
+                return (desc["qual"], desc["relpath"])
+            if view.id in repo_index["functions"].get(relpath, set()):
+                return (view.id, relpath)
+            return (None, None)
+        if isinstance(view, ast.Attribute) and isinstance(view.value, ast.Name):
+            desc = symtab.get(view.value.id)
+            if desc and desc.get("type") == "module" and desc.get("relpath"):
+                funcs = repo_index["functions"].get(desc["relpath"], set())
+                if view.attr in funcs:
+                    return (view.attr, desc["relpath"])
+        return (None, None)
+
+    def _api_objects(
+        self, tree: ast.AST, symtab: dict[str, dict[str, Any]]
+    ) -> set[str]:
+        """Names bound to a Flask-RESTful ``Api`` instance or an ``Api`` subclass.
+
+        Recognises the local name(s) imported from ``flask_restful``/``flask_restx``
+        as ``Api`` (honouring ``as`` aliases), every in-file subclass of such a
+        name (transitively), and ``flask_restful.Api()`` attribute construction.
+        """
+        api_bases: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module in (
+                "flask_restful",
+                "flask_restx",
+            ):
+                for alias in node.names:
+                    if alias.name == "Api":
+                        api_bases.add(alias.asname or "Api")
+
+        classdefs = [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]
+
+        def _base_name(base: ast.AST) -> str | None:
+            if isinstance(base, ast.Name):
+                return base.id
+            if isinstance(base, ast.Attribute):
+                # ``flask_restful.Api`` written out explicitly as a base.
+                if base.attr == "Api" and isinstance(base.value, ast.Name) and (
+                    base.value.id in ("flask_restful", "flask_restx")
+                ):
+                    return "Api"
+                return base.attr
+            return None
+
+        subclasses: set[str] = set(api_bases)
+        changed = True
+        while changed:
+            changed = False
+            for cd in classdefs:
+                if cd.name in subclasses:
+                    continue
+                if any(_base_name(b) in subclasses for b in cd.bases):
+                    subclasses.add(cd.name)
+                    changed = True
+
+        objects: set[str] = set()
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)):
+                continue
+            ctor = node.value.func
+            is_api = False
+            if isinstance(ctor, ast.Name) and ctor.id in subclasses:
+                is_api = True
+            elif isinstance(ctor, ast.Attribute):
+                if ctor.attr in subclasses:
+                    is_api = True
+                elif ctor.attr == "Api" and isinstance(ctor.value, ast.Name) and (
+                    ctor.value.id in ("flask_restful", "flask_restx")
+                ):
+                    is_api = True
+            if is_api:
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        objects.add(target.id)
+        return objects
+
+    # -- prefix composition (blueprint / router) ------------------------------
+
+    def _ctor_prefixes(self, tree: ast.AST) -> dict[str, tuple[str, str | None]]:
+        """Map a route-object var to the prefix set at construction.
+
+        ``Blueprint(..., url_prefix="/x")`` and ``APIRouter(prefix="/x")``. The
+        value is ``(state, prefix)`` with ``state`` one of ``literal`` /
+        ``nonliteral`` (prefix present but not a string literal) / and only vars
+        with an explicit prefix kwarg are recorded at all.
+        """
+        prefixes: dict[str, tuple[str, str | None]] = {}
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)):
+                continue
+            ctor = node.value.func
+            cname = (
+                ctor.attr
+                if isinstance(ctor, ast.Attribute)
+                else (ctor.id if isinstance(ctor, ast.Name) else None)
+            )
+            if cname == "Blueprint":
+                kw = "url_prefix"
+            elif cname == "APIRouter":
+                kw = "prefix"
+            else:
+                continue
+            state, value = self._str_kwarg(node.value, kw)
+            if state == "absent":
+                continue
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    prefixes[target.id] = (state, value)
+        return prefixes
+
+    def _mount_prefixes(
+        self, tree: ast.AST, route_objects: dict[str, str]
+    ) -> dict[str, tuple[str, str | None]]:
+        """Map a mounted blueprint/router var to the prefix given at mount time.
+
+        ``<app>.register_blueprint(bp, url_prefix="/x")`` (Flask) and
+        ``<app>.include_router(router, prefix="/x")`` (FastAPI). Only mounts on a
+        recognised route object are honoured, and only when the first positional
+        argument is a bare name (the child object).
+        """
+        mounts: dict[str, tuple[str, str | None]] = {}
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if not (
+                isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name)
+            ):
+                continue
+            if func.value.id not in route_objects:
+                continue
+            if func.attr == "register_blueprint":
+                kw = "url_prefix"
+            elif func.attr == "include_router":
+                kw = "prefix"
+            else:
+                continue
+            if not node.args or not isinstance(node.args[0], ast.Name):
+                continue
+            state, value = self._str_kwarg(node, kw)
+            if state == "absent":
+                continue
+            mounts[node.args[0].id] = (state, value)
+        return mounts
+
+    def _compose_path(
+        self,
+        framework: str,
+        obj_var: str,
+        local_path: str,
+        ctor_prefix: dict[str, tuple[str, str | None]],
+        mount_prefix: dict[str, tuple[str, str | None]],
+    ) -> tuple[str, bool]:
+        """Compose the full route path, returning ``(path, prefix_unresolved)``.
+
+        Flask *overrides* (``register_blueprint`` url_prefix replaces the
+        blueprint's own); FastAPI *concatenates* (include prefix + router prefix
+        + route path). When a prefix is present but not a string literal the
+        local path is kept and ``prefix_unresolved`` is flagged -- never guessed.
+        """
+        c_state, c_val = ctor_prefix.get(obj_var, ("absent", None))
+        m_state, m_val = mount_prefix.get(obj_var, ("absent", None))
+
+        if framework == "fastapi":
+            segments: list[str] = []
+            unresolved = False
+            for state, val in ((m_state, m_val), (c_state, c_val)):
+                if state == "literal":
+                    segments.append(val or "")
+                elif state == "nonliteral":
+                    unresolved = True
+            prefix = ""
+            for seg in segments:
+                prefix = self._join_paths(prefix, seg) if prefix else seg
+            full = self._join_paths(prefix, local_path) if prefix else local_path
+            return full, unresolved
+
+        # Flask / flask-restful override semantics: the mount prefix, when
+        # present, replaces the constructor prefix entirely.
+        state, val = (m_state, m_val) if m_state != "absent" else (c_state, c_val)
+        if state == "literal":
+            return self._join_paths(val, local_path), False
+        if state == "nonliteral":
+            return local_path, True
+        return local_path, False
+
+    @staticmethod
+    def _join_paths(prefix: str | None, path: str) -> str:
+        if not prefix:
+            return path
+        left = prefix.rstrip("/")
+        if not path or path == "/":
+            return left if path != "/" else left + "/"
+        right = path if path.startswith("/") else "/" + path
+        return left + right
+
+    @staticmethod
+    def _str_kwarg(call: ast.Call, name: str) -> tuple[str, str | None]:
+        """Classify a kwarg as ``literal`` (+value), ``nonliteral``, or ``absent``."""
+        for keyword in call.keywords:
+            if keyword.arg == name:
+                if isinstance(keyword.value, ast.Constant) and isinstance(
+                    keyword.value.value, str
+                ):
+                    return ("literal", keyword.value.value)
+                return ("nonliteral", None)
+        return ("absent", None)
+
+    @staticmethod
+    def _kwarg_value(call: ast.Call, name: str) -> ast.AST | None:
+        for keyword in call.keywords:
+            if keyword.arg == name:
+                return keyword.value
         return None
 
     @staticmethod
