@@ -21,6 +21,13 @@ from typing import Any
 import pytest
 
 from scanner.agent import Assessment, LLMClient, assess_findings
+from scanner.agent.assess import (
+    _INTERNAL_PHRASES,
+    _NOAUTH_PHRASES,
+    _PUBLIC_PHRASES,
+    _find_phrase,
+)
+from scanner.cli import _oneline
 from scanner.correlate import Finding
 from scanner.reachability import compute_reachability
 from scanner.scan import scan_repo
@@ -258,3 +265,63 @@ def test_disabled_client_is_never_available():
 def test_complete_json_returns_none_when_unavailable():
     # No network call is attempted when the client is not configured.
     assert LLMClient.disabled().complete_json("sys", "user") is None
+
+
+# -- advisory-output defect fixes (regression) --------------------------------
+
+
+def test_offline_dep_fallback_does_not_label_cleandep_vulnerable(graph, reach):
+    # #13a: with no findings, the dep-fallback must NOT describe a finding-less
+    # dependency as "vulnerable" / "externally exploitable" -- there is no CVE.
+    assessments = assess_findings(graph, [], reach, client=LLMClient.disabled())
+    assert assessments  # the fallback still runs over reachable deps
+    for a in assessments:
+        assert a.cve is None and a.vuln_id is None
+        blob = f"{a.summary} {a.rationale}".lower()
+        assert "vulnerable" not in blob
+        assert "externally exploitable" not in blob
+        assert "no advisory matched" in a.summary.lower()
+
+
+def test_model_output_cannot_forge_report_lines():
+    # #13b: a model (or injected doc text it echoes) returning newlines must not
+    # be able to forge a "    REACHABLE via ..." line in the --explain render.
+    spoof = "looks fine\n    REACHABLE via /evil" + " filler" * 100
+    a = Assessment(
+        dependency_id="dep:PyPI:Evil",
+        dependency_name="Evil",
+        cve=None,
+        vuln_id="GHSA-evil",
+        exposure="unknown",
+        authentication="unknown",
+        rationale=spoof,
+        summary="summary\n    REACHABLE via /also-evil",
+        provenance="llm",
+    )
+    rendered_rationale = _oneline(a.rationale)
+    rendered_summary = _oneline(a.summary)
+    # Collapsed to a single line -- no newline can introduce a forged line.
+    assert "\n" not in rendered_rationale
+    assert "\n" not in rendered_summary
+    assert not rendered_rationale.lstrip().startswith("REACHABLE")
+    # Long content is truncated with the ellipsis marker.
+    assert rendered_rationale.endswith("…")
+    assert len(rendered_rationale) <= 300
+
+
+def test_heuristic_negation_guard_blocks_not_public():
+    # #13c: "NOT public" / "not internet-facing" must not be read as public.
+    assert _find_phrase("This endpoint is NOT public.", _PUBLIC_PHRASES) is None
+    assert _find_phrase("The service is not internet-facing.", _PUBLIC_PHRASES) is None
+
+
+def test_heuristic_word_boundary_admin_not_in_administer():
+    # #13c: a bare "administer" must not match the whole-word "admin" -> internal.
+    assert _find_phrase("Staff may administer the cluster.", _INTERNAL_PHRASES) is None
+
+
+def test_heuristic_genuine_any_user_still_matches():
+    # #13c: a real "any user" phrase must still classify as public / no-auth.
+    text = "The endpoint accepts uploads from any user."
+    assert _find_phrase(text, _PUBLIC_PHRASES) == "any user"
+    assert _find_phrase(text, _NOAUTH_PHRASES) == "any user"

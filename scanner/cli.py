@@ -118,6 +118,18 @@ def _format_reachability(result: ReachabilityResult, repo_path: str) -> str:
     return "\n".join(lines)
 
 
+def _oneline(text: str, limit: int = 300) -> str:
+    """Flatten a model-derived string to a single, length-capped line.
+
+    Collapses every run of whitespace (including newlines) to one space and
+    truncates, so a ``rationale``/``summary`` the model returns -- or that it
+    echoes from injected documentation -- can never forge extra report lines
+    (e.g. a smuggled ``"\\n    REACHABLE via ..."``). Mirrors ``osv._short``.
+    """
+    collapsed = " ".join(str(text).split())
+    return collapsed if len(collapsed) <= limit else collapsed[: limit - 1] + "…"
+
+
 def _format_assessments(
     graph: KnowledgeGraph,
     correlation: CorrelationResult,
@@ -159,8 +171,8 @@ def _format_assessments(
         lines.append(f"{index:>2}. {a.dependency_name} -- {ref}")
         lines.append(f"    reachable via: {via}")
         lines.append(f"    exposure: {a.exposure}   authentication: {a.authentication}")
-        lines.append(f"    rationale: {a.rationale}")
-        lines.append(f"    summary: {a.summary}")
+        lines.append(f"    rationale: {_oneline(a.rationale)}")
+        lines.append(f"    summary: {_oneline(a.summary)}")
         lines.append(f"    [provenance={a.provenance}; advisory={a.advisory}]")
         lines.append("")
     return "\n".join(lines)

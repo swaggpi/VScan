@@ -27,6 +27,7 @@ import json
 import os
 import urllib.error
 import urllib.request
+import warnings
 from dataclasses import dataclass
 from typing import Any
 
@@ -72,6 +73,15 @@ class LLMClient:
         self.model = (os.environ.get("LLM_MODEL") if model is None else model) or ""
         self.timeout = timeout
         self.max_tokens = max_tokens
+
+        # The API key is sent as a Bearer header; over plaintext http:// it would
+        # travel in the clear. Warn (don't block -- a local dev proxy is valid).
+        if self.base_url.lower().startswith("http://"):
+            warnings.warn(
+                "LLM_BASE_URL uses plaintext http://; the API key is sent in "
+                "the clear. Prefer https:// unless this is a trusted local proxy.",
+                stacklevel=2,
+            )
 
     @classmethod
     def disabled(cls) -> "LLMClient":

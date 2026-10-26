@@ -31,6 +31,7 @@ end-to-end with no API key.
 
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -100,6 +101,11 @@ _AUTH_PHRASES = (
     "authenticated users",
     "requires a valid session",
 )
+
+# Words that negate a classification when they immediately precede a matched
+# phrase (e.g. "NOT public", "no authentication noted"). A match guarded this
+# way is ignored rather than fired.
+_NEGATORS = frozenset({"no", "not", "never"})
 
 
 @dataclass
@@ -260,10 +266,21 @@ def _normalize(value: Any, allowed: frozenset[str]) -> str:
 
 
 def _find_phrase(text: str, phrases: tuple[str, ...]) -> str | None:
-    """Return the first phrase present in ``text`` (case-insensitive), else None."""
+    """Return the first phrase in ``text`` on a word boundary, else ``None``.
+
+    Matching is case-insensitive and anchored on word boundaries (``\\b``) so a
+    phrase only fires as a whole word -- "admin" does not match "administer",
+    and "public" does not match "publicly". A match is also skipped when it is
+    immediately preceded by a negator ("no" / "not" / "never"), so "NOT public"
+    or "no authentication" does not classify the route as public/unauthenticated.
+    """
     lowered = text.lower()
     for phrase in phrases:
-        if phrase in lowered:
+        pattern = re.compile(r"\b" + re.escape(phrase) + r"\b")
+        for match in pattern.finditer(lowered):
+            preceding_words = lowered[: match.start()].split()
+            if preceding_words and preceding_words[-1] in _NEGATORS:
+                continue  # negated occurrence -- look for a later, unguarded one
             return phrase
     return None
 
@@ -319,23 +336,45 @@ def _offline_assessment(
             "determined from the docs and is left unknown."
         )
 
-    ref = subject.cve or subject.vuln_id or "the vulnerable dependency"
-    summary = (
-        f"{subject.dependency_name} {subject.version or ''}".strip()
-        + f" ({ref}) is reachable from {ep_text}; "
-        + {
-            "internet-facing": "docs describe it as internet-facing",
-            "internal": "docs describe it as internal",
-            "unknown": "real-world exposure is undetermined from the docs",
-        }[exposure]
-        + (
-            " and unauthenticated -- treat as externally exploitable."
-            if authentication == "none"
-            else " and authenticated."
-            if authentication == "required"
-            else "."
+    dep_label = f"{subject.dependency_name} {subject.version or ''}".strip()
+    if subject.cve is not None or subject.vuln_id is not None:
+        # A real advisory finding: name it and keep the exploitability wording.
+        ref = subject.cve or subject.vuln_id
+        summary = (
+            f"{dep_label} ({ref}) is reachable from {ep_text}; "
+            + {
+                "internet-facing": "docs describe it as internet-facing",
+                "internal": "docs describe it as internal",
+                "unknown": "real-world exposure is undetermined from the docs",
+            }[exposure]
+            + (
+                " and unauthenticated -- treat as externally exploitable."
+                if authentication == "none"
+                else " and authenticated."
+                if authentication == "required"
+                else "."
+            )
         )
-    )
+    else:
+        # No advisory matched this reachable dependency (e.g. an offline run
+        # with no findings). Report exposure context only -- do NOT call the
+        # dependency vulnerable or externally exploitable.
+        exposure_clause = {
+            "internet-facing": "docs suggest it is internet-facing",
+            "internal": "docs suggest it is internal",
+            "unknown": "docs do not indicate its exposure",
+        }[exposure]
+        auth_clause = (
+            " with no authentication noted"
+            if authentication == "none"
+            else " behind authentication"
+            if authentication == "required"
+            else ""
+        )
+        summary = (
+            f"No advisory matched; exposure context only: {dep_label} is "
+            f"reachable from {ep_text}; {exposure_clause}{auth_clause}."
+        )
 
     return Assessment(
         dependency_id=subject.dependency_id,
