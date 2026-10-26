@@ -310,8 +310,16 @@ class PythonAnalyzer(LanguageAnalyzer):
         route_objects = self._route_objects(tree)
         ctor_prefix = self._ctor_prefixes(tree)
         mount_prefix = self._mount_prefixes(tree, route_objects)
+        mountable = self._mountable_objects(tree)
         self._extract_routes(
-            functions, relpath, graph, route_objects, ctor_prefix, mount_prefix
+            functions,
+            relpath,
+            graph,
+            route_objects,
+            ctor_prefix,
+            mount_prefix,
+            mountable,
+            mod_id,
         )
         self._extract_registry_routes(
             tree,
@@ -323,6 +331,7 @@ class PythonAnalyzer(LanguageAnalyzer):
             ctor_prefix,
             mount_prefix,
             mod_id,
+            mountable,
         )
         self._extract_django_urls(tree, symtab, relpath, repo_index, graph)
 
@@ -756,15 +765,26 @@ class PythonAnalyzer(LanguageAnalyzer):
         route_objects: dict[str, str],
         ctor_prefix: dict[str, tuple[str, str | None]],
         mount_prefix: dict[str, tuple[str, str | None]],
+        mountable: set[str],
+        mod_id: str,
     ) -> None:
+        unresolved: list[str] = []
         for qual, fnode in functions:
             for decorator in getattr(fnode, "decorator_list", []):
                 route = self._route_from_decorator(decorator, route_objects)
                 if route is None:
+                    # A decorator that *looks* like a route (``@x.route``/
+                    # ``@x.get("/p")`` with a literal path) but whose receiver is
+                    # not a recognised app/router -- e.g. an imported/factory
+                    # ``from . import app`` -- is recorded rather than dropped, so
+                    # reachability can account for the possible entrypoint.
+                    note = self._unresolved_decorator_note(decorator, route_objects)
+                    if note is not None:
+                        unresolved.append(note)
                     continue
                 methods, local_path, framework, obj_var = route
                 full_path, prefix_unresolved = self._compose_path(
-                    framework, obj_var, local_path, ctor_prefix, mount_prefix
+                    framework, obj_var, local_path, ctor_prefix, mount_prefix, mountable
                 )
                 extra = {"prefix_unresolved": True} if prefix_unresolved else None
                 for method in methods:
@@ -778,6 +798,51 @@ class PythonAnalyzer(LanguageAnalyzer):
                         handler_file=relpath,
                         extra=extra,
                     )
+
+        if unresolved:
+            mod = graph.get_node(mod_id)
+            if mod is not None:
+                prior = mod.attrs.get("unresolved_routes", [])
+                mod.attrs["unresolved_routes"] = prior + unresolved
+
+    @staticmethod
+    def _unresolved_decorator_note(
+        decorator: ast.AST, route_objects: dict[str, str]
+    ) -> str | None:
+        """Describe a route-shaped decorator whose receiver is unrecognised.
+
+        Returns a note when ``decorator`` is a ``<name>.route``/``<name>.get``/...
+        call with a URL-path string literal (one starting with ``/``) as its
+        first argument on a receiver that is NOT a recognised app/router (so no
+        entrypoint may be emitted); otherwise None.
+
+        The leading-``/`` requirement keeps verb-named decorators that merely
+        collide with route verbs out of the record -- notably ``@mock.patch(
+        "pkg.mod.obj")``, whose target is a dotted import path, never a route.
+        """
+        if not isinstance(decorator, ast.Call):
+            return None
+        func = decorator.func
+        if not (isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name)):
+            return None
+        recv = func.value.id
+        if recv in route_objects:
+            return None  # recognised receiver: handled as a real route
+        attr_lower = func.attr.lower()
+        if attr_lower != "route" and attr_lower not in _METHOD_DECORATORS:
+            return None
+        first = decorator.args[0] if decorator.args else None
+        if (
+            isinstance(first, ast.Constant)
+            and isinstance(first.value, str)
+            and first.value.startswith("/")
+        ):
+            return (
+                f"@{recv}.{func.attr}({first.value!r}): receiver '{recv}' is not a "
+                f"recognised app/router (imported or factory-created); "
+                f"entrypoint not emitted"
+            )
+        return None
 
     def _route_from_decorator(
         self, decorator: ast.AST, route_objects: dict[str, str]
@@ -817,6 +882,7 @@ class PythonAnalyzer(LanguageAnalyzer):
         ctor_prefix: dict[str, tuple[str, str | None]],
         mount_prefix: dict[str, tuple[str, str | None]],
         mod_id: str,
+        mountable: set[str],
     ) -> None:
         """Detect route registration performed by a *call* rather than a decorator.
 
@@ -832,6 +898,7 @@ class PythonAnalyzer(LanguageAnalyzer):
         Resource class. Everything else is recorded as unresolved, never guessed.
         """
         api_objects = self._api_objects(tree, symtab)
+        class_bases = self._class_bases(tree)
         unresolved: list[str] = []
 
         for node in ast.walk(tree):
@@ -845,9 +912,22 @@ class PythonAnalyzer(LanguageAnalyzer):
             recv = func.value.id
             meth = func.attr
 
-            if recv in api_objects and "resource" in meth.lower():
+            if recv in api_objects and (
+                meth == "add_resource"
+                or (meth.startswith("add_") and meth.endswith("resource"))
+            ):
                 self._handle_add_resource(
-                    node, symtab, relpath, repo_index, graph, unresolved
+                    node,
+                    symtab,
+                    relpath,
+                    repo_index,
+                    graph,
+                    unresolved,
+                    class_bases,
+                    api_objects[recv],
+                    ctor_prefix,
+                    mount_prefix,
+                    mountable,
                 )
             elif recv in route_objects and meth == "add_url_rule":
                 self._handle_imperative_rule(
@@ -861,6 +941,8 @@ class PythonAnalyzer(LanguageAnalyzer):
                     ctor_prefix,
                     mount_prefix,
                     unresolved,
+                    class_bases,
+                    mountable,
                     path_index=0,
                     handler_index=2,
                     handler_kwarg="view_func",
@@ -877,6 +959,8 @@ class PythonAnalyzer(LanguageAnalyzer):
                     ctor_prefix,
                     mount_prefix,
                     unresolved,
+                    class_bases,
+                    mountable,
                     path_index=0,
                     handler_index=1,
                     handler_kwarg="endpoint",
@@ -896,17 +980,25 @@ class PythonAnalyzer(LanguageAnalyzer):
         repo_index: dict[str, Any],
         graph: Any,
         unresolved: list[str],
+        class_bases: dict[str, list[str]],
+        api_info: dict[str, Any],
+        ctor_prefix: dict[str, tuple[str, str | None]],
+        mount_prefix: dict[str, tuple[str, str | None]],
+        mountable: set[str],
     ) -> None:
         if not node.args:
             return
         cls_arg = node.args[0]
-        # Every positional string-literal arg after the class is a mount path.
+        # Every positional arg after the class is a mount path.
+        path_args = node.args[1:]
         paths = [
             a.value
-            for a in node.args[1:]
+            for a in path_args
             if isinstance(a, ast.Constant) and isinstance(a.value, str)
         ]
-        resolved = self._resolve_class_verbs(cls_arg, symtab, relpath, repo_index)
+        resolved = self._resolve_class_verbs(
+            cls_arg, symtab, relpath, repo_index, class_bases
+        )
         if resolved is None:
             unresolved.append(
                 f"add_resource: cannot resolve Resource class "
@@ -914,21 +1006,50 @@ class PythonAnalyzer(LanguageAnalyzer):
             )
             return
         cls_relpath, cls_name, verbs = resolved
+        if not verbs:
+            # The class resolved but defines no HTTP-verb method of its own; a
+            # repo-local base class contributes them. Record rather than invent.
+            unresolved.append(
+                f"add_resource({cls_name}): HTTP verb methods are inherited from a "
+                f"repo-local base class and could not be fully enumerated"
+            )
+            return
         if not paths:
             unresolved.append(
                 f"add_resource({cls_name}): no string-literal path argument"
             )
             return
+        if len(paths) < len(path_args):
+            # Some mount paths are non-literal; the literal ones are still
+            # emitted, but the dynamic ones must be recorded, not dropped.
+            dynamic = [
+                self._safe_unparse(a)
+                for a in path_args
+                if not (isinstance(a, ast.Constant) and isinstance(a.value, str))
+            ]
+            unresolved.append(
+                f"add_resource({cls_name}): non-literal mount path(s) "
+                f"{dynamic} not resolved"
+            )
+        # Compose the Api's own prefix / attached-blueprint url_prefix onto each
+        # literal mount path. When the full prefix can't be seen in-file (a
+        # cross-file mount, or a non-literal prefix) flag it rather than guess.
+        api_prefix, prefix_unresolved = self._api_prefix(
+            api_info, ctor_prefix, mount_prefix, mountable
+        )
+        extra = {"prefix_unresolved": True} if prefix_unresolved else None
         for path in paths:
+            full_path = self._join_paths(api_prefix, path) if api_prefix else path
             for method, qual in verbs:
                 self._emit_entrypoint(
                     graph,
                     method,
-                    path,
+                    full_path,
                     "flask-restful",
                     relpath,
                     handler_qual=qual,
                     handler_file=cls_relpath,
+                    extra=extra,
                 )
 
     def _handle_imperative_rule(
@@ -943,6 +1064,8 @@ class PythonAnalyzer(LanguageAnalyzer):
         ctor_prefix: dict[str, tuple[str, str | None]],
         mount_prefix: dict[str, tuple[str, str | None]],
         unresolved: list[str],
+        class_bases: dict[str, list[str]],
+        mountable: set[str],
         *,
         path_index: int,
         handler_index: int,
@@ -965,7 +1088,7 @@ class PythonAnalyzer(LanguageAnalyzer):
             view = node.args[handler_index]
 
         full_path, prefix_unresolved = self._compose_path(
-            framework, recv, local_path, ctor_prefix, mount_prefix
+            framework, recv, local_path, ctor_prefix, mount_prefix, mountable
         )
         base_extra: dict[str, Any] = {}
         if prefix_unresolved:
@@ -980,10 +1103,29 @@ class PythonAnalyzer(LanguageAnalyzer):
             and isinstance(view.func.value, ast.Name)
         ):
             resolved = self._resolve_class_verbs(
-                view.func.value, symtab, relpath, repo_index
+                view.func.value, symtab, relpath, repo_index, class_bases
             )
             if resolved is not None:
-                cls_relpath, _cls_name, verbs = resolved
+                cls_relpath, cls_name, verbs = resolved
+                if not verbs:
+                    unresolved.append(
+                        f"{recv}.{node.func.attr}: view class {cls_name} has "  # type: ignore[attr-defined]
+                        f"inherited HTTP verb methods that could not be enumerated"
+                    )
+                    return
+                # An explicit ``methods=`` restricts the verbs the view answers;
+                # intersect with the class's own verbs -- never emit a verb the
+                # class lacks, and never ignore the explicit restriction.
+                explicit = self._methods_kwarg(node)
+                if explicit is not None:
+                    allowed = set(explicit)
+                    verbs = [(m, q) for m, q in verbs if m in allowed]
+                    if not verbs:
+                        unresolved.append(
+                            f"{recv}.{node.func.attr}: methods="  # type: ignore[attr-defined]
+                            f"{sorted(allowed)} match no verb on view class "
+                            f"{cls_name}"
+                        )
                 for method, qual in verbs:
                     self._emit_entrypoint(
                         graph,
@@ -1026,13 +1168,17 @@ class PythonAnalyzer(LanguageAnalyzer):
         symtab: dict[str, dict[str, Any]],
         relpath: str,
         repo_index: dict[str, Any],
+        class_bases: dict[str, list[str]] | None = None,
     ) -> tuple[str, str, list[tuple[str, str]]] | None:
         """Resolve a class reference to ``(relpath, class_name, [(VERB, qual)])``.
 
         The HTTP-verb methods are those ``get/post/put/...`` methods actually
         present on the class in the resolved file (per the cross-file index).
-        Returns ``None`` when the class or its file cannot be soundly resolved,
-        or when it defines no HTTP-verb method -- never inventing a method.
+        Returns ``None`` when the class or its file cannot be soundly resolved.
+        When the class *is* resolved but defines no HTTP-verb method of its own
+        while inheriting from a repo-local base class (so verbs may be inherited
+        and cannot be enumerated here), the verb list comes back EMPTY -- so the
+        caller records the ambiguity instead of inventing or dropping a verb.
         """
         target_relpath: str | None = None
         cls_name: str | None = None
@@ -1068,6 +1214,18 @@ class PythonAnalyzer(LanguageAnalyzer):
             if qual in funcs:
                 verbs.append((verb, qual))
         if not verbs:
+            # No own verb methods. If the class is defined in THIS file and
+            # extends a repo-local base class, its verbs may be inherited: we
+            # cannot enumerate them soundly, so signal the ambiguity (empty
+            # verbs) rather than inventing a verb or silently dropping the route.
+            if (
+                class_bases is not None
+                and target_relpath == relpath
+                and any(
+                    base in class_bases for base in class_bases.get(cls_name, [])
+                )
+            ):
+                return (target_relpath, cls_name, [])
             return None
         return (target_relpath, cls_name, verbs)
 
@@ -1098,12 +1256,17 @@ class PythonAnalyzer(LanguageAnalyzer):
 
     def _api_objects(
         self, tree: ast.AST, symtab: dict[str, dict[str, Any]]
-    ) -> set[str]:
+    ) -> dict[str, dict[str, Any]]:
         """Names bound to a Flask-RESTful ``Api`` instance or an ``Api`` subclass.
 
         Recognises the local name(s) imported from ``flask_restful``/``flask_restx``
         as ``Api`` (honouring ``as`` aliases), every in-file subclass of such a
         name (transitively), and ``flask_restful.Api()`` attribute construction.
+
+        Returns a map ``api_var -> {"prefix": (state, value), "attached": var}``
+        capturing the ``prefix=`` kwarg and the first positional argument (the
+        app or blueprint the ``Api`` is attached to), so resource mount paths can
+        be composed with the Api/blueprint prefix.
         """
         api_bases: set[str] = set()
         for node in ast.walk(tree):
@@ -1140,11 +1303,12 @@ class PythonAnalyzer(LanguageAnalyzer):
                     subclasses.add(cd.name)
                     changed = True
 
-        objects: set[str] = set()
+        objects: dict[str, dict[str, Any]] = {}
         for node in ast.walk(tree):
             if not (isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)):
                 continue
-            ctor = node.value.func
+            call = node.value
+            ctor = call.func
             is_api = False
             if isinstance(ctor, ast.Name) and ctor.id in subclasses:
                 is_api = True
@@ -1156,10 +1320,104 @@ class PythonAnalyzer(LanguageAnalyzer):
                 ):
                     is_api = True
             if is_api:
+                prefix = self._str_kwarg(call, "prefix")
+                attached = (
+                    call.args[0].id
+                    if call.args and isinstance(call.args[0], ast.Name)
+                    else None
+                )
+                info = {"prefix": prefix, "attached": attached}
                 for target in node.targets:
                     if isinstance(target, ast.Name):
-                        objects.add(target.id)
+                        objects[target.id] = info
         return objects
+
+    @staticmethod
+    def _class_bases(tree: ast.AST) -> dict[str, list[str]]:
+        """Map each in-file class name to the names of its base classes.
+
+        Used to tell a class that merely *inherits* its HTTP verb methods from
+        a repo-local base apart from one that genuinely defines none.
+        """
+        bases: dict[str, list[str]] = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef):
+                names: list[str] = []
+                for base in node.bases:
+                    if isinstance(base, ast.Name):
+                        names.append(base.id)
+                    elif isinstance(base, ast.Attribute):
+                        names.append(base.attr)
+                bases[node.name] = names
+        return bases
+
+    @staticmethod
+    def _mountable_objects(tree: ast.AST) -> set[str]:
+        """Vars bound to a Blueprint/APIRouter -- objects mounted onto an app.
+
+        Unlike a root ``Flask()``/``FastAPI()`` app, these carry a prefix that
+        is only fully known once they are mounted (possibly in another file).
+        """
+        mountable: set[str] = set()
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)):
+                continue
+            ctor = node.value.func
+            cname = (
+                ctor.attr
+                if isinstance(ctor, ast.Attribute)
+                else (ctor.id if isinstance(ctor, ast.Name) else None)
+            )
+            if cname in ("Blueprint", "APIRouter"):
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        mountable.add(target.id)
+        return mountable
+
+    def _api_prefix(
+        self,
+        api_info: dict[str, Any],
+        ctor_prefix: dict[str, tuple[str, str | None]],
+        mount_prefix: dict[str, tuple[str, str | None]],
+        mountable: set[str],
+    ) -> tuple[str | None, bool]:
+        """Resolve the path prefix a Flask-RESTful ``Api`` applies to resources.
+
+        Composes the prefix of the blueprint the ``Api`` is attached to (when
+        the ``Api`` is constructed on a Blueprint) with the ``Api``'s own
+        ``prefix=`` kwarg. Returns ``(prefix_or_None, unresolved)``; ``unresolved``
+        is set when a prefix is present but can't be determined in-file (a
+        non-literal value, or a blueprint mounted cross-file).
+        """
+        segments: list[str] = []
+        unresolved = False
+
+        attached = api_info.get("attached")
+        if attached is not None and attached in mountable:
+            c_state, c_val = ctor_prefix.get(attached, ("absent", None))
+            m_state, m_val = mount_prefix.get(attached, ("absent", None))
+            # Flask override semantics: an in-file mount prefix replaces the
+            # blueprint's own; no in-file mount means it is mounted elsewhere.
+            state, val = (m_state, m_val) if m_state != "absent" else (c_state, c_val)
+            if state == "literal" and val:
+                segments.append(val)
+            elif state == "nonliteral":
+                unresolved = True
+            # No mount recorded in this file -> the blueprint is mounted
+            # elsewhere and its real prefix cannot be seen here.
+            if attached not in mount_prefix:
+                unresolved = True
+
+        p_state, p_val = api_info.get("prefix", ("absent", None))
+        if p_state == "literal" and p_val:
+            segments.append(p_val)
+        elif p_state == "nonliteral":
+            unresolved = True
+
+        prefix = ""
+        for seg in segments:
+            prefix = self._join_paths(prefix, seg) if prefix else seg
+        return (prefix or None, unresolved)
 
     # -- prefix composition (blueprint / router) ------------------------------
 
@@ -1204,6 +1462,10 @@ class PythonAnalyzer(LanguageAnalyzer):
         ``<app>.include_router(router, prefix="/x")`` (FastAPI). Only mounts on a
         recognised route object are honoured, and only when the first positional
         argument is a bare name (the child object).
+
+        A mount with no (or ``=None``) prefix is still recorded -- as state
+        ``absent`` -- so that *presence in this map* marks the object as mounted
+        in-file (no override), distinct from a mount living in another file.
         """
         mounts: dict[str, tuple[str, str | None]] = {}
         for node in ast.walk(tree):
@@ -1225,8 +1487,6 @@ class PythonAnalyzer(LanguageAnalyzer):
             if not node.args or not isinstance(node.args[0], ast.Name):
                 continue
             state, value = self._str_kwarg(node, kw)
-            if state == "absent":
-                continue
             mounts[node.args[0].id] = (state, value)
         return mounts
 
@@ -1237,6 +1497,7 @@ class PythonAnalyzer(LanguageAnalyzer):
         local_path: str,
         ctor_prefix: dict[str, tuple[str, str | None]],
         mount_prefix: dict[str, tuple[str, str | None]],
+        mountable: set[str],
     ) -> tuple[str, bool]:
         """Compose the full route path, returning ``(path, prefix_unresolved)``.
 
@@ -1244,13 +1505,25 @@ class PythonAnalyzer(LanguageAnalyzer):
         blueprint's own); FastAPI *concatenates* (include prefix + router prefix
         + route path). When a prefix is present but not a string literal the
         local path is kept and ``prefix_unresolved`` is flagged -- never guessed.
+
+        A Blueprint/APIRouter (a *mountable* object) with no mount visible in
+        this file is almost always mounted elsewhere (the canonical FastAPI
+        layout: ``include_router`` lives in another module). The full prefix then
+        cannot be seen, so the in-file (constructor) path is emitted and
+        ``prefix_unresolved`` is flagged -- never a wrong full path, never a
+        silent truncation.
         """
         c_state, c_val = ctor_prefix.get(obj_var, ("absent", None))
         m_state, m_val = mount_prefix.get(obj_var, ("absent", None))
+        # A mountable object with no mount recorded in this file is mounted
+        # elsewhere: its real mount (and any prefix it carries) is cross-file,
+        # so flag it. A recorded mount -- even one with no prefix override -- is
+        # visible in-file and leaves the composed path fully determined.
+        cross_file = obj_var in mountable and obj_var not in mount_prefix
 
         if framework == "fastapi":
             segments: list[str] = []
-            unresolved = False
+            unresolved = cross_file
             for state, val in ((m_state, m_val), (c_state, c_val)):
                 if state == "literal":
                     segments.append(val or "")
@@ -1266,10 +1539,10 @@ class PythonAnalyzer(LanguageAnalyzer):
         # present, replaces the constructor prefix entirely.
         state, val = (m_state, m_val) if m_state != "absent" else (c_state, c_val)
         if state == "literal":
-            return self._join_paths(val, local_path), False
+            return self._join_paths(val, local_path), cross_file
         if state == "nonliteral":
             return local_path, True
-        return local_path, False
+        return local_path, cross_file
 
     @staticmethod
     def _join_paths(prefix: str | None, path: str) -> str:
@@ -1283,13 +1556,19 @@ class PythonAnalyzer(LanguageAnalyzer):
 
     @staticmethod
     def _str_kwarg(call: ast.Call, name: str) -> tuple[str, str | None]:
-        """Classify a kwarg as ``literal`` (+value), ``nonliteral``, or ``absent``."""
+        """Classify a kwarg as ``literal`` (+value), ``nonliteral``, or ``absent``.
+
+        An explicit ``=None`` (``ast.Constant(None)``) is treated as ABSENT, not
+        as a non-literal value: ``register_blueprint(bp, url_prefix=None)`` must
+        keep the blueprint's own constructor prefix rather than drop it.
+        """
         for keyword in call.keywords:
             if keyword.arg == name:
-                if isinstance(keyword.value, ast.Constant) and isinstance(
-                    keyword.value.value, str
-                ):
-                    return ("literal", keyword.value.value)
+                if isinstance(keyword.value, ast.Constant):
+                    if isinstance(keyword.value.value, str):
+                        return ("literal", keyword.value.value)
+                    if keyword.value.value is None:
+                        return ("absent", None)
                 return ("nonliteral", None)
         return ("absent", None)
 
@@ -1311,7 +1590,7 @@ class PythonAnalyzer(LanguageAnalyzer):
     def _methods_kwarg(call: ast.Call) -> list[str] | None:
         for keyword in call.keywords:
             if keyword.arg == "methods" and isinstance(
-                keyword.value, (ast.List, ast.Tuple)
+                keyword.value, (ast.List, ast.Tuple, ast.Set)
             ):
                 methods = [
                     elt.value.upper()
