@@ -131,3 +131,24 @@ stretch items previously deferred, each sound + tested + reviewed:
 - More framework route coverage (A3 Tier-2/3: DRF routers, Laravel/Gin groups, etc.)
 Order by value×safety; stop any item that cannot be made sound and move on.
 Non-negotiable: never fabricate an edge/verdict to look more complete.
+
+## Checkpoint: CORE COMPLETE (committed locally)
+All core layers done + committed on branch worktree-scanner-layer1:
+- Scanner/graph (4 langs) + registry routes (redash 0->121 entrypoints). 
+- Three-way reachability (endpoint->functions->deps, reachable/potentially/unreachable).
+- Correlator: OSV+CISA KEV+EPSS, `vulnreach audit` (live-verified: PyYAML 3.13 ->
+  CVE-2020-14343 reachable via POST /import). Offline-safe.
+- Agent layer: `audit --explain` docs-exposure assessment (advisory tier, guardrailed,
+  offline heuristic now; set LLM_BASE_URL/LLM_API_KEY/LLM_MODEL for the real model).
+- Dashboard viewer (reachability trace).
+- 111 tests pass.
+
+CLI: `vulnreach scan|reachability|audit [--explain] [--offline] [--nvd] [-o] [--json]`.
+
+## In progress (stretch + wrap-up)
+- E4 fresh adversarial review of the new core (registry routes, three-way, correlator,
+  agent guardrail) -> fix confirmed findings.
+- README full-tool docs (neutral; Meta/credits section added at the very end).
+- E2a JS cross-file resolution (sound; scan.py JS export index + analyzer).
+- NEXT: E2b Go cross-file (reuse the scan.py index pattern); then more route coverage;
+  then F morning report (MORNING.md) + attempt push (was auto-flagged).
