@@ -3,12 +3,11 @@
 An analyzer turns a source file into graph structure: module and function
 nodes, import edges, call edges, and public entry points (routes).
 
-Only Python is implemented in this layer, and it is implemented *deeply* (full
-stdlib-``ast`` analysis). JavaScript, Go and PHP analyzers are a documented
-future extension -- the :class:`LanguageAnalyzer` interface and the registry
-below are the seam they plug into. Absence of an analyzer for a language is
-handled gracefully by the orchestrator (the file still appears as a ``file``
-node from the walker; it simply gets no code-level structure).
+Python is analyzed *deeply* (full stdlib-``ast`` analysis with cross-file call
+resolution). JavaScript, PHP and Go have single-file analyzers over the same
+:class:`LanguageAnalyzer` seam. Absence of an analyzer for a language is handled
+gracefully by the orchestrator (the file still appears as a ``file`` node from
+the walker; it simply gets no code-level structure).
 """
 
 from __future__ import annotations
@@ -57,5 +56,9 @@ def analyzer_for(language: str) -> LanguageAnalyzer | None:
     return REGISTRY.get(language)
 
 
-# Importing concrete analyzers populates REGISTRY. Only Python exists today.
+# Importing concrete analyzers populates REGISTRY. Python is analyzed deeply;
+# JavaScript, PHP and Go are single-file analyzers over the same seam.
 from . import python_analyzer  # noqa: E402,F401
+from . import javascript_analyzer  # noqa: E402,F401
+from . import php_analyzer  # noqa: E402,F401
+from . import go_analyzer  # noqa: E402,F401

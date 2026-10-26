@@ -1,0 +1,10 @@
+{
+  "name": "js-app-sample",
+  "version": "1.0.0",
+  "description": "Small Express sample app for the JavaScript analyzer fixture.",
+  "main": "server.js",
+  "dependencies": {
+    "express": "^4.16.0",
+    "lodash": "4.17.4"
+  }
+}
