@@ -24,3 +24,6 @@ dashboard/dist/
 .idea/
 .vscode/
 *.log
+
+# cloned external repos for ad-hoc testing (untrusted, not part of the project)
+test-corpus/

@@ -1,0 +1,4 @@
+# Runtime dependencies for the vulnreach scanner (layer 1).
+# Deliberately minimal: everything else uses the Python standard library
+# (ast, tomllib, json, re, os).
+pathspec>=0.12

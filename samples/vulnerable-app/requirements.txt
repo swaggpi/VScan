@@ -1,0 +1,8 @@
+# Application dependencies. Versions are intentionally old so later layers of
+# the scanner have well-known historical advisories to correlate against.
+Flask==0.12.2
+Jinja2==2.10
+PyYAML==3.13
+requests>=2.20.0
+# Best-effort include handling:
+-r requirements-extra.txt
