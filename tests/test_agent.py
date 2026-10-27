@@ -15,15 +15,20 @@ issued. These exercise:
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import threading
 import time
+import urllib.error
+import urllib.request
 from typing import Any
 
 import pytest
 
 from scanner.agent import Assessment, LLMClient, assess_findings
+from scanner.agent import client as client_mod
+from scanner.agent.client import _MAX_ATTEMPTS
 from scanner.agent.assess import (
     _INTERNAL_PHRASES,
     _NOAUTH_PHRASES,
@@ -474,3 +479,142 @@ def test_heuristic_genuine_any_user_still_matches():
     text = "The endpoint accepts uploads from any user."
     assert _find_phrase(text, _PUBLIC_PHRASES) == "any user"
     assert _find_phrase(text, _NOAUTH_PHRASES) == "any user"
+
+
+# -- transient-failure retry in the client (mocked, no network) ---------------
+#
+# These sit BELOW the assess-layer mock boundary (the other tests replace the
+# whole client via ``_StubClient``); here we drive a real ``LLMClient`` and stub
+# only ``urllib.request.urlopen``, so the retry wrapper itself is exercised.
+
+
+def _ok_body(obj: dict[str, Any]) -> bytes:
+    """A valid chat-completions response whose content is ``obj`` as JSON."""
+    inner = json.dumps(obj)
+    return json.dumps({"choices": [{"message": {"content": inner}}]}).encode("utf-8")
+
+
+class _FakeHeaders:
+    @staticmethod
+    def get_content_charset() -> str:
+        return "utf-8"
+
+
+class _FakeResp:
+    def __init__(self, body: bytes):
+        self._body = body
+        self.headers = _FakeHeaders()
+
+    def read(self) -> bytes:
+        return self._body
+
+    def __enter__(self) -> "_FakeResp":
+        return self
+
+    def __exit__(self, *exc: object) -> bool:
+        return False
+
+
+def _http_error(code: int) -> urllib.error.HTTPError:
+    return urllib.error.HTTPError(
+        "https://example.invalid/v1/chat/completions", code, "flaky", {}, None
+    )
+
+
+class _Sequence:
+    """urlopen stub: records each request body and pops the next outcome.
+
+    An outcome that is an exception is raised (a transport failure); bytes are
+    returned wrapped in a response context manager (a success).
+    """
+
+    def __init__(self, outcomes: list[Any]):
+        self._outcomes = list(outcomes)
+        self.request_bodies: list[dict[str, Any]] = []
+
+    def __call__(self, request: Any, timeout: float | None = None) -> _FakeResp:
+        self.request_bodies.append(json.loads(request.data.decode("utf-8")))
+        outcome = self._outcomes.pop(0)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return _FakeResp(outcome)
+
+    @property
+    def calls(self) -> int:
+        return len(self.request_bodies)
+
+
+def _configured_client() -> LLMClient:
+    # Explicit args so the test does not depend on the ambient environment.
+    return LLMClient("https://example.invalid/v1", "test-key", "test-model")
+
+
+@pytest.mark.parametrize(
+    "transient",
+    [_http_error(404), urllib.error.URLError("conn reset")],
+    ids=["http-404-model-not-found", "urlerror"],
+)
+def test_complete_json_retries_transient_then_succeeds(monkeypatch, transient):
+    # First attempt flakes transiently, second returns a valid completion:
+    # complete_json must retry (>1 attempt) and return the parsed dict.
+    seq = _Sequence([transient, _ok_body({"verdict": "exposed"})])
+    monkeypatch.setattr(urllib.request, "urlopen", seq)
+    slept: list[float] = []
+    monkeypatch.setattr(client_mod.time, "sleep", lambda s: slept.append(s))
+
+    out = _configured_client().complete_json("sys", "user")
+
+    assert out == {"verdict": "exposed"}
+    assert seq.calls == 2  # retried once past the transient failure
+    assert len(slept) == 1  # backed off before the retry
+
+
+def test_complete_json_exhausts_retries_returns_none(monkeypatch):
+    # Every attempt flaps a transient 500: the json-mode pass and the plain-mode
+    # pass both exhaust their budget, and complete_json returns None -- it must
+    # never raise into the caller.
+    total = 2 * _MAX_ATTEMPTS
+    seq = _Sequence([_http_error(500) for _ in range(total)])
+    monkeypatch.setattr(urllib.request, "urlopen", seq)
+    monkeypatch.setattr(client_mod.time, "sleep", lambda s: None)
+
+    out = _configured_client().complete_json("sys", "user")  # must not raise
+
+    assert out is None
+    assert seq.calls == total  # _MAX_ATTEMPTS per shape, json then plain
+
+
+def test_complete_json_400_falls_back_to_plain_mode(monkeypatch):
+    # The existing 400 -> plain-mode retry path still works and composes with the
+    # transient wrapper: a 400 is NOT transient (no backoff); it drops
+    # response_format/temperature and retries once in plain mode.
+    seq = _Sequence([_http_error(400), _ok_body({"verdict": "plain"})])
+    monkeypatch.setattr(urllib.request, "urlopen", seq)
+    slept: list[float] = []
+    monkeypatch.setattr(client_mod.time, "sleep", lambda s: slept.append(s))
+
+    out = _configured_client().complete_json("sys", "user")
+
+    assert out == {"verdict": "plain"}
+    assert seq.calls == 2
+    assert "response_format" in seq.request_bodies[0]  # json mode first
+    assert "response_format" not in seq.request_bodies[1]  # plain-mode retry
+    assert slept == []  # 400 is deterministic, not transient -> no backoff
+
+
+def test_default_max_tokens_is_4096(monkeypatch):
+    monkeypatch.delenv("LLM_MAX_TOKENS", raising=False)
+    assert _configured_client().max_tokens == 4096
+
+
+def test_max_tokens_env_override_is_honoured(monkeypatch):
+    monkeypatch.setenv("LLM_MAX_TOKENS", "8000")
+    assert _configured_client().max_tokens == 8000
+
+
+def test_max_tokens_explicit_arg_beats_env(monkeypatch):
+    monkeypatch.setenv("LLM_MAX_TOKENS", "8000")
+    client = LLMClient(
+        "https://example.invalid/v1", "test-key", "test-model", max_tokens=512
+    )
+    assert client.max_tokens == 512
