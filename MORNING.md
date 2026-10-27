@@ -7,8 +7,9 @@ Status as of the overnight run. **Everything below is committed on branch
 The full pipeline works end to end and is live-verified. `vulnreach audit <repo>`
 scans a repo, builds a 4-language knowledge graph, computes three-way reachability
 (which entry point reaches which functions and dependencies), correlates the deps
-against real CVE data (OSV + CISA KEV + EPSS), and — with `--explain` — runs an
-agent pass over the docs to assess exposure. **148 tests pass.**
+against real CVE data (OSV + CISA KEV + EPSS), reports coverage/confidence, and —
+with `--explain` — runs an agent pass over the docs to assess exposure. The
+dashboard overlays the reachable-vulnerable findings on the graph. **168 tests pass.**
 
 ## Action needed from you (2 things)
 1. **Push the branch** — 17 commits are local-only because the overnight push was
@@ -52,6 +53,13 @@ Real-repo corpus to demo against: `scripts/fetch_test_corpus.sh` (gitignored
   add_api_route, prefix composition) — redash 0 -> 121 entry points.
 - JavaScript cross-file resolution — handlers/calls across modules now connect
   (express-es6: 0 -> 5 route_to_handler edges).
+- Go cross-package resolution — calls/handlers across packages connect (sound,
+  single-module only).
+- Dashboard vulnerability overlay — `audit --bundle` feeds the viewer; vulnerable
+  deps get a severity ring, reachable-and-vulnerable deps are the top signal, and
+  a findings panel ranks the CVEs. Live sample bundle ships for instant demo.
+- Coverage / confidence report — files parsed, call-site resolution rate, verdict
+  breakdown, and an honest lower-bound note (in `scan`, `audit`, and the bundle).
 - Full README rewrite; a reachability dashboard.
 - Research notes in `.research/` (gitignored). Two adversarial review rounds; all
   confirmed findings fixed (notably an unsound-"unreachable" blocker and a
@@ -66,5 +74,8 @@ Real-repo corpus to demo against: `scripts/fetch_test_corpus.sh` (gitignored
 - The offline exposure heuristic is crude (keyword-based); the real model is sharper.
 
 ## Where things are
-- Branch `worktree-scanner-layer1`, 21 commits, 148 tests passing.
+- Branch `worktree-scanner-layer1`, ~26 commits, 168 tests passing.
 - `PLAN.md` has the full overnight plan, decisions, and remaining backlog.
+- PHP is still single-file (JS and Go have cross-file; PHP cross-file was judged
+  low-value/high-risk given its dynamic autoloading, and left out rather than done
+  unsoundly).
