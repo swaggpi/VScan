@@ -49,6 +49,8 @@
   var assessments = [];       // per-endpoint advisory exposure assessments (bundle.assessments)
   var triage = [];            // per-(dep,CVE) advisory exploitability triage (bundle.triage)
   var triageByDep = {};       // dep node id -> [triage entries], built from `triage`
+  var usage = [];             // per-dep advisory dynamic-usage investigation (bundle.usage)
+  var usageByDep = {};        // dep node id -> usage entry, built from `usage`
   var selectedNodeId = null;  // node whose datasheet the detail panel shows
 
   // Focused-view state. When a loaded graph exceeds LARGE_GRAPH we render only
@@ -923,6 +925,29 @@
       var vs = vulnByDep[id];
       if (vs && t.affected === "affected") vs.triageAffected = true;
     });
+
+    // Index the advisory dynamic-usage investigation by dependency (one per dep;
+    // only for vulnerable deps with no statically-resolved call into them).
+    usageByDep = {};
+    usage.forEach(function (u) {
+      if (u && u.dependency_id) usageByDep[u.dependency_id] = u;
+    });
+  }
+
+  // Advisory dynamic-usage kind -> { label, cls } for a compact badge.
+  var USAGE_META = {
+    config_or_infra:        { label: "config / infra",  cls: "use use--infra" },
+    dynamic_import:         { label: "dynamic import",   cls: "use use--dynamic" },
+    dev_or_build_only:      { label: "dev / build only", cls: "use use--dev" },
+    transitive_or_indirect: { label: "transitive",       cls: "use use--transitive" },
+    not_found:              { label: "no references",     cls: "use use--none" },
+    uncertain:              { label: "usage unclear",     cls: "use use--uncertain" }
+  };
+  function usageBadge(u) {
+    if (!u || !u.usage_kind) return "";
+    var m = USAGE_META[u.usage_kind] || USAGE_META.uncertain;
+    return '<span class="' + m.cls + '" title="Advisory dynamic-usage investigation">' +
+      esc(m.label) + '</span>';
   }
 
   // The triage entry matching a finding's CVE within its dependency, if any:
@@ -1424,6 +1449,33 @@
       html += '</section>';
     }
 
+    // Advisory dynamic-usage investigation: for a vulnerable dep with NO static
+    // call into it, where/how is it actually used (dynamic import, config/infra,
+    // dev-only, transitive)? Fills the gap static analysis can't reach.
+    var u = usageByDep[n.id];
+    if (u) {
+      html += '<section class="dsec"><h2 class="dsec__h">Usage ' +
+        '<span class="advisory-flag">Advisory</span></h2>' +
+        '<div class="tri-lead">' + usageBadge(u) +
+        (u.confidence ? '<span class="tri-conf">' + esc(u.confidence) + ' confidence</span>' : "") +
+        '</div>' +
+        (u.summary ? '<p class="prose clamp">' + esc(u.summary) + '</p>' + moreBtn() : "");
+      var ev = Array.isArray(u.evidence) ? u.evidence : [];
+      if (ev.length) {
+        var evBody = '<ul class="evlist">';
+        ev.forEach(function (h) {
+          var loc = esc(String(h.source || "")) + (h.line ? ":" + esc(String(h.line)) : "");
+          evBody += '<li class="ev"><div class="ev__loc">' + loc + '</div>' +
+            (h.snippet ? '<div class="snip__text clamp">' + esc(String(h.snippet).trim()) + '</div>' + moreBtn() : "") +
+            '</li>';
+        });
+        evBody += '</ul>';
+        html += '<div class="tri-detail">' + disclosure(ev.length + " evidence " + (ev.length === 1 ? "reference" : "references"), evBody, false) + '</div>';
+      }
+      html += '<p class="advisory-foot">Advisory only — describes where/how the dependency is referenced; absence of a call edge is a lower bound, never a clean bill of health.</p>';
+      html += '</section>';
+    }
+
     // Its CVEs — the dependency's reason to care. Inline when few; one click away
     // when there are many, so a 7-CVE package doesn't flood the panel.
     if (!depFindings.length) {
@@ -1714,6 +1766,8 @@
     assessments = [];
     triage = [];
     triageByDep = {};
+    usage = [];
+    usageByDep = {};
     installGraph(graph, name);
   }
 
@@ -1730,6 +1784,7 @@
     bundleReach = bundle.reachability || null;
     assessments = Array.isArray(bundle.assessments) ? bundle.assessments : [];
     triage = Array.isArray(bundle.triage) ? bundle.triage : [];
+    usage = Array.isArray(bundle.usage) ? bundle.usage : [];
     computeVulnState();
     installGraph(bundle.graph || {}, name);
   }

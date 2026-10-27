@@ -1728,11 +1728,11 @@
         "fully_resolved": true,
         "verdict_by_dep": {
           "dep:PyPI:requests": "reachable",
-          "dep:PyPI:urllib3": "unreachable",
-          "dep:PyPI:PyYAML": "unreachable",
-          "dep:PyPI:Jinja2": "unreachable",
           "dep:PyPI:Pillow": "unreachable",
-          "dep:PyPI:Flask": "reachable"
+          "dep:PyPI:PyYAML": "unreachable",
+          "dep:PyPI:urllib3": "unreachable",
+          "dep:PyPI:Flask": "reachable",
+          "dep:PyPI:Jinja2": "unreachable"
         }
       },
       {
@@ -1769,11 +1769,11 @@
         "fully_resolved": true,
         "verdict_by_dep": {
           "dep:PyPI:requests": "unreachable",
-          "dep:PyPI:urllib3": "unreachable",
-          "dep:PyPI:PyYAML": "unreachable",
-          "dep:PyPI:Jinja2": "reachable",
           "dep:PyPI:Pillow": "unreachable",
-          "dep:PyPI:Flask": "unreachable"
+          "dep:PyPI:PyYAML": "unreachable",
+          "dep:PyPI:urllib3": "unreachable",
+          "dep:PyPI:Flask": "unreachable",
+          "dep:PyPI:Jinja2": "reachable"
         }
       },
       {
@@ -1827,11 +1827,11 @@
         "fully_resolved": true,
         "verdict_by_dep": {
           "dep:PyPI:requests": "unreachable",
-          "dep:PyPI:urllib3": "unreachable",
-          "dep:PyPI:PyYAML": "reachable",
-          "dep:PyPI:Jinja2": "unreachable",
           "dep:PyPI:Pillow": "unreachable",
-          "dep:PyPI:Flask": "reachable"
+          "dep:PyPI:PyYAML": "reachable",
+          "dep:PyPI:urllib3": "unreachable",
+          "dep:PyPI:Flask": "reachable",
+          "dep:PyPI:Jinja2": "unreachable"
         }
       }
     ],
@@ -1880,11 +1880,11 @@
       "reachable_region_fully_resolved": true,
       "verdict_by_dep": {
         "dep:PyPI:requests": "reachable",
-        "dep:PyPI:urllib3": "unreachable",
-        "dep:PyPI:PyYAML": "reachable",
-        "dep:PyPI:Jinja2": "reachable",
         "dep:PyPI:Pillow": "unreachable",
-        "dep:PyPI:Flask": "reachable"
+        "dep:PyPI:PyYAML": "reachable",
+        "dep:PyPI:urllib3": "unreachable",
+        "dep:PyPI:Flask": "reachable",
+        "dep:PyPI:Jinja2": "reachable"
       },
       "verdict_counts": {
         "reachable": 4,
@@ -5336,6 +5336,7 @@
       "key": "dep:PyPI:PyYAML|CVE-2020-14343"
     }
   ],
+  "usage": [],
   "offline": false,
   "network_ok": true,
   "notices": []
