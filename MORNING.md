@@ -9,7 +9,7 @@ scans a repo, builds a 4-language knowledge graph, computes three-way reachabili
 (which entry point reaches which functions and dependencies), correlates the deps
 against real CVE data (OSV + CISA KEV + EPSS), reports coverage/confidence, and —
 with `--explain` — runs an agent pass over the docs to assess exposure. The
-dashboard overlays the reachable-vulnerable findings on the graph. **187 tests pass**,
+dashboard overlays the reachable-vulnerable findings on the graph. **301+ tests pass**,
 across three adversarial review rounds (all findings fixed).
 
 ## Action needed from you (2 things)
@@ -80,7 +80,7 @@ Real-repo corpus to demo against: `scripts/fetch_test_corpus.sh` (gitignored
 - The offline exposure heuristic is crude (keyword-based); the real model is sharper.
 
 ## Where things are
-- Branch `worktree-scanner-layer1`, ~33 commits, 187 tests passing.
+- Branch `worktree-scanner-layer1`, 301+ tests passing.
 - `PLAN.md` has the full overnight plan, decisions, and remaining backlog.
 - PHP is still single-file (JS and Go have cross-file; PHP cross-file was judged
   low-value/high-risk given its dynamic autoloading, and left out rather than done

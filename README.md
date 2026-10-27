@@ -25,14 +25,16 @@ repo ──► scanner ──► reachability ──► correlator ──► age
    * Dependency manifests: Python (`requirements*.txt`, `pyproject.toml`), npm
      (`package.json`, plus exact versions from `package-lock.json` /
      `pnpm-lock.yaml` when present), PHP (`composer.json`), Go (`go.mod`).
-   * Code analysis: **Python is deep** (stdlib `ast`, cross-file call
-     resolution). **JavaScript, PHP and Go are single-file**, built on
-     tree-sitter.
+   * Code analysis: **Python is deep** (stdlib `ast`, cross-file call resolution
+     and single-hop method resolution with a proven receiver). **JavaScript and
+     Go resolve calls across files** (JS module imports, Go cross-package);
+     **PHP is single-file**. JS/PHP/Go are built on tree-sitter.
    * Entry points: decorator routes (`@app.route`, `@app.get`, `@router.get` ...),
      Django `urlpatterns`, and registry-style Python routes (Flask-RESTful
      `add_resource`, `add_url_rule`, blueprint/router prefixes). JS (Express /
      Koa / Fastify), PHP (Laravel / Slim / Symfony attributes) and Go (gin /
-     echo / chi / mux / `net/http`) routes are detected within a single file.
+     echo / chi / mux / `net/http`) routes are detected; JS and Go link handlers
+     and calls across files, PHP within a single file.
    * Documentation: README / Markdown / reST / `docs/` / OpenAPI files become
      `doc` nodes, linked to routes and symbols they mention.
 2. **Reachability engine** (`scanner/reachability.py`): a pure, deterministic
@@ -93,7 +95,7 @@ vulnreach scan <repo> [-o graph.json]          # default: vulnreach-graph.json
 vulnreach reachability <repo> [-o result.json] [--json]
 
 # 3. Full scan: correlate against vuln databases, join with reachability, rank.
-vulnreach audit <repo> [-o audit.json] [--json] [--offline] [--nvd] [--explain]
+vulnreach audit <repo> [-o audit.json] [--json] [--offline] [--nvd] [--explain] [--bundle bundle.json]
 ```
 
 | Flag | Applies to | Meaning |
@@ -102,13 +104,14 @@ vulnreach audit <repo> [-o audit.json] [--json] [--offline] [--nvd] [--explain]
 | `--json` | `reachability`, `audit` | Print JSON to stdout instead of the text report. |
 | `--offline` | `audit` | Query no network database; still prints the graph and reachability picture. |
 | `--nvd` | `audit` | Best-effort NVD numeric CVSS lookups (rate-limited). |
-| `--explain` (alias `--assess`) | `audit` | Advisory exposure assessment of reachable findings (LLM if configured, otherwise the offline heuristic). |
+| `--explain` (alias `--assess`) | `audit` | Run the three advisory tiers over the reachable findings and print them: exposure assessment, symbol-level exploitability triage, and dynamic-usage investigation (LLM if configured via the env vars below, otherwise the offline heuristic). |
+| `--bundle PATH` | `audit` | Also write a self-contained viewer bundle (graph + reachability + ranked findings + the advisory tiers) as one JSON for the dashboard. Additive; works offline (findings then empty). |
 
 ### Environment variables
 
 | Variable | Purpose |
 |---|---|
-| `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL` | Enable the LLM for `--explain`. Any OpenAI-compatible chat-completions endpoint; nothing is hardcoded to a provider. If unset, or on any client error, the offline heuristic runs instead. |
+| `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL` | Enable the LLM for the three advisory tiers (`--explain`, and the `--bundle` payload). Any OpenAI-compatible chat-completions endpoint; nothing is hardcoded to a provider. If unset, or on any client error, the offline heuristic runs instead. |
 | `NVD_API_KEY` | Optional; read by `--nvd` for better NVD rate limits. |
 | `VULNREACH_CACHE_DIR` | Optional; override the correlator cache location. |
 
@@ -196,7 +199,10 @@ Three-way verdict (per declared dependency):
   unreachable:            10
 ```
 
-Adding `--explain` (still offline, so the deterministic heuristic runs) appends:
+Adding `--explain` (still offline, so the deterministic heuristic runs) appends
+**three** advisory sections — exposure assessment, exploitability triage, and
+dynamic-usage investigation. Only the first is shown here (the others follow the
+same format):
 
 ```
 Exposure assessment (advisory tier)
@@ -267,29 +273,37 @@ Call resolution uses a conservative symbol table, not a points-to analysis.
   gives dependency `PyYAML`, `symbol=yaml.load`; `mod.func(...)` gives an
   intra-repo function).
 * Simple one-hop local aliasing (`f = some_func; f()`).
-* A small import-name to PyPI-package map for well-known mismatches
-  (`yaml`→`PyYAML`, `bs4`→`beautifulsoup4`, `cv2`→`opencv-python`,
-  `PIL`→`Pillow`, `sklearn`→`scikit-learn`); otherwise import name equals
-  package name (case-normalised).
+* **Single-hop method dispatch with a _proven_ receiver class:** `self.m(...)`
+  inside a method of class `C` resolves to `C.m`; `v.m(...)` where `v` comes from
+  an unambiguous `v = Cls(...)`, and `Cls(...).m(...)`, resolve when `Cls` is a
+  local or imported class and `m` is defined directly on it. The receiver is
+  never guessed — an unprovable one stays unresolved.
+* An import-name to PyPI-package map for well-known mismatches (`yaml`→`PyYAML`,
+  `dateutil`→`python-dateutil`, `psycopg2`→`psycopg2-binary`, `jwt`→`PyJWT`,
+  `bs4`→`beautifulsoup4`, `PIL`→`Pillow`, `sklearn`→`scikit-learn`, ...);
+  otherwise import name equals package name (case-normalised).
 
 **Not resolved (recorded, never guessed)**
 
-* Method dispatch on instances (`self.x()`, `obj.method()`): no type inference.
+* **Multi-hop** or unprovable method dispatch (`a.b.method()`, a method defined
+  only on a base class, a receiver whose class can't be proven).
 * Calls through data structures or return values (`handlers[key]()`,
   `factory().run()`).
 * Dynamic dispatch (`getattr(obj, name)()`, `globals()[...]()`).
 * Names rebound by control flow, closure/comprehension scoping subtleties, or
   `*` imports.
 
-The JS, PHP and Go analyzers follow the same rule, resolving only same-file
-calls and calls through imported package bindings (JS, Go), and recording the
-rest as `unresolved_calls`.
+The JS and Go analyzers follow the same rule across files (JS module imports, Go
+cross-package); PHP resolves within a single file. Everything unresolved is
+recorded as `unresolved_calls`.
 
 ## Limitations
 
-* **JS / PHP / Go are single-file.** Cross-file call resolution exists only for
-  Python; extending it to the other languages is in progress and not yet
-  implemented. A route whose handler lives in another file is not linked to it.
+* **PHP is single-file.** Python resolves calls across files and single-hop
+  methods; JavaScript resolves across module imports and Go across packages. PHP
+  remains single-file (a route whose handler lives in another PHP file is not
+  linked to it), because PHP's dynamic autoloading makes cross-file resolution
+  unsound to assert.
 * **PHP emits no dependency call or import edges.** A PHP namespace does not
   reliably map to a Composer package, so the analyzer records `use` statements
   but does not guess an edge. PHP dependencies therefore appear as declared but
@@ -308,10 +322,13 @@ rest as `unresolved_calls`.
   those). Transitive packages are not graph nodes, so they are neither matched
   against OSV nor reported as reachable, and reachability is never inferred
   through a dependency's internals.
-* **Exposure assessment is advisory.** It is only as good as your docs, and
-  with the offline heuristic it is simple phrase matching.
-* The dashboard shows the structural graph and reachability traces; it does not
-  display vulnerability findings.
+* **The advisory tiers are advisory.** They are only as good as your docs/CVE
+  text, and with the offline heuristic fall back to simple phrase/symbol
+  matching. They never change a deterministic reachability verdict or call edge.
+* The dashboard shows the structural graph, reachability traces, **and** — when
+  fed an `audit --bundle` JSON — the ranked vulnerability findings overlaid on
+  the graph (reachable-and-vulnerable dependencies are the top signal), with the
+  advisory exploitability-triage and dynamic-usage context per dependency.
 
 ## Dashboard
 
