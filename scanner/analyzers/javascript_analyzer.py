@@ -164,6 +164,27 @@ _FUNCTION_TYPES: frozenset[str] = frozenset(
 _UNBOUND: Any = object()
 
 
+def _is_module_scope(node: Any) -> bool:
+    """True if ``node`` sits at module (top) scope, not inside any nested scope.
+
+    A ``variable_declarator`` only belongs in the module symbol table when no
+    ancestor up to ``program`` opens a nested scope (a function, a
+    ``statement_block`` or a ``class_body``). A lazy ``const x = require('./m')``
+    INSIDE a function is thus NOT module-level, so it cannot overwrite a
+    module-level binding of the same name -- its call sites simply stay
+    unresolved (sound) instead of being wired into the wrong file.
+    """
+    cur = node.parent
+    while cur is not None:
+        t = cur.type
+        if t == "program":
+            return True
+        if t in _FUNCTION_TYPES or t in ("statement_block", "class_body"):
+            return False
+        cur = cur.parent
+    return True
+
+
 def _node_text(node: Any) -> str:
     return node.text.decode("utf-8", "replace")
 
@@ -222,9 +243,17 @@ def _resolve_relative_module(
     """
     base_dir = posixpath.dirname(importer_relpath)
     target = posixpath.normpath(posixpath.join(base_dir, spec))
+    # A specifier that ends with ``/`` or whose last segment is ``.``/``..``
+    # names a DIRECTORY, so Node resolves it via ``<dir>/index.*`` only -- it
+    # must never fall back to a sibling ``<dir>.js`` file (e.g. ``require('..')``
+    # from ``lib/sub/x.js`` is ``lib/index.js``, not ``lib.js``).
+    last_segment = spec.rstrip("/").rsplit("/", 1)[-1]
+    dir_only = spec.endswith("/") or last_segment in (".", "..")
     candidates: list[str] = []
     if target.endswith(_MODULE_SUFFIXES):
         candidates.append(target)
+    elif dir_only:
+        candidates.extend(posixpath.join(target, "index" + suf) for suf in _MODULE_SUFFIXES)
     else:
         candidates.extend(target + suf for suf in _MODULE_SUFFIXES)
         candidates.extend(posixpath.join(target, "index" + suf) for suf in _MODULE_SUFFIXES)
@@ -237,8 +266,8 @@ def _resolve_relative_module(
 _INDEX_ANALYZER: Any = None
 
 
-def index_source(relpath: str, source: str) -> tuple[str, dict[str, str]]:
-    """Return ``(module_relpath, {export_name: fn_id})`` for one JS source file.
+def index_source(relpath: str, source: str) -> tuple[str, dict[str, str], bool]:
+    """Return ``(module_relpath, {export_name: fn_id}, is_esm)`` for one JS file.
 
     Used by the orchestrator to build the cross-file export index before
     per-file analysis, so a call or route handler in one file can resolve into a
@@ -248,6 +277,10 @@ def index_source(relpath: str, source: str) -> tuple[str, dict[str, str]]:
     re-exports and anonymous ``module.exports = function(){}`` values are
     omitted (recorded as unresolved at the call site). Returns an empty map on a
     parse that yields no functions.
+
+    ``is_esm`` is True when the module uses ESM ``import``/``export`` syntax; a
+    CommonJS ``require()`` of such a module must not treat its default export as
+    a callable (``const e = require('./esm'); e()`` is a runtime TypeError).
     """
     global _INDEX_ANALYZER
     if _INDEX_ANALYZER is None:
@@ -259,7 +292,7 @@ def index_source(relpath: str, source: str) -> tuple[str, dict[str, str]]:
         qual: f"fn:{relpath}:{qual}" for qual, _node, _body in functions if "." not in qual
     }
     exports = analyzer._collect_exports(root, top_level)
-    return relpath, exports
+    return relpath, exports, analyzer._is_esm_module(root)
 
 
 @register
@@ -289,7 +322,14 @@ class JavaScriptAnalyzer(LanguageAnalyzer):
         tree = self._get_parser().parse(source.encode("utf-8"))
         root = tree.root_node
 
-        graph.add_node(mod_id, "module", relpath, relpath=relpath, language="javascript")
+        graph.add_node(
+            mod_id,
+            "module",
+            relpath,
+            relpath=relpath,
+            language="javascript",
+            parse_error=bool(root.has_error) or None,
+        )
         graph.add_edge(file_id, mod_id, "contains")
 
         # 1. Imports -> symbol table (local name -> dependency descriptor) and
@@ -406,7 +446,10 @@ class JavaScriptAnalyzer(LanguageAnalyzer):
                 self._handle_import_statement(
                     node, bind_namespace, bind_symbol, bind_xmod, bind_xfn, relpath, repo_index
                 )
-            elif node.type == "variable_declarator":
+            elif node.type == "variable_declarator" and _is_module_scope(node):
+                # Only MODULE-scope requires enter the symbol table. A nested
+                # (function/block-scoped) ``require`` must not shadow or
+                # overwrite the module-level binding of the same name.
                 self._handle_require_declarator(
                     node, bind_namespace, bind_symbol, bind_xmod, bind_xfn, relpath, repo_index
                 )
@@ -605,8 +648,12 @@ class JavaScriptAnalyzer(LanguageAnalyzer):
         if module_relpath is None:
             return
         exports: dict[str, str] = repo_index.get("js_modules", {}).get(module_relpath, {})
+        # A CommonJS ``require()`` cannot call an ESM module's default export, so
+        # a namespace binding to an ESM target exposes no callable default.
+        is_esm = module_relpath in repo_index.get("js_esm_modules", set())
+        default_fn = None if is_esm else exports.get("default")
         if name_node.type == "identifier":
-            bind_xmod(_node_text(name_node), exports, exports.get("default"))
+            bind_xmod(_node_text(name_node), exports, default_fn)
         elif name_node.type == "object_pattern":
             for part in name_node.children:
                 if part.type == "shorthand_property_identifier_pattern":
@@ -621,6 +668,19 @@ class JavaScriptAnalyzer(LanguageAnalyzer):
                         fn_id = exports.get(_node_text(key))
                         if fn_id is not None:
                             bind_xfn(_node_text(val), fn_id)
+
+    @staticmethod
+    def _is_esm_module(root: Any) -> bool:
+        """True if the module uses ESM ``import``/``export`` syntax.
+
+        ESM statements are only valid at the top level, so a direct scan of the
+        program's children suffices. Used so a CommonJS ``require()`` of an ESM
+        module does not expose that module's default export as a callable.
+        """
+        for child in root.children:
+            if child.type in ("import_statement", "export_statement"):
+                return True
+        return False
 
     # -- function discovery ---------------------------------------------------
 
@@ -681,6 +741,15 @@ class JavaScriptAnalyzer(LanguageAnalyzer):
             if t == "variable_declarator":
                 if self._visit_declarator(node, prefix, record, descend_body, visit):
                     return
+            if t in ("arrow_function", "function_expression", "generator_function"):
+                # An anonymous function reached generically (a callback / IIFE
+                # not bound to a name). Descend its body under a synthetic,
+                # position-unique prefix so a nested ``function helper(){}``
+                # cannot collide with (merge into) a same-named top-level
+                # function node.
+                synth = f"{prefix}<anon@{node.start_point[0] + 1}:{node.start_point[1]}>."
+                descend_body(node.child_by_field_name("body"), synth)
+                return
             for child in node.children:
                 visit(child, prefix)
 
@@ -745,23 +814,58 @@ class JavaScriptAnalyzer(LanguageAnalyzer):
         always a real function node. Names that would map to more than one
         distinct function id are dropped (ambiguous -> unresolved), honouring the
         cardinal rule.
+
+        Soundness guards:
+          * ``add(name, None)`` records a POISON sentinel, so a non-function
+            value, a re-export or any later reassignment makes the name
+            ambiguous (``len != 1``) and the stale function is dropped -- never
+            silently kept.
+          * ``add_ident`` resolves an identifier RHS only when it is NOT locally
+            bound at that point: a shadowed local/parameter of the same name as
+            a top-level function (``exports.handler = handler`` inside a
+            function) poisons the name instead of mapping to the top-level fn.
+          * ``reset_exports`` discards every name collected so far, used when
+            ``module.exports`` is reassigned wholesale (``module.exports = X``):
+            the prior ``exports.foo`` names are no longer exported, so they are
+            cleared before the new value's names are collected (a re-export such
+            as ``module.exports = require('./legacy')`` leaves nothing behind).
         """
-        candidates: dict[str, set[str]] = {}
+        poison: Any = object()
+        candidates: dict[str, set[Any]] = {}
 
         def add(name: str | None, fn_id: str | None) -> None:
-            if name and fn_id:
-                candidates.setdefault(name, set()).add(fn_id)
+            if not name:
+                return
+            candidates.setdefault(name, set()).add(fn_id if fn_id is not None else poison)
+
+        def add_ident(name: str | None, ident_node: Any) -> None:
+            if not name or ident_node is None:
+                return
+            ref = _node_text(ident_node)
+            if ref in self._bound_names_at(ident_node):
+                add(name, None)  # shadowed local/param: not the top-level fn
+            else:
+                add(name, top_level.get(ref))
+
+        def reset_exports() -> None:
+            candidates.clear()
 
         def walk(node: Any) -> None:
             if node.type == "export_statement":
                 self._collect_export_statement(node, top_level, add)
             elif node.type == "assignment_expression":
-                self._collect_cjs_export(node, top_level, add)
+                self._collect_cjs_export(node, top_level, add, add_ident, reset_exports)
             for child in node.children:
                 walk(child)
 
         walk(root)
-        return {name: next(iter(ids)) for name, ids in candidates.items() if len(ids) == 1}
+        result: dict[str, str] = {}
+        for name, ids in candidates.items():
+            if len(ids) == 1:
+                only = next(iter(ids))
+                if only is not poison:
+                    result[name] = only
+        return result
 
     def _collect_export_statement(
         self, node: Any, top_level: dict[str, str], add: Any
@@ -808,7 +912,7 @@ class JavaScriptAnalyzer(LanguageAnalyzer):
             add(exported, top_level.get(local))
 
     def _collect_cjs_export(
-        self, node: Any, top_level: dict[str, str], add: Any
+        self, node: Any, top_level: dict[str, str], add: Any, add_ident: Any, reset_exports: Any
     ) -> None:
         left = node.child_by_field_name("left")
         right = node.child_by_field_name("right")
@@ -816,29 +920,46 @@ class JavaScriptAnalyzer(LanguageAnalyzer):
             return
         root, attrs = self._flatten_ref(left)
         if root == "module" and attrs == ["exports"]:
+            # A whole-object reassignment discards every prior ``exports.X`` name
+            # (they are no longer exported), then re-collects from the new value.
+            reset_exports()
             if right is not None and right.type == "object":
-                self._collect_exports_object(right, top_level, add)
+                self._collect_exports_object(right, top_level, add, add_ident)
             elif right is not None and right.type == "identifier":
-                add("default", top_level.get(_node_text(right)))
+                add_ident("default", right)
+            # Else (``require(...)`` / ``wrap(...)`` / literal): a re-export or
+            # computed value that cannot be followed soundly -- nothing is
+            # re-added, so no stale name survives.
         elif root == "exports" and len(attrs) == 1:
             if right is not None and right.type == "identifier":
-                add(attrs[0], top_level.get(_node_text(right)))
+                add_ident(attrs[0], right)
+            else:
+                # Non-function reassignment (``exports.x = wrap(x)``): poison so
+                # a stale earlier function export of this name is not kept.
+                add(attrs[0], None)
         elif root == "module" and len(attrs) == 2 and attrs[0] == "exports":
             if right is not None and right.type == "identifier":
-                add(attrs[1], top_level.get(_node_text(right)))
+                add_ident(attrs[1], right)
+            else:
+                add(attrs[1], None)
 
     def _collect_exports_object(
-        self, obj: Any, top_level: dict[str, str], add: Any
+        self, obj: Any, top_level: dict[str, str], add: Any, add_ident: Any
     ) -> None:
         for member in obj.children:
             if member.type == "shorthand_property_identifier":
-                name = _node_text(member)
-                add(name, top_level.get(name))
+                add_ident(_node_text(member), member)
             elif member.type == "pair":
                 key = member.child_by_field_name("key")
                 value = member.child_by_field_name("value")
-                if key is not None and value is not None and value.type == "identifier":
-                    add(_node_text(key), top_level.get(_node_text(value)))
+                if key is None:
+                    continue
+                if value is not None and value.type == "identifier":
+                    add_ident(_node_text(key), value)
+                else:
+                    # Non-identifier value (``wrap(x)`` / arrow / literal): not a
+                    # single existing top-level function -> poison that name.
+                    add(_node_text(key), None)
 
     # -- scope (bound names up the ancestor chain, for shadowing) -------------
 

@@ -26,6 +26,11 @@ import pytest
 
 # Import triggers @register so analyzer_for("javascript") resolves.
 import scanner.analyzers.javascript_analyzer  # noqa: F401
+from scanner.analyzers.javascript_analyzer import (
+    JavaScriptAnalyzer,
+    _resolve_relative_module,
+)
+from scanner.analyzers.javascript_analyzer import index_source as js_index
 from scanner.reachability import REACHABLE, compute_reachability
 from scanner.scan import scan_repo
 
@@ -154,3 +159,183 @@ def test_isolated_unresolved_relative_specifier(tmp_path):
         e.src == "fn:app.js:run" and e.kind == "calls" and e.dst.startswith("fn:")
         for e in graph.edges
     )
+
+
+# -- B1 (BLOCKER): a function-scoped require must not leak into the module ----
+
+
+def test_function_scoped_require_does_not_leak_into_module(tmp_path):
+    """A lazy ``require`` inside a function must NOT overwrite the module-level
+    binding of the same name, so the route stays wired to the safe file and the
+    dangerous dependency is not falsely reachable."""
+    (tmp_path / "package.json").write_text(
+        json.dumps(
+            {
+                "name": "t",
+                "version": "1.0.0",
+                "dependencies": {"express": "4.18.0", "lodash": "4.17.4"},
+            }
+        )
+    )
+    (tmp_path / "safe.js").write_text(
+        "function create(req, res) { res.end(); }\n"
+        "module.exports = { create };\n"
+    )
+    (tmp_path / "risky.js").write_text(
+        "const _ = require('lodash');\n"
+        "function create(req, res) { _.merge({}, req.body); }\n"
+        "module.exports = { create };\n"
+    )
+    (tmp_path / "app.js").write_text(
+        "const express = require('express');\n"
+        "const app = express();\n"
+        "const ctrl = require('./safe');\n"
+        "function lazy() { const ctrl = require('./risky'); return ctrl; }\n"
+        "app.post('/users', ctrl.create);\n"
+        "module.exports = app;\n"
+    )
+    graph = scan_repo(str(tmp_path))
+
+    ep = graph.get_node("ep:POST:/users")
+    assert ep is not None
+    assert ep.attrs.get("handler") == "ctrl.create"
+    # The route resolves to the MODULE-level ./safe, never the lazy ./risky.
+    assert _has_edge(graph, "ep:POST:/users", "fn:safe.js:create", "route_to_handler")
+    assert not _has_edge(
+        graph, "ep:POST:/users", "fn:risky.js:create", "route_to_handler"
+    )
+
+    # The blocker was a verdict flip: lodash was wrongly reachable via /users.
+    result = compute_reachability(graph)
+    assert result.repo.verdict_by_dep.get("dep:npm:lodash") != REACHABLE
+    assert "dep:npm:lodash" not in {d["id"] for d in result.repo.reachable_deps}
+
+
+# -- S2: a shadowed local/param exported by name is not the top-level fn ------
+
+
+def test_cjs_export_shadowed_param_not_mapped_to_top_level():
+    src = (
+        "function handler(req, res) { res.end(); }\n"
+        "function register(handler) { exports.handler = handler; }\n"
+        "module.exports = { register };\n"
+    )
+    _rel, exports, _esm = js_index("c.js", src)
+    # `exports.handler = handler` binds the PARAMETER, not the top-level
+    # `handler` function, so the name must not map to fn:c.js:handler.
+    assert exports.get("handler") != "fn:c.js:handler"
+    assert "handler" not in exports
+    # The genuine module-scope export still resolves.
+    assert exports.get("register") == "fn:c.js:register"
+
+
+# -- S3: a directory specifier resolves to <dir>/index.*, never <dir>.js ------
+
+
+def test_dir_specifier_prefers_index_over_sibling_file():
+    js_files = {"lib.js", "lib/index.js", "lib/sub/x.js"}
+    # ``require('..')`` from lib/sub/x.js names the directory lib -> lib/index.js.
+    assert _resolve_relative_module("..", "lib/sub/x.js", js_files) == "lib/index.js"
+    # Trailing-slash and bare '.' specifiers are directory-only as well.
+    assert _resolve_relative_module("../", "lib/sub/x.js", js_files) == "lib/index.js"
+    assert _resolve_relative_module("./", "lib/x.js", js_files) == "lib/index.js"
+    # A normal (non-directory) specifier still tries the file candidate first.
+    assert (
+        _resolve_relative_module("./lib", "app.js", {"lib.js", "lib/index.js"})
+        == "lib.js"
+    )
+
+
+# -- S4: "exactly one" enforced against reassignment / re-export --------------
+
+
+def test_cjs_export_non_function_reassignment_drops_name():
+    src = (
+        "function create(req, res) { res.end(); }\n"
+        "function wrap(fn) { return fn; }\n"
+        "exports.create = create;\n"
+        "exports.create = wrap(create);\n"
+    )
+    _rel, exports, _esm = js_index("m.js", src)
+    # The later non-function assignment poisons the name -> dropped, not stale.
+    assert "create" not in exports
+
+
+def test_cjs_module_exports_reexport_drops_prior_names():
+    src = (
+        "function create(req, res) { res.end(); }\n"
+        "module.exports = { create };\n"
+        "module.exports = require('./legacy');\n"
+    )
+    _rel, exports, _esm = js_index("m.js", src)
+    # A wholesale re-export replaces the exports object -> prior names dropped.
+    assert "create" not in exports
+
+
+# -- S5: a pathological source is skipped and recorded, not fatal -------------
+
+
+def test_nested_array_source_does_not_crash_scan(tmp_path):
+    (tmp_path / "package.json").write_text(
+        json.dumps({"name": "t", "version": "1.0.0"})
+    )
+    (tmp_path / "deep.js").write_text("const x = " + "[" * 3000 + "]" * 3000 + ";\n")
+    (tmp_path / "ok.js").write_text(
+        "function ping() { return 1; }\nmodule.exports = { ping };\n"
+    )
+    # Must not raise despite the deeply nested (RecursionError-prone) source.
+    graph = scan_repo(str(tmp_path))
+
+    deep = graph.get_node("file:deep.js")
+    assert deep is not None
+    assert deep.attrs.get("parse_error")  # counted by coverage
+    assert deep.attrs.get("index_error")
+    # The rest of the scan still ran: the healthy file was analyzed.
+    assert graph.get_node("fn:ok.js:ping") is not None
+
+
+# -- N7: an ESM default export is not a CommonJS require() callable -----------
+
+
+def test_esm_default_not_callable_via_cjs_require(tmp_path):
+    (tmp_path / "package.json").write_text(
+        json.dumps({"name": "t", "version": "1.0.0"})
+    )
+    (tmp_path / "esm.js").write_text(
+        "export default function handler(req, res) { res.end(); }\n"
+    )
+    (tmp_path / "app.js").write_text(
+        "const e = require('./esm');\n"
+        "function run() { return e(); }\n"
+        "module.exports = { run };\n"
+    )
+    graph = scan_repo(str(tmp_path))
+    run = graph.get_node("fn:app.js:run")
+    assert run is not None
+    # `e()` cannot call the ESM default through a CJS require -> unresolved.
+    assert "e" in run.attrs.get("unresolved_calls", [])
+    assert not any(
+        edge.src == "fn:app.js:run"
+        and edge.kind == "calls"
+        and edge.dst == "fn:esm.js:handler"
+        for edge in graph.edges
+    )
+
+
+# -- N8: anonymous enclosing function gets a synthetic, non-colliding prefix ---
+
+
+def test_anonymous_enclosing_function_no_qualname_collision():
+    analyzer = JavaScriptAnalyzer()
+    src = (
+        "function helper() { return 1; }\n"
+        "setTimeout(function () { function helper() { return 2; } helper(); }, 0);\n"
+    )
+    root = analyzer._get_parser().parse(src.encode("utf-8")).root_node
+    quals = [q for q, _n, _b in analyzer._collect_functions(root)]
+    # No two functions share a qualname (the nested helper would otherwise merge
+    # into the top-level helper node).
+    assert len(set(quals)) == len(quals)
+    assert "helper" in quals  # the top-level declaration
+    nested = [q for q in quals if q != "helper" and q.endswith("helper")]
+    assert nested, f"nested helper collided with the top-level one: {quals}"
