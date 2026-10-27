@@ -748,8 +748,12 @@ body {
 .dot--tainted { background: var(--alert); border: 2px solid var(--alert); box-shadow: 0 0 9px var(--alert-glow); }
 
 /* Vulnerability legend rows appear only once an audit bundle is loaded. */
+.dot--trans { background: transparent; border: 1.5px solid var(--dep); }
 .legend__item--vuln { display: none; }
 body.has-vulns .legend__item--vuln { display: flex; }
+/* The transitive-dep legend note only applies when the scan has transitive deps. */
+.legend__item--transitive { display: none; }
+body.has-transitive .legend__item--transitive { display: flex; }
 
 /* ---------------------------------------------------------------- tooltip */
 .tooltip {
@@ -887,6 +891,8 @@ body.has-vulns .legend__item--vuln { display: flex; }
   color: var(--ink-mut);
 }
 .dsec__h .dsec__count { color: var(--ink-mut); font-weight: 500; }
+/* A reused .use badge sitting in a section header (e.g. "Package  transitive"). */
+.dsec__h .use { margin-left: 0.5rem; vertical-align: middle; }
 
 /* Key/value rows (signature, source, ecosystem …). */
 .kv { display: grid; grid-template-columns: auto 1fr; gap: 0.3rem 0.8rem; align-items: baseline; }

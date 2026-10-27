@@ -38,6 +38,10 @@
   var cy = null;
   var model = { nodes: [], edges: [], index: {}, outByKind: {} };
   var visibleKinds = {};
+  // Transitive (lockfile-only) dependencies are hidden by default — the
+  // "transitive deps" chip flips this. See isInertTransitive() for the guard
+  // that keeps a transitive dep that actually matters on the canvas regardless.
+  var showTransitive = false;
   var selectedEp = null;
 
   // Vulnerability overlay state (populated only in bundle mode; empty for a
@@ -86,6 +90,7 @@
     zoomFit: document.getElementById("zoom-fit"),
     viewDemo: document.getElementById("view-demo"),
     viewRedash: document.getElementById("view-redash"),
+    viewTransitive: document.getElementById("view-transitive"),
     viewSample: document.getElementById("view-sample")
   };
 
@@ -580,6 +585,27 @@
     cy.fit(spine.length ? spine : cy.nodes(":visible"), 48);
   }
 
+  // A dependency declared only in a lockfile (attrs.direct === false) — pulled in
+  // transitively, never named in the manifest.
+  function isTransitiveDep(n) {
+    return !!(n && n.kind === "dependency" && n.attrs && n.attrs.direct === false);
+  }
+  // Does a transitive dep earn a spot on the canvas? Yes if a public route proved
+  // to reach it (a reachable finding), or if an actual call/route edge lands on it
+  // (it sits on the reach spine). The structural `declares` edge from the manifest
+  // does NOT count — every transitive dep carries one, so it can't separate the
+  // inert lockfile dots from the ones that matter. Such a dep stays visible even
+  // when the transitive chip is off, so we never hide one that matters.
+  function transitiveMatters(id) {
+    var vs = vulnByDep[id];
+    if (vs && vs.reachable) return true;
+    return (model.inByDst[id] || []).some(function (e) { return TRACE_EDGES[e.kind]; });
+  }
+  function isInertTransitive(id) {
+    var n = model.index[id];
+    return isTransitiveDep(n) && !transitiveMatters(id);
+  }
+
   function applyFilter(preserveSelection) {
     var depth = computeDepths();
     cy.batch(function () {
@@ -589,6 +615,12 @@
         // Keep the network clean: a function not reachable from any entry point is
         // not on the call-flow spine, so it (and its edges) stay hidden by default.
         if (show && kind === "function" && !(node.id() in depth)) show = false;
+        // Inert transitive deps (lockfile-only, edge-less, not reachable) are dots
+        // that clutter the graph, so they stay hidden until the transitive chip is
+        // on. In focusedMode the curated subgraph already holds only vulnerable +
+        // reachable nodes, so any transitive dep present there survives transitiveMatters
+        // and this never double-hides it.
+        if (show && !showTransitive && isInertTransitive(node.id())) show = false;
         node.style("display", show ? "element" : "none");
       });
     });
@@ -755,7 +787,10 @@
     }
     var s = bundleMeta.summary;
     var stages = [
-      { n: s.total_dependencies,               label: "dependencies",               tone: "neutral" },
+      { n: s.total_dependencies,               label: "dependencies",               tone: "neutral",
+        sub: (s.transitive_dependencies > 0
+          ? groupNum(s.direct_dependencies || 0) + " direct · " + groupNum(s.transitive_dependencies) + " transitive"
+          : null) },
       { n: s.total_vulnerabilities,            label: "known CVEs",                 tone: "neutral" },
       { n: s.reachable_vulnerabilities,        label: "reachable",                  tone: "neutral" },
       { n: s.symbol_confirmed_vulnerabilities, label: "vulnerable-function confirmed", tone: "confirmed" },
@@ -1514,7 +1549,9 @@
     var depFindings = findings.filter(function (f) { return f.dependency_id === n.id; });
     var html = detailHead("dependency", n.name || n.id) + '<div class="detail__body">';
 
-    html += '<section class="dsec"><h2 class="dsec__h">Package</h2><dl class="kv">' +
+    html += '<section class="dsec"><h2 class="dsec__h">Package' +
+      (a.direct === false ? ' <span class="use use--transitive">transitive</span>' : '') +
+      '</h2><dl class="kv">' +
       '<dt>Name</dt><dd>' + esc(n.name || n.id) + '</dd>' +
       (a.version ? '<dt>Version</dt><dd class="is-signal">' + esc(a.version) + '</dd>' : "") +
       (a.ecosystem ? '<dt>Ecosystem</dt><dd>' + esc(a.ecosystem) + '</dd>' : "") +
@@ -1727,8 +1764,31 @@
     });
   }
 
+  // A sibling chip to the kind filters: show the transitive (lockfile-only) deps
+  // that are hidden by default. Only offered when the model actually holds some.
+  function makeTransitiveChip() {
+    var btn = document.createElement("button");
+    btn.className = "chip chip--transitive";
+    btn.type = "button";
+    btn.setAttribute("aria-pressed", String(showTransitive));
+    var dot = document.createElement("i");
+    // Hollow dependency-cyan ring: a dependency, but a secondary one.
+    dot.style.background = "transparent";
+    dot.style.border = "1.5px solid " + (KIND_COLOR.dependency || "#6FB8E0");
+    btn.appendChild(dot);
+    btn.appendChild(document.createTextNode("transitive deps"));
+    btn.addEventListener("click", function () {
+      showTransitive = !showTransitive;
+      btn.setAttribute("aria-pressed", String(showTransitive));
+      applyFilter(true);
+    });
+    return btn;
+  }
+
   function renderFilters() {
     el.filters.innerHTML = "";
+    showTransitive = false;
+    var hasTransitive = model.nodes.some(isTransitiveDep);
     kindsPresent().forEach(function (kind) {
       visibleKinds[kind] = !OFF_BY_DEFAULT[kind];
       var btn = document.createElement("button");
@@ -1746,6 +1806,8 @@
         applyFilter(true);
       });
       el.filters.appendChild(btn);
+      // The transitive toggle rides beside the dependency chip it refines.
+      if (kind === "dependency" && hasTransitive) el.filters.appendChild(makeTransitiveChip());
     });
   }
 
@@ -1824,6 +1886,7 @@
   function renderAll(name) {
     selectedEp = null;
     visibleKinds = {};
+    showTransitive = false;
     el.stage.classList.remove("is-traced"); // drop any trace hint from a prior view
     renderCounts();
     renderFunnel();
@@ -1835,6 +1898,7 @@
     renderVulns();
     renderGraph();
     document.body.classList.toggle("has-vulns", !!(bundleMeta && findings.length));
+    document.body.classList.toggle("has-transitive", model.nodes.some(isTransitiveDep));
     document.body.classList.toggle("is-focused", focusedMode);
     if (name) el.scanname.textContent = name;
   }
@@ -1997,6 +2061,7 @@
   function setActiveView(which) {
     el.viewDemo.setAttribute("aria-pressed", which === "demo" ? "true" : "false");
     el.viewRedash.setAttribute("aria-pressed", which === "redash" ? "true" : "false");
+    el.viewTransitive.setAttribute("aria-pressed", which === "transitive" ? "true" : "false");
     el.viewSample.setAttribute("aria-pressed", which === "sample" ? "true" : "false");
   }
 
@@ -2020,7 +2085,9 @@
     demo:   { file: "demo-bundle.json",   label: "vulnerable-app · Flask demo · audit", btn: el.viewDemo,
               hint: "Open the dashboard from a local web server to load the vulnerable-app demo bundle." },
     redash: { file: "redash-bundle.json", label: "redash · real-world repo (200 deps) · audit", btn: el.viewRedash,
-              hint: "Open the dashboard from a local web server to load the redash bundle." }
+              hint: "Open the dashboard from a local web server to load the redash bundle." },
+    transitive: { file: "transitive-bundle.json", label: "transitive-app · npm direct+transitive", btn: el.viewTransitive,
+              hint: "Open the dashboard from a local web server to load the transitive-app bundle." }
   };
   var viewToken = 0; // latest requested view wins if fetches resolve out of order
 
@@ -2049,6 +2116,7 @@
   el.viewSample.addEventListener("click", showSample);
   el.viewDemo.addEventListener("click", function () { showBundle("demo"); });
   el.viewRedash.addEventListener("click", function () { showBundle("redash"); });
+  el.viewTransitive.addEventListener("click", function () { showBundle("transitive"); });
 
   /* ---------------------------------------------------------------- boot */
   // Default to the served demo bundle (a small, clean showcase app whose deep
