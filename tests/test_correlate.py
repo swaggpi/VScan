@@ -14,9 +14,14 @@ import os
 
 import pytest
 
-from scanner.correlate import Finding, correlate, correlate_full
+from scanner.correlate import CorrelationResult, Finding, correlate, correlate_full
 from scanner.correlate import cache, enrich, osv, report
-from scanner.reachability import compute_reachability
+from scanner.graph import KnowledgeGraph
+from scanner.reachability import (
+    POTENTIALLY_REACHABLE,
+    ReachabilityResult,
+    compute_reachability,
+)
 from scanner.scan import scan_repo
 
 SAMPLE_APP = os.path.join(
@@ -639,3 +644,62 @@ def test_collect_degrades_on_unexpected_worker_exception(monkeypatch):
     result = osv.collect(deps)  # must not raise ValueError
     assert result.ok is False
     assert result.by_dep == {}
+
+
+# #14 -- A1: the audit JSON must NOT re-derive a confident ``unreachable`` from
+# the binary ``finding.reachable`` when the dep id is absent from
+# ``verdict_by_dep`` (whose four-part gate is the only sound source of that label).
+
+
+def test_audit_verdict_defaults_to_potentially_reachable_when_absent():
+    ghost = Finding(
+        dependency_id="dep:ghost-not-in-verdict-map",
+        dependency_name="ghost",
+        version="1.0.0",
+        ecosystem="PyPI",
+        vuln_id="GHSA-ghost",
+        cve_ids=["CVE-2099-0001"],
+        summary="",
+        fixed_versions=[],
+    )
+    assert ghost.reachable is False
+    correlation = CorrelationResult(findings=[ghost], offline=False, network_ok=True)
+    reach = ReachabilityResult()  # empty repo roll-up -> verdict_by_dep == {}
+    assert ghost.dependency_id not in reach.repo.verdict_by_dep
+
+    payload = report.audit(KnowledgeGraph(), correlation, reach)
+
+    serialized = next(
+        f
+        for f in payload["findings"]
+        if f["dependency_id"] == "dep:ghost-not-in-verdict-map"
+    )
+    # Conservative default -- never the confident (and here unsound) ``unreachable``.
+    assert serialized["verdict"] == POTENTIALLY_REACHABLE
+    assert serialized["verdict"] != "unreachable"
+
+
+# #15 -- T2: cache round-trip, TTL expiry (with stale-file cleanup) and fail-soft
+# on a corrupt entry. The autouse ``_isolated_cache`` fixture already points
+# VULNREACH_CACHE_DIR at a fresh temp dir for every test.
+
+
+def test_cache_round_trip_returns_stored_value():
+    cache.set("rt-key", {"a": 1, "b": [2, 3]}, ttl=100)
+    assert cache.get("rt-key") == {"a": 1, "b": [2, 3]}
+
+
+def test_cache_get_expires_and_unlinks_stale_file():
+    cache.set("exp-key", {"v": 1}, ttl=-1)  # expires in the past
+    path = cache._path_for("exp-key")
+    assert path.exists()  # the entry was actually written
+    # A past TTL must read as a miss AND remove the stale file.
+    assert cache.get("exp-key") is None
+    assert not path.exists()
+
+
+def test_cache_get_on_corrupt_file_is_a_miss():
+    path = cache._path_for("corrupt-key")  # also creates the cache dir
+    path.write_text("{ this is not valid json ", encoding="utf-8")
+    # A garbage entry must fail soft -- a miss, never a raise.
+    assert cache.get("corrupt-key") is None

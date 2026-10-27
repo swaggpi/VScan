@@ -16,7 +16,7 @@ from typing import Any
 
 from ..coverage import CoverageReport, compute_coverage
 from ..graph import KnowledgeGraph
-from ..reachability import ReachabilityResult
+from ..reachability import POTENTIALLY_REACHABLE, REACHABLE, ReachabilityResult
 from . import CorrelationResult, Finding
 
 # Upper bound on the serialized OSV ``details`` description, so the bundle/--json
@@ -150,8 +150,14 @@ def audit(
         payload = finding.to_dict()
         # Expose the three-way reachability verdict (reachable /
         # potentially_reachable / unreachable) that the text report already shows.
+        # The confident ``unreachable`` label is sound ONLY when it comes from
+        # ``verdict_by_dep`` (which applies the four-part fully-resolved gate).
+        # When a dep id is absent from that map, re-deriving ``unreachable`` from
+        # the binary ``finding.reachable`` would be a false-safe, so default the
+        # non-reachable case to the conservative ``potentially_reachable`` --
+        # matching the neutral spirit of the sibling ``_reach_text`` path.
         payload["verdict"] = verdicts.get(finding.dependency_id) or (
-            "reachable" if finding.reachable else "unreachable"
+            REACHABLE if finding.reachable else POTENTIALLY_REACHABLE
         )
         # Carry the full OSV description so a UI can show the real CVE text (it
         # names the vulnerable function/sink). Bounded defensively.

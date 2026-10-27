@@ -312,7 +312,9 @@ def merge_vulns(vulns: list[OsvVuln]) -> list[OsvVuln]:
             keys.append(key)
 
     groups: dict[Any, list[OsvVuln]] = {}
-    for vuln, key in zip(vulns, keys):
+    # ``keys`` is built one-per-vuln in the loop above (an append in every
+    # branch), so the two are guaranteed equal length.
+    for vuln, key in zip(vulns, keys, strict=True):
         groups.setdefault(find(key), []).append(vuln)
 
     merged = [_merge_group(group) for group in groups.values()]
@@ -445,7 +447,10 @@ def collect(deps: list[DepRef]) -> OsvResult:
         return OsvResult(by_dep={}, ok=False, skipped=skipped)
 
     by_dep: dict[str, list[OsvVuln]] = {}
-    for ref, ids in zip(refs, id_lists):
+    # ``refs`` and ``queries`` are appended together, and ``query_batch`` aligns
+    # ``id_lists`` 1:1 with ``queries`` (raising on any mismatch), so ``refs`` and
+    # ``id_lists`` are guaranteed equal length.
+    for ref, ids in zip(refs, id_lists, strict=True):
         vulns: list[OsvVuln] = []
         for vid in ids:
             record = records.get(vid)
