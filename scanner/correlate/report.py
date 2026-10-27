@@ -124,21 +124,34 @@ def _apply_taint(
     """Set each finding's derived ``taint``/``taint_evidence`` from a taint map.
 
     Strictly additive: it only ever sets the two derived taint fields and never
-    touches ``reachable``, the verdict, ``symbol_match`` or ranking. A finding is
-    escalated to ``"tainted"`` only when the map proves a source->sink flow for
-    its dependency. Shared by :func:`audit` and :func:`format_report` so both
-    paths apply the identical logic. A ``None`` map is a no-op.
+    touches ``reachable``, the verdict, ``symbol_match`` or ranking. The taint
+    map is per dependency, but a dependency can carry several CVEs about
+    different functions, so a finding is escalated to ``"tainted"`` only when
+    the dependency's flow is proven AND the finding's own advisory text names
+    the tainted sink symbol. Anything else stays ``"not_proven"`` with no
+    evidence. This makes ``tainted`` imply ``symbol_match == "confirmed"``
+    (the sink is a reached call and the advisory matches it). Shared by
+    :func:`audit` and :func:`format_report` so both paths apply the identical
+    logic. A ``None`` map is a no-op.
     """
     if taint is None:
         return
     for finding in findings:
         result = taint.get(finding.dependency_id)
-        if result is not None:
-            evidence = (
-                result.to_dict() if hasattr(result, "to_dict") else dict(result)
-            )
-            finding.taint = evidence.get("verdict", "not_proven")
+        if result is None:
+            continue
+        evidence = result.to_dict() if hasattr(result, "to_dict") else dict(result)
+        sink_symbol = evidence.get("sink_symbol")
+        advisory_text = f"{finding.summary} {finding.details or ''}"
+        if (
+            evidence.get("verdict") == "tainted"
+            and sink_symbol
+            and advisory_matches_called_symbol([sink_symbol], advisory_text)
+        ):
+            finding.taint = "tainted"
             finding.taint_evidence = evidence
+        else:
+            finding.taint = "not_proven"
 
 
 def funnel_line(summary: dict[str, Any]) -> str:

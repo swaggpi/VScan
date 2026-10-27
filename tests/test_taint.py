@@ -757,6 +757,85 @@ def test_audit_taint_is_additive_and_sets_summary():
             assert baseline["summary"][key] == with_taint["summary"][key]
 
 
+def _pyyaml_finding(vuln_id: str, summary: str, details: str | None = None) -> Finding:
+    return Finding(
+        dependency_id="dep:PyPI:PyYAML",
+        dependency_name="PyYAML",
+        version="5.3.1",
+        ecosystem="PyPI",
+        vuln_id=vuln_id,
+        cve_ids=[],
+        summary=summary,
+        fixed_versions=[],
+        details=details,
+    )
+
+
+def test_taint_is_gated_per_finding_by_advisory_sink():
+    """Two CVEs on the SAME tainted dependency: only the one naming the tainted
+    sink (yaml.load) is tainted; the one about another function is not_proven."""
+    graph = scan_repo(VULN_APP)
+    reach = compute_reachability(graph)
+    taint_map = compute_taint(graph, reach, VULN_APP)
+    assert taint_map["dep:PyPI:PyYAML"].sink_symbol == "yaml.load"
+
+    findings = [
+        _pyyaml_finding("GHSA-sink", "PyYAML arbitrary code execution via yaml.load"),
+        _pyyaml_finding(
+            "GHSA-other",
+            "PyYAML denial of service in the emitter",
+            "Crafted input to yaml.dump can exhaust memory.",
+        ),
+        _pyyaml_finding("GHSA-vague", "PyYAML vulnerability"),
+    ]
+    payload = report.audit(
+        graph,
+        CorrelationResult(findings=findings, offline=True, network_ok=False),
+        reach,
+        taint=taint_map,
+    )
+    by_id = {f["vuln_id"]: f for f in payload["findings"]}
+
+    assert by_id["GHSA-sink"]["taint"] == "tainted"
+    assert by_id["GHSA-sink"]["taint_evidence"]["sink_symbol"] == "yaml.load"
+    for vuln_id in ("GHSA-other", "GHSA-vague"):
+        assert by_id[vuln_id]["taint"] == "not_proven"
+        assert by_id[vuln_id]["taint_evidence"] is None
+    assert payload["summary"]["taint_confirmed_vulnerabilities"] == 1
+
+    # Nesting invariant: tainted implies a confirmed symbol match.
+    for f in payload["findings"]:
+        if f["taint"] == "tainted":
+            assert f["symbol_match"] == "confirmed"
+
+
+def test_tainted_never_without_sink_symbol_or_tainted_verdict():
+    findings = [_pyyaml_finding("GHSA-sink", "PyYAML code execution via yaml.load")]
+    for result in (
+        TaintResult(verdict=TAINTED, sink_symbol=None),
+        TaintResult(verdict=TAINTED, sink_symbol=""),
+        TaintResult(verdict=NOT_PROVEN, sink_symbol="yaml.load"),
+    ):
+        report._apply_taint(findings, {"dep:PyPI:PyYAML": result})
+        assert findings[0].taint == "not_proven"
+        assert findings[0].taint_evidence is None
+
+
+def test_vulnerable_app_taint_implies_confirmed_symbol_match():
+    graph = scan_repo(VULN_APP)
+    reach = compute_reachability(graph)
+    taint_map = compute_taint(graph, reach, VULN_APP)
+    payload = report.audit(
+        graph,
+        CorrelationResult(findings=_findings(), offline=True, network_ok=False),
+        reach,
+        taint=taint_map,
+    )
+    tainted = [f for f in payload["findings"] if f["taint"] == "tainted"]
+    assert tainted  # the PyYAML finding's advisory names yaml.load
+    assert all(f["symbol_match"] == "confirmed" for f in tainted)
+
+
 def test_taint_result_to_dict_roundtrips():
     r = TaintResult(verdict=TAINTED, source="request.data", sink_symbol="yaml.load",
                     entrypoint="POST /x", path=["a", "b"])
