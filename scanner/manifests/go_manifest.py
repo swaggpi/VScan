@@ -36,6 +36,12 @@ class GoManifestAdapter(ManifestAdapter):
         deps: list[Dependency] = []
         in_block = False
         for raw in lines:
+            # Detect the ``// indirect`` marker on the RAW line, before the
+            # comment is stripped: ``go mod tidy`` tags transitive (indirect)
+            # requires this way. Those modules are emitted as ``direct=False``
+            # (the soundness key); everything else stays direct.
+            comment = raw.split("//", 1)[1] if "//" in raw else ""
+            is_indirect = "indirect" in comment
             line = raw.split("//", 1)[0].strip()  # drop comments
             if not line:
                 continue
@@ -44,20 +50,27 @@ class GoManifestAdapter(ManifestAdapter):
                 # Handle "require ( module v1 )" written inline (rare) too.
                 tail = line.split("(", 1)[1].strip()
                 if tail:
-                    self._add_pair(tail, relpath, deps)
+                    self._add_pair(tail, relpath, deps, direct=not is_indirect)
                 continue
             if in_block:
                 if line.startswith(")"):
                     in_block = False
                     continue
-                self._add_pair(line, relpath, deps)
+                self._add_pair(line, relpath, deps, direct=not is_indirect)
                 continue
             if line.startswith("require "):
-                self._add_pair(line[len("require ") :].strip(), relpath, deps)
+                self._add_pair(
+                    line[len("require ") :].strip(),
+                    relpath,
+                    deps,
+                    direct=not is_indirect,
+                )
         return deps
 
     @staticmethod
-    def _add_pair(text: str, relpath: str, deps: list[Dependency]) -> None:
+    def _add_pair(
+        text: str, relpath: str, deps: list[Dependency], direct: bool = True
+    ) -> None:
         match = _REQUIRE_PAIR.match(text)
         if not match:
             return
@@ -69,5 +82,6 @@ class GoManifestAdapter(ManifestAdapter):
                 relpath,
                 resolved=False,
                 declared=match.group("version"),
+                direct=direct,
             )
         )

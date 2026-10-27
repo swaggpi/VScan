@@ -34,20 +34,33 @@ def _extract_dependencies(files: list[FileInfo], graph: KnowledgeGraph) -> list[
         adapter = manifests.adapter_for(info.relpath)
         if adapter is None:
             continue
-        for dep in adapter.parse(info.abspath, info.relpath):
-            dep_id = dep.node_id()
-            graph.add_node(
-                dep_id,
-                "dependency",
-                dep.name,
-                ecosystem=dep.ecosystem,
-                version=dep.version,
-                declared=dep.declared,
-                resolved=dep.resolved,
-                source_file=dep.source_file,
-            )
-            graph.add_edge(f"file:{dep.source_file}", dep_id, "declares")
-            deps.append(dep)
+        deps.extend(adapter.parse(info.abspath, info.relpath))
+
+    # Direct must win. A dep id can be emitted BOTH as a declared/direct dep and
+    # again as transitive (e.g. the lockfile walk enumerates the whole tree), and
+    # ``graph.add_node`` merges attrs last-write-wins. So compute, per dep id, the
+    # OR of every ``direct`` flag seen FIRST; a node that is direct in any source
+    # then ends up ``direct=True`` regardless of emission order, never downgraded
+    # to False by a later transitive emission.
+    direct_by_id: dict[str, bool] = {}
+    for dep in deps:
+        dep_id = dep.node_id()
+        direct_by_id[dep_id] = direct_by_id.get(dep_id, False) or dep.direct
+
+    for dep in deps:
+        dep_id = dep.node_id()
+        graph.add_node(
+            dep_id,
+            "dependency",
+            dep.name,
+            ecosystem=dep.ecosystem,
+            version=dep.version,
+            declared=dep.declared,
+            resolved=dep.resolved,
+            source_file=dep.source_file,
+            direct=direct_by_id[dep_id],
+        )
+        graph.add_edge(f"file:{dep.source_file}", dep_id, "declares")
     return deps
 
 

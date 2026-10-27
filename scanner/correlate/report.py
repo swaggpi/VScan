@@ -173,8 +173,18 @@ def funnel_line(summary: dict[str, Any]) -> str:
 def build_summary(graph: KnowledgeGraph, findings: list[Finding]) -> dict[str, Any]:
     """Compute the headline counters for the report header."""
     vulnerable_deps = {f.dependency_id for f in findings}
+    dep_nodes = graph.nodes_of_kind("dependency")
     return {
-        "total_dependencies": len(graph.nodes_of_kind("dependency")),
+        # Honest: now that we scan the whole resolved tree this counts direct +
+        # transitive. The two split counters below break it down; the funnel
+        # line still reads ``total_dependencies``.
+        "total_dependencies": len(dep_nodes),
+        "direct_dependencies": sum(
+            1 for n in dep_nodes if n.attrs.get("direct", True) is not False
+        ),
+        "transitive_dependencies": sum(
+            1 for n in dep_nodes if n.attrs.get("direct", True) is False
+        ),
         "vulnerable_dependencies": len(vulnerable_deps),
         "total_vulnerabilities": len(findings),
         "reachable_vulnerabilities": sum(1 for f in findings if f.reachable),

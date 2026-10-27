@@ -119,6 +119,42 @@ def _classify(reached: bool, region_fully_resolved: bool) -> str:
     return UNREACHABLE if region_fully_resolved else POTENTIALLY_REACHABLE
 
 
+def _dep_is_direct(graph: KnowledgeGraph, dep_id: str) -> bool:
+    """Whether a dependency node is a DIRECT (manifest-declared) dependency.
+
+    Reads the node's ``direct`` attribute, defaulting to ``True`` when it is
+    missing so pre-existing graphs and tests (whose dep nodes carry no such
+    attr) keep the original verdict behavior exactly.
+    """
+    node = graph.get_node(dep_id)
+    if node is None:
+        return True
+    return node.attrs.get("direct", True) is not False
+
+
+def _classify_dep(
+    graph: KnowledgeGraph,
+    dep_id: str,
+    reached: bool,
+    region_fully_resolved: bool,
+) -> str:
+    """Three-way verdict with the TRANSITIVE-dependency soundness override.
+
+    A transitive dependency (node attr ``direct is False``) that is NOT reached
+    is ALWAYS ``potentially_reachable`` -- never ``unreachable`` -- regardless of
+    whether the region is fully resolved: we do not analyze a top-level
+    dependency's internals, so whether a reachable top-level dep in turn reaches
+    this transitive dep is UNKNOWN. A transitive dep that IS reached by a
+    resolved edge stays ``reachable``. A DIRECT dep keeps the plain
+    :func:`_classify` behavior, so a declared dep with no call site in a
+    fully-resolved region is still ``unreachable``. The key is the ``direct``
+    attr, NOT the absence of an incoming call edge.
+    """
+    if not reached and not _dep_is_direct(graph, dep_id):
+        return POTENTIALLY_REACHABLE
+    return _classify(reached, region_fully_resolved)
+
+
 @dataclass
 class ReachedDependency:
     """A dependency reached from a single entry point, with evidence."""
@@ -324,7 +360,7 @@ def _reachability_for_entrypoint(
     )
     reached_ids = {dep.id for dep in reachable_dependencies}
     verdict_by_dep = {
-        dep_id: _classify(dep_id in reached_ids, fully_resolved)
+        dep_id: _classify_dep(graph, dep_id, dep_id in reached_ids, fully_resolved)
         for dep_id in declared_dep_ids
     }
 
@@ -451,7 +487,9 @@ def compute_reachability(graph: KnowledgeGraph) -> ReachabilityResult:
         and unresolved_calls == 0
     )
     verdict_by_dep = {
-        dep_id: _classify(dep_id in reachable_any, region_fully_resolved)
+        dep_id: _classify_dep(
+            graph, dep_id, dep_id in reachable_any, region_fully_resolved
+        )
         for dep_id in declared_dep_ids
     }
     verdict_counts = {

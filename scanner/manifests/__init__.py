@@ -37,6 +37,13 @@ class Dependency:
     lockfile) and otherwise the declared constraint. ``resolved`` records which
     of the two it is, so later layers know how much to trust the version.
     ``declared`` always preserves the original spec from the manifest.
+
+    ``direct`` is ``True`` for a dependency the manifest declares itself (a
+    top-level/direct dep) and ``False`` for a transitive dependency surfaced
+    only from the resolved tree (a lockfile walk, a ``// indirect`` require).
+    The default is ``True`` so every existing adapter construction stays direct.
+    This flag is the soundness key for reachability: a transitive dep must never
+    be ruled ``unreachable`` (we do not analyze a top-level dep's internals).
     """
 
     name: str
@@ -45,6 +52,7 @@ class Dependency:
     source_file: str  # repo-relative path of the manifest the dep came from
     resolved: bool = False
     declared: str | None = None
+    direct: bool = True
 
     def node_id(self) -> str:
         return f"dep:{self.ecosystem}:{self.name}"

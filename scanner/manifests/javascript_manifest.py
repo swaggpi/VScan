@@ -139,4 +139,21 @@ class JavaScriptManifestAdapter(ManifestAdapter):
                 deps.append(
                     Dependency(name, spec, "npm", relpath, resolved=False, declared=spec)
                 )
+
+        # Transitive dependencies: every package the lockfile resolved that the
+        # manifest does NOT declare itself. These come straight from the fully
+        # resolved tree (``_resolved_from_package_lock`` / ``_resolved_from_pnpm``
+        # already enumerate the whole tree), so they are exact-version resolved.
+        # They are ``direct=False`` -- the soundness key: a transitive dep is
+        # never ruled unreachable. The root/self package and any empty entry are
+        # skipped.
+        self_name = data.get("name") if isinstance(data.get("name"), str) else None
+        for name, version in resolved.items():
+            if not name or not version or name in declared or name == self_name:
+                continue
+            deps.append(
+                Dependency(
+                    name, version, "npm", relpath, resolved=True, direct=False
+                )
+            )
         return deps
