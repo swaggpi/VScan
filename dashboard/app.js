@@ -183,6 +183,11 @@
         "transition-duration": REDUCED ? "0s" : "220ms"
       }},
 
+      /* off the call-flow spine (unreached functions, module/file/doc) — kept
+         visible but visually secondary. Declared before .dim so an active trace
+         still dims these further; .lit/.focus come later and override it. */
+      { selector: "node.offspine", style: { "opacity": 0.5 } },
+
       /* dimmed (something else is selected) */
       { selector: ".dim", style: { "opacity": 0.12 } },
       { selector: "edge.dim", style: { "opacity": 0.06 } },
@@ -272,51 +277,121 @@
     bindGraphEvents();
   }
 
-  function visibleRoots() {
-    return cy.nodes('[kind = "entrypoint"]').filter(":visible");
+  // Call-depth of every node = shortest number of hops from ANY entry point,
+  // following route_to_handler then calls edges (multi-source BFS). Entry points
+  // are depth 0; a handler called by a route is depth 1; and so on toward the
+  // dependencies. A node absent from the map is not reachable from any route.
+  // Computed from the full model (a graph property), independent of what kinds
+  // are currently filtered in/out.
+  function computeDepths() {
+    var depth = {}, queue = [], head = 0;
+    model.nodes.forEach(function (n) {
+      if (n.kind === "entrypoint") { depth[n.id] = 0; queue.push(n.id); }
+    });
+    while (head < queue.length) {
+      var cur = queue[head++];
+      var outs = model.outByKind[cur] || [];
+      for (var i = 0; i < outs.length; i++) {
+        var e = outs[i];
+        if (!TRACE_EDGES[e.kind]) continue;
+        if (!(e.dst in depth)) {
+          depth[e.dst] = depth[cur] + 1;
+          queue.push(e.dst);
+        }
+      }
+    }
+    return depth;
   }
+
+  // Explicit LAYERED top-down placement (a preset layout we compute, not a
+  // force/breadthfirst layout), so the diagram reads bottom-to-top as the call
+  // chain: an entry point at the BOTTOM flows UP through call layers to the
+  // vulnerable dependency at the TOP. Rows, from top (smallest y) down:
+  //   • TOP band:  all `dependency` nodes (reachable or disconnected alike).
+  //   • MIDDLE:    `function` nodes in horizontal layers by call depth — DEEPER
+  //                functions (closer to a dependency) sit HIGHER, shallower ones
+  //                (called straight from a handler) sit LOWER. So going up the
+  //                screen follows the call chain toward the dependency.
+  //   • BOTTOM band: all `entrypoint` nodes (and the focused-view "+N" cluster).
+  // Functions not reachable from any entry point, plus module/file/doc nodes if
+  // shown, are not part of the call-flow spine: they go on a dim shelf off to
+  // the right, visible but visually secondary, never interleaved with the layers.
+  // Only currently-visible nodes are distributed, so toggling a kind re-centers
+  // the remaining rows cleanly with no stale positions.
+  var COL_W = 180;      // x-spacing within a row
+  var ROW_H = 135;      // y-spacing between layers
+  var OFF_COL_W = 165;  // off-spine shelf column width
+  var OFF_ROW_H = 48;   // off-spine shelf row height
 
   function runLayout() {
-    var vis = cy.elements(":visible");
-    var roots = visibleRoots();
-    vis.layout({
-      name: "breadthfirst",
-      directed: true,
-      roots: roots.length ? roots : undefined,
-      spacingFactor: 1.4,
-      padding: 40,
-      animate: false,
-      fit: !focusedMode
-    }).run();
-    if (focusedMode) {
-      arrangeOrphans();
-      cy.fit(undefined, 44);
-    }
-  }
+    var depth = computeDepths();
+    var vis = cy.nodes(":visible");
 
-  // In the focused view the connected fan (routes -> handlers -> reachable
-  // vulnerable dep) is the story; the unreached-but-vulnerable deps and the
-  // "+N entry points" cluster have no edges. Lay those on a tidy shelf above
-  // the fan rather than letting breadthfirst stack them at the origin.
-  function arrangeOrphans() {
-    var connected = cy.nodes(":visible").filter(function (n) { return n.connectedEdges(":visible").length > 0; });
-    var orphans = cy.nodes(":visible").filter(function (n) { return n.connectedEdges(":visible").length === 0; });
-    if (!orphans.length) return;
-    // cluster node first, then vulnerable deps, so the shelf reads consistently
-    var list = orphans.sort(function (a, b) {
-      var ca = a.data("kind") === "epcluster" ? 0 : 1;
-      var cb = b.data("kind") === "epcluster" ? 0 : 1;
-      if (ca !== cb) return ca - cb;
-      return String(a.data("name")).localeCompare(String(b.data("name")));
+    // Deepest visible reachable function sets where the dependency band sits.
+    var maxFuncDepth = 0;
+    vis.forEach(function (n) {
+      if (n.data("kind") === "function" && (n.id() in depth)) {
+        maxFuncDepth = Math.max(maxFuncDepth, depth[n.id()]);
+      }
     });
-    var bb = connected.length ? connected.boundingBox() : { x1: 0, w: 1000, y1: 0 };
-    var span = Math.max(bb.w, (list.length - 1) * 180);
-    var x0 = bb.x1 + (bb.w - span) / 2;
-    var y = bb.y1 - 150;
-    var step = list.length > 1 ? span / (list.length - 1) : 0;
-    list.forEach(function (n, i) {
-      n.position({ x: x0 + i * step, y: y });
+    var depsLayer = maxFuncDepth + 1; // dependency band always on top
+    var topLayer = depsLayer;
+
+    var layers = {};     // layerIndex -> [nodes] on the call-flow spine
+    var offspine = [];   // unreached functions + module/file/doc + unknowns
+    function push(L, n) { (layers[L] || (layers[L] = [])).push(n); }
+
+    vis.forEach(function (n) {
+      var k = n.data("kind");
+      if (k === "entrypoint" || k === "epcluster") {
+        push(0, n);                       // bottom band
+      } else if (k === "dependency") {
+        push(depsLayer, n);               // top band (reachable or not)
+      } else if (k === "function" && (n.id() in depth)) {
+        push(depth[n.id()], n);           // middle: deeper = higher
+      } else {
+        offspine.push(n);                 // off-spine shelf
+      }
     });
+
+    function sortKey(n) { return String(n.data("label") || n.data("name") || n.id()); }
+    function layerY(L) { return (topLayer - L) * ROW_H; }
+
+    // Half-width of the widest spine row — where the off-spine shelf begins.
+    var maxHalf = 0;
+    Object.keys(layers).forEach(function (k) {
+      maxHalf = Math.max(maxHalf, (layers[k].length - 1) / 2 * COL_W);
+    });
+
+    cy.batch(function () {
+      cy.nodes().removeClass("offspine");
+
+      Object.keys(layers).forEach(function (k) {
+        var arr = layers[k];
+        arr.sort(function (a, b) { return sortKey(a).localeCompare(sortKey(b)); });
+        var c = arr.length;
+        var y = layerY(Number(k));
+        arr.forEach(function (n, i) {
+          n.position({ x: (i - (c - 1) / 2) * COL_W, y: y });
+        });
+      });
+
+      if (offspine.length) {
+        offspine.sort(function (a, b) { return sortKey(a).localeCompare(sortKey(b)); });
+        offspine.forEach(function (n) { n.addClass("offspine"); });
+        // A compact grid to the right of the spine, filling column by column so
+        // it stays a tidy band rather than one long run.
+        var spineHeight = topLayer * ROW_H;
+        var perCol = Math.max(1, Math.floor(spineHeight / OFF_ROW_H) + 1);
+        var offX0 = maxHalf + COL_W * 1.6;
+        offspine.forEach(function (n, i) {
+          var col = Math.floor(i / perCol), row = i % perCol;
+          n.position({ x: offX0 + col * OFF_COL_W, y: row * OFF_ROW_H });
+        });
+      }
+    });
+
+    cy.fit(undefined, 44);
   }
 
   function applyFilter(preserveSelection) {
