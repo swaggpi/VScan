@@ -23,7 +23,6 @@ the network and never consult vulnerability data -- that is a later layer.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable
 
 # The four ecosystems understood in this layer. Stored as a constant so other
 # modules (and tests) can refer to the canonical spelling.
