@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>vulnreach · reachability viewer</title>
+  <meta name="description" content="Trace how a public entry point reaches its dependencies through a repository's code paths." />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;450;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.30.2/cytoscape.min.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#graph">Skip to graph</a>
+
+  <!-- Title block: an engineering drawing labels itself in the corner -->
+  <header class="titleblock" role="banner">
+    <div class="titleblock__id">
+      <span class="wordmark">vulnreach</span>
+      <span class="eyebrow">Reachability viewer</span>
+    </div>
+    <p class="titleblock__thesis">
+      Select an entry point to light the path by which it reaches a dependency.
+    </p>
+    <dl class="counts" id="counts" aria-label="Repository totals">
+      <!-- filled by app.js -->
+    </dl>
+    <div class="titleblock__load">
+      <label class="loadbtn" for="file">
+        <input type="file" id="file" accept=".json,application/json" />
+        <span>Load a scan</span>
+      </label>
+      <span class="scanname" id="scanname">sample · vulnerable-app</span>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="rail" aria-label="Controls and findings">
+      <section class="panel" aria-labelledby="ep-h">
+        <h2 class="panel__h" id="ep-h">Entry points</h2>
+        <p class="panel__note" id="ep-note">Public routes the outside world can call.</p>
+        <ul class="eplist" id="eplist"></ul>
+      </section>
+
+      <section class="panel panel--trace" aria-labelledby="reach-h" aria-live="polite">
+        <h2 class="panel__h" id="reach-h">Reachable dependencies</h2>
+        <div id="reach-body">
+          <p class="panel__empty" id="reach-empty">
+            No entry point selected. Pick one above to trace what it reaches.
+          </p>
+        </div>
+      </section>
+
+      <section class="panel panel--vulns" aria-labelledby="vuln-h" aria-live="polite">
+        <h2 class="panel__h" id="vuln-h">Vulnerability findings</h2>
+        <p class="panel__note" id="vuln-note">Structure only — load an audit bundle to see findings.</p>
+        <div id="vuln-body"></div>
+      </section>
+
+      <section class="panel panel--filters" aria-labelledby="filter-h">
+        <h2 class="panel__h" id="filter-h">Show by kind</h2>
+        <div class="filters" id="filters" role="group" aria-label="Node kind filters"></div>
+      </section>
+    </aside>
+
+    <section class="stage" aria-label="Code-path diagram">
+      <div class="stage__grid" aria-hidden="true"></div>
+      <div id="graph" tabindex="0" role="application" aria-label="Repository code-path graph. Select an entry point from the list to trace reachability."></div>
+      <div class="stage__hint" id="hint" aria-hidden="true">Click empty space to reset</div>
+      <div class="tooltip" id="tooltip" role="status" aria-live="polite" hidden></div>
+      <div class="legend" aria-label="Legend">
+        <span class="legend__item"><i class="dot dot--ep"></i>entry point</span>
+        <span class="legend__item"><i class="dot dot--dep"></i>dependency</span>
+        <span class="legend__item"><i class="dot dot--fn"></i>function</span>
+        <span class="legend__item"><i class="dot dot--mut"></i>module / file / doc</span>
+        <span class="legend__item"><i class="dot dot--sig"></i>reachable trace</span>
+        <span class="legend__item legend__item--vuln"><i class="dot dot--vuln"></i>vulnerable dependency</span>
+        <span class="legend__item legend__item--vuln"><i class="dot dot--vulnhot"></i>reachable &amp; vulnerable</span>
+      </div>
+    </section>
+  </main>
+
+  <script src="sample-bundle.js"></script>
+  <script src="sample-graph.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

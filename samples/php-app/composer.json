@@ -1,0 +1,12 @@
+{
+    "name": "example/php-app",
+    "description": "Tiny sample PHP app used by the scanner tests.",
+    "require": {
+        "php": ">=7.1",
+        "guzzlehttp/guzzle": "6.3.0",
+        "monolog/monolog": "1.23.0"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "6.5.0"
+    }
+}

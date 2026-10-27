@@ -1,0 +1,145 @@
+"""Documentation ingestion.
+
+Adds a ``doc`` node for each documentation file (README, Markdown/reST, anything
+under a ``docs/`` directory, and OpenAPI/Swagger specs) and draws conservative
+``documents`` edges from a doc to the graph nodes it references.
+
+Matching is deliberately conservative to avoid noise: a doc links to an entry
+point only when it mentions that route's exact path as a whole token, and to a
+module/function only when the name appears backticked (inline code). Each edge
+carries a short ``snippet`` of the surrounding text.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+from typing import Any
+
+from .graph import KnowledgeGraph
+from .walker import FileInfo
+
+# A backticked token: `something` -- used to find explicit symbol references.
+_BACKTICK = re.compile(r"`([^`]+)`")
+
+_EXCERPT_LEN = 300
+
+
+def _is_openapi(info: FileInfo) -> bool:
+    stem = os.path.splitext(os.path.basename(info.relpath))[0].lower()
+    if stem in {"openapi", "swagger"}:
+        return True
+    if info.language in {"yaml", "json"} and info.role != "manifest":
+        try:
+            with open(info.abspath, encoding="utf-8", errors="replace") as handle:
+                head = handle.read(2048)
+        except OSError:
+            return False
+        return bool(re.search(r'(^|\n)\s*["\']?(openapi|swagger)["\']?\s*:', head))
+    return False
+
+
+def _read_text(abspath: str) -> str:
+    try:
+        with open(abspath, encoding="utf-8", errors="replace") as handle:
+            return handle.read()
+    except OSError:
+        return ""
+
+
+def _snippet(text: str, index: int, token: str) -> str:
+    start = max(0, index - 40)
+    end = min(len(text), index + len(token) + 40)
+    return " ".join(text[start:end].split())
+
+
+def ingest_docs(files: list[FileInfo], graph: KnowledgeGraph) -> None:
+    """Add ``doc`` nodes and ``documents`` edges for documentation files."""
+    # Snapshot the reference targets once.
+    entrypoints = [
+        (node.attrs.get("path"), node.id)
+        for node in graph.nodes_of_kind("entrypoint")
+        if node.attrs.get("path")
+    ]
+    module_names = {node.name: node.id for node in graph.nodes_of_kind("module")}
+    function_names: dict[str, str] = {}
+    for node in graph.nodes_of_kind("function"):
+        function_names.setdefault(node.name, node.id)
+    # Index a bare method/function name (last dotted segment) ONLY when it is
+    # unique across the whole graph; an ambiguous bare name (e.g. two classes
+    # with a ``run`` method) must not be linked to an arbitrary first match.
+    bare_counts: dict[str, int] = {}
+    bare_ids: dict[str, str] = {}
+    for node in graph.nodes_of_kind("function"):
+        bare = node.name.split(".")[-1]
+        bare_counts[bare] = bare_counts.get(bare, 0) + 1
+        bare_ids[bare] = node.id
+    for bare, count in bare_counts.items():
+        if count == 1:
+            function_names.setdefault(bare, bare_ids[bare])
+
+    for info in files:
+        is_api_spec = _is_openapi(info)
+        if info.role != "doc" and not is_api_spec:
+            continue
+        text = _read_text(info.abspath)
+        doc_id = f"doc:{info.relpath}"
+        graph.add_node(
+            doc_id,
+            "doc",
+            os.path.basename(info.relpath),
+            relpath=info.relpath,
+            kind_hint="openapi" if is_api_spec else "prose",
+            excerpt=text[:_EXCERPT_LEN].strip() or None,
+        )
+
+        _link_entrypoints(graph, doc_id, text, entrypoints)
+        _link_symbols(graph, doc_id, text, module_names, function_names)
+
+
+def _link_entrypoints(
+    graph: KnowledgeGraph,
+    doc_id: str,
+    text: str,
+    entrypoints: list[tuple[str, str]],
+) -> None:
+    for path, ep_id in entrypoints:
+        # Match the exact path as a whole token (not a substring of a longer path).
+        pattern = re.compile(r"(?<![\w/])" + re.escape(path) + r"(?![\w/])")
+        match = pattern.search(text)
+        if match:
+            graph.add_edge(
+                doc_id,
+                ep_id,
+                "documents",
+                matched=path,
+                snippet=_snippet(text, match.start(), path),
+            )
+
+
+def _link_symbols(
+    graph: KnowledgeGraph,
+    doc_id: str,
+    text: str,
+    module_names: dict[str, str],
+    function_names: dict[str, str],
+) -> None:
+    seen: set[str] = set()
+    for match in _BACKTICK.finditer(text):
+        token = match.group(1).strip()
+        # Strip call parentheses: `load_config()` -> load_config.
+        bare = token.split("(")[0].strip()
+        target_id: str | None = None
+        if bare in module_names:
+            target_id = module_names[bare]
+        elif bare in function_names:
+            target_id = function_names[bare]
+        if target_id and target_id not in seen:
+            seen.add(target_id)
+            graph.add_edge(
+                doc_id,
+                target_id,
+                "documents",
+                matched=bare,
+                snippet=_snippet(text, match.start(), token),
+            )

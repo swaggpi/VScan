@@ -1,0 +1,2 @@
+# Pulled in via `-r requirements-extra.txt`. Exercises extras parsing too.
+urllib3[secure]==1.24.1

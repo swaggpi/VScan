@@ -1,0 +1,480 @@
+/* ===========================================================================
+   vulnreach · reachability viewer
+   Aesthetic: engineering schematic / blueprint. The repo is drawn as a wiring
+   diagram of code paths; one hot signal marks live reachability only.
+   =========================================================================== */
+
+:root {
+  /* Blueprint ground */
+  --ground:      #0B2239;  /* deep architectural blue */
+  --ground-sink: #081A2C;  /* recessed wells (graph stage) */
+  --panel:       #0E2A45;  /* raised rail / cards */
+  --panel-edge:  rgba(120, 178, 224, 0.22);
+  --hair:        rgba(120, 178, 224, 0.14); /* hairline rules */
+  --grid:        rgba(120, 178, 224, 0.09); /* faint cyan grid lines */
+
+  /* Ink */
+  --ink:      #CFE4F2;  /* pale cyan-white */
+  --ink-dim:  rgba(207, 228, 242, 0.62);
+  --ink-mut:  rgba(207, 228, 242, 0.38);
+
+  /* Structure accents (cyan family, quiet) */
+  --dep:   #6FB8E0;  /* dependency fill */
+  --fn:    #9FC6E0;  /* function outline */
+  --muted: #4E7493;  /* module / file / doc */
+
+  /* The one hot signal — reachability + public entry points only */
+  --signal:      #F2B134;  /* amber/gold */
+  --signal-soft: rgba(242, 177, 52, 0.16);
+  --signal-glow: rgba(242, 177, 52, 0.55);
+
+  /* Severity accent — vulnerability only. A warm red-orange, held apart from
+     the amber reachability signal so the two read as distinct facts: amber =
+     "reached", red = "vulnerable", and a node wearing both is the top problem. */
+  --alert:      #F2654E;  /* warning red-orange (KEV / critical) */
+  --alert-soft: rgba(242, 101, 78, 0.16);
+  --alert-glow: rgba(242, 101, 78, 0.5);
+  --alert-ink:  #F79885;  /* lighter tint for text on the dark ground */
+
+  --radius: 4px;
+  --rail-w: 20rem;
+
+  --f-display: "Space Grotesk", system-ui, sans-serif;
+  --f-body: "Inter", system-ui, sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body { height: 100%; }
+
+body {
+  margin: 0;
+  font-family: var(--f-body);
+  color: var(--ink);
+  background: var(--ground);
+  /* Blueprint grid wash behind the whole page */
+  background-image:
+    linear-gradient(var(--grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 28px 28px, 28px 28px;
+  -webkit-font-smoothing: antialiased;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.skip-link {
+  position: absolute;
+  left: -999px;
+  top: 0;
+  background: var(--signal);
+  color: var(--ground);
+  padding: 0.5rem 0.9rem;
+  font: 600 0.82rem/1 var(--f-mono);
+  z-index: 50;
+}
+.skip-link:focus { left: 0.75rem; top: 0.75rem; }
+
+:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* ---------------------------------------------------------------- title block */
+.titleblock {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  align-items: center;
+  gap: 1.5rem 2rem;
+  padding: 0.95rem 1.4rem;
+  border-bottom: 1px solid var(--panel-edge);
+  background: linear-gradient(180deg, rgba(14,42,69,0.92), rgba(11,34,57,0.92));
+  backdrop-filter: blur(2px);
+}
+
+.titleblock__id {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding-right: 1.5rem;
+  border-right: 1px solid var(--hair);
+}
+.wordmark {
+  font: 700 1.35rem/1 var(--f-display);
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+.wordmark::before {
+  /* schematic tick: the signal lives in the mark, quietly */
+  content: "";
+  display: inline-block;
+  width: 7px; height: 7px;
+  margin-right: 0.5rem;
+  background: var(--signal);
+  box-shadow: 0 0 8px var(--signal-glow);
+  vertical-align: 0.1em;
+}
+.eyebrow {
+  font: 500 0.66rem/1 var(--f-mono);
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--signal);
+}
+
+.titleblock__thesis {
+  margin: 0;
+  max-width: 34ch;
+  font-size: 0.9rem;
+  line-height: 1.4;
+  color: var(--ink-dim);
+}
+
+.counts {
+  display: flex;
+  gap: 1.4rem;
+  margin: 0;
+}
+.counts > div { display: flex; flex-direction: column; gap: 0.1rem; }
+.counts dt {
+  font: 500 0.6rem/1 var(--f-mono);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-mut);
+}
+.counts dd {
+  margin: 0;
+  font: 500 1.4rem/1 var(--f-display);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+.counts dd.is-signal { color: var(--signal); }
+.counts dd.is-alert { color: var(--alert-ink); }
+/* Separator before the vulnerability counts so they read as a second group. */
+.counts > div.counts__vuln-lead { border-left: 1px solid var(--hair); padding-left: 1.4rem; margin-left: -0.3rem; }
+
+.titleblock__load { display: flex; flex-direction: column; align-items: flex-end; gap: 0.35rem; }
+.loadbtn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  padding: 0.5rem 0.95rem;
+  border: 1px solid var(--panel-edge);
+  border-radius: var(--radius);
+  background: transparent;
+  font: 500 0.8rem/1 var(--f-mono);
+  color: var(--ink);
+  transition: border-color 0.15s, background 0.15s;
+}
+.loadbtn:hover { border-color: var(--signal); background: var(--signal-soft); }
+.loadbtn input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+.loadbtn:focus-within { outline: 2px solid var(--signal); outline-offset: 2px; }
+.scanname {
+  font: 400 0.68rem/1.2 var(--f-mono);
+  color: var(--ink-mut);
+  text-align: right;
+  max-width: 24ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------- layout */
+.layout {
+  flex: 1;
+  display: grid;
+  grid-template-columns: var(--rail-w) 1fr;
+  min-height: 0;
+}
+
+.rail {
+  border-right: 1px solid var(--panel-edge);
+  background: var(--panel);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.panel { padding: 1.1rem 1.25rem; border-bottom: 1px solid var(--hair); }
+.panel--filters { margin-top: auto; }
+.panel__h {
+  margin: 0 0 0.15rem;
+  font: 600 0.95rem/1.2 var(--f-display);
+  letter-spacing: -0.01em;
+}
+.panel__note, .panel__empty {
+  margin: 0.25rem 0 0.9rem;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: var(--ink-dim);
+}
+.panel__empty { margin-bottom: 0; }
+
+/* ---------------------------------------------------------------- entry points */
+.eplist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.4rem; }
+.ep {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  text-align: left;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--hair);
+  border-left: 2px solid var(--muted);
+  border-radius: var(--radius);
+  background: var(--ground-sink);
+  color: var(--ink);
+  cursor: pointer;
+  font-family: var(--f-mono);
+  transition: border-color 0.15s, background 0.15s, transform 0.08s;
+}
+.ep:hover { border-color: var(--panel-edge); }
+.ep[aria-pressed="true"] {
+  border-color: var(--signal);
+  border-left-color: var(--signal);
+  background: var(--signal-soft);
+}
+.ep__method {
+  font: 600 0.64rem/1 var(--f-mono);
+  letter-spacing: 0.06em;
+  padding: 0.25rem 0.4rem;
+  border-radius: 2px;
+  color: var(--ground);
+  background: var(--dep);
+}
+.ep[aria-pressed="true"] .ep__method { background: var(--signal); }
+.ep__path { font-size: 0.82rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---------------------------------------------------------------- reachable panel */
+.reach-head {
+  font-size: 0.78rem;
+  color: var(--ink-dim);
+  margin: 0 0 0.75rem;
+  line-height: 1.45;
+}
+.reach-head b { color: var(--signal); font-weight: 600; }
+.deplist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.45rem; }
+.dep {
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--hair);
+  border-left: 2px solid var(--signal);
+  border-radius: var(--radius);
+  background: var(--ground-sink);
+}
+.dep__name { font: 600 0.82rem/1.2 var(--f-mono); color: var(--ink); word-break: break-all; }
+.dep__meta { margin-top: 0.2rem; font: 400 0.68rem/1.2 var(--f-mono); color: var(--ink-dim); display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.dep__eco {
+  padding: 0.1rem 0.35rem;
+  border: 1px solid var(--hair);
+  border-radius: 2px;
+  color: var(--ink-mut);
+}
+.dep__ver { color: var(--signal); }
+.reach-none { font-size: 0.78rem; color: var(--ink-dim); line-height: 1.45; margin: 0; }
+
+/* ---------------------------------------------------------------- vulnerability findings */
+.vuln-head {
+  margin: 0 0 0.75rem;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: var(--ink-dim);
+}
+.vuln-head b { color: var(--alert-ink); font-weight: 600; }
+.vuln-head .is-signal { color: var(--signal); }
+
+.vulnlist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.45rem; }
+
+/* A finding card. The left rule encodes the verdict: a muted hairline for a
+   non-reached finding, the amber signal for a reachable one. */
+.vuln {
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--hair);
+  border-left: 2px solid var(--muted);
+  border-radius: var(--radius);
+  background: var(--ground-sink);
+}
+.vuln--reachable {
+  border-left-color: var(--signal);
+  background: linear-gradient(90deg, var(--alert-soft), var(--ground-sink) 72%);
+}
+/* A reachable finding is actionable: clicking it lights its path. */
+.vuln--reachable { cursor: pointer; }
+.vuln--reachable:hover { border-color: var(--alert); }
+.vuln--reachable:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+
+.vuln__top { display: flex; align-items: baseline; justify-content: space-between; gap: 0.5rem; }
+.vuln__name { font: 600 0.82rem/1.25 var(--f-mono); color: var(--ink); word-break: break-all; }
+.vuln__ver { color: var(--signal); font-weight: 500; }
+.vuln__cve { margin-top: 0.25rem; font: 500 0.7rem/1.3 var(--f-mono); color: var(--alert-ink); word-break: break-all; }
+
+.vuln__tags { margin-top: 0.3rem; display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; }
+.tag {
+  font: 500 0.6rem/1 var(--f-mono);
+  letter-spacing: 0.04em;
+  padding: 0.22rem 0.4rem;
+  border-radius: 2px;
+  border: 1px solid var(--hair);
+  color: var(--ink-dim);
+  text-transform: uppercase;
+}
+.tag--sev { border-color: var(--alert); color: var(--alert-ink); }
+.tag--sev-critical { background: var(--alert); color: var(--ground); border-color: var(--alert); }
+.tag--kev {
+  background: var(--alert);
+  color: var(--ground);
+  border-color: var(--alert);
+  box-shadow: 0 0 8px var(--alert-glow);
+  animation: kevpulse 2.4s ease-in-out infinite;
+}
+.tag--epss { color: var(--ink-mut); }
+.tag--reach { border-color: var(--signal); color: var(--signal); }
+
+@keyframes kevpulse {
+  0%, 100% { box-shadow: 0 0 6px var(--alert-glow); }
+  50% { box-shadow: 0 0 13px var(--alert-glow); }
+}
+
+.vuln__path {
+  margin-top: 0.35rem;
+  font: 400 0.66rem/1.4 var(--f-mono);
+  color: var(--ink-dim);
+}
+.vuln__path b { color: var(--signal); font-weight: 600; }
+.vuln__path .path-steps { color: var(--ink-mut); word-break: break-all; }
+.vuln__verdict { margin-top: 0.35rem; font: 400 0.66rem/1.4 var(--f-mono); color: var(--ink-mut); }
+
+.vuln-note { font-size: 0.78rem; color: var(--ink-dim); line-height: 1.45; margin: 0; }
+.vuln-note--warn { color: var(--alert-ink); }
+
+/* ---------------------------------------------------------------- filters */
+.filters { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--hair);
+  border-radius: var(--radius);
+  background: var(--ground-sink);
+  color: var(--ink-dim);
+  cursor: pointer;
+  font: 500 0.72rem/1 var(--f-mono);
+  letter-spacing: 0.02em;
+  transition: color 0.15s, border-color 0.15s, opacity 0.15s;
+}
+.chip[aria-pressed="true"] { color: var(--ink); border-color: var(--panel-edge); }
+.chip[aria-pressed="false"] { opacity: 0.5; }
+.chip i { width: 9px; height: 9px; border-radius: 50%; }
+
+/* ---------------------------------------------------------------- stage */
+.stage {
+  position: relative;
+  background: var(--ground-sink);
+  overflow: hidden;
+  min-height: 0;
+}
+.stage__grid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(var(--grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px),
+    radial-gradient(ellipse at 50% 42%, rgba(111,184,224,0.07), transparent 62%);
+  background-size: 28px 28px, 28px 28px, 100% 100%;
+}
+#graph { position: absolute; inset: 0; }
+
+.stage__hint {
+  position: absolute;
+  left: 1rem; bottom: 1rem;
+  font: 400 0.68rem/1 var(--f-mono);
+  color: var(--ink-mut);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.stage.is-traced .stage__hint { opacity: 1; }
+
+.legend {
+  position: absolute;
+  right: 1rem; top: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid var(--hair);
+  border-radius: var(--radius);
+  background: rgba(8, 26, 44, 0.78);
+  backdrop-filter: blur(3px);
+  pointer-events: none;
+}
+.legend__item { display: flex; align-items: center; gap: 0.5rem; font: 400 0.68rem/1 var(--f-mono); color: var(--ink-dim); }
+.dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+.dot--ep  { background: transparent; border: 2px solid var(--signal); }
+.dot--dep { background: var(--dep); }
+.dot--fn  { background: transparent; border: 1.5px solid var(--fn); }
+.dot--mut { background: var(--muted); }
+.dot--sig { background: var(--signal); box-shadow: 0 0 7px var(--signal-glow); }
+.dot--vuln { background: var(--dep); border: 2px solid var(--alert); }
+.dot--vulnhot { background: var(--signal); border: 2px solid var(--alert); box-shadow: 0 0 7px var(--alert-glow); }
+
+/* Vulnerability legend rows appear only once an audit bundle is loaded. */
+.legend__item--vuln { display: none; }
+body.has-vulns .legend__item--vuln { display: flex; }
+
+/* ---------------------------------------------------------------- tooltip */
+.tooltip {
+  position: absolute;
+  z-index: 20;
+  max-width: 24rem;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--panel-edge);
+  border-radius: var(--radius);
+  background: rgba(8, 26, 44, 0.95);
+  font: 400 0.72rem/1.35 var(--f-mono);
+  color: var(--ink);
+  pointer-events: none;
+  transform: translate(-50%, -115%);
+}
+.tooltip b { color: var(--signal); font-weight: 600; }
+.tooltip .t-vuln { color: var(--alert-ink); font-size: 0.66rem; }
+.tooltip .t-id { color: var(--ink-mut); font-size: 0.66rem; word-break: break-all; }
+
+/* ---------------------------------------------------------------- responsive */
+@media (max-width: 860px) {
+  .titleblock {
+    grid-template-columns: 1fr 1fr;
+    gap: 0.9rem 1rem;
+  }
+  .titleblock__id { border-right: none; padding-right: 0; }
+  .titleblock__thesis { grid-column: 1 / -1; order: 4; max-width: none; }
+  .counts { gap: 1rem; flex-wrap: wrap; }
+  .titleblock__load { align-items: flex-end; }
+
+  .layout { grid-template-columns: 1fr; }
+  .rail {
+    border-right: none;
+    border-bottom: 1px solid var(--panel-edge);
+    max-height: none;
+    overflow: visible;
+  }
+  .panel--filters { margin-top: 0; }
+  .stage { min-height: 70vh; }
+  .legend { position: static; margin: 0; }
+  .stage .legend { display: none; } /* keep canvas uncluttered on small screens */
+}
+
+@media (max-width: 520px) {
+  .counts dd { font-size: 1.15rem; }
+  .titleblock { grid-template-columns: 1fr; }
+  .titleblock__load { align-items: flex-start; }
+}
+
+/* ---------------------------------------------------------------- motion */
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
