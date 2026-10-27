@@ -1,0 +1,8 @@
+{
+    "name": "example/transitive-php",
+    "description": "Composer sample proving transitive-dependency scanning: composer.json requires ONE package (monolog/monolog); composer.lock resolves a transitive package (psr/log) the manifest never names. Ground truth in README.md.",
+    "require": {
+        "php": ">=8.0",
+        "monolog/monolog": "^3.0"
+    }
+}
