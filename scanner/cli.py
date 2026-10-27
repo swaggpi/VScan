@@ -615,6 +615,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         if args.bundle:
             with open(args.bundle, "w", encoding="utf-8") as handle:
+                # Compact JSON: the bundle is machine-consumed by the dashboard,
+                # and pretty-printing a large repo's graph (whitespace) can
+                # quadruple the file (e.g. redash ~5MB compact vs ~20MB indented),
+                # slowing the in-browser load for no reader benefit.
                 handle.write(
                     json.dumps(
                         _build_bundle(
@@ -626,7 +630,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                             usage=usage,
                             taint=taint_map,
                         ),
-                        indent=2,
+                        separators=(",", ":"),
                     )
                 )
 
