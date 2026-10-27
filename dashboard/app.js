@@ -12,8 +12,10 @@
   // Edges a reachability trace follows, in BFS order: route first, then calls.
   var TRACE_EDGES = { route_to_handler: true, calls: true };
 
-  // Kinds hidden by default to keep the code/dependency subgraph legible.
-  var OFF_BY_DEFAULT = { file: true, doc: true };
+  // Kinds hidden by default so the canvas reads as a clean layered network:
+  // modules, files and docs are structural context, not part of the call-flow
+  // spine. Each keeps its filter chip, so any can be toggled back on.
+  var OFF_BY_DEFAULT = { module: true, file: true, doc: true };
 
   // Above this many nodes a graph is unusable as a hairball, so we render a
   // curated security-relevant subgraph instead of every node. The sample app
@@ -134,34 +136,40 @@
   /* ---------------------------------------------------------------- cytoscape */
   function cyStyle() {
     return [
+      // Every node is a neuron: a clean circle (ellipse, width == height). Kind is
+      // read from fill and outline, never shape, so the layers stay uniform.
       { selector: "node", style: {
         "label": "data(label)", "font-family": "JetBrains Mono, monospace",
-        "font-size": 10, "color": "#CFE4F2", "text-valign": "bottom",
-        "text-margin-y": 6, "text-wrap": "ellipsis", "text-max-width": 128,
+        "font-size": 9, "color": "#A9CAE2", "text-opacity": 0.82, "text-valign": "bottom",
+        "text-margin-y": 7, "text-wrap": "ellipsis", "text-max-width": 108,
         // A dark halo lifts labels off the grid, edges and overlapping nodes.
-        "text-outline-color": "#081A2C", "text-outline-width": 2.4, "text-outline-opacity": 0.92,
-        "width": 15, "height": 15, "border-width": 1.5,
-        "background-color": "#4E7493", "border-color": "#4E7493",
+        "text-outline-color": "#081A2C", "text-outline-width": 2.6, "text-outline-opacity": 0.95,
+        "shape": "ellipse", "width": 20, "height": 20, "border-width": 1.5,
+        "background-color": "#4E7493", "border-color": "#6E93B2",
         "transition-property": "background-color, border-color, opacity, width, height, line-color",
         "transition-duration": REDUCED ? "0s" : "260ms"
       }},
-      // Dependencies read as packages — a hexagon, filled cyan.
+      // Dependencies — the output layer. A solid cyan neuron, a touch larger.
       { selector: 'node[kind = "dependency"]', style: {
-        "background-color": "#6FB8E0", "border-color": "#9FD2EF", "shape": "hexagon",
-        "width": 22, "height": 20, "color": "#D7ECF9"
+        "background-color": "#6FB8E0", "background-opacity": 0.95,
+        "border-color": "#C4E3F6", "border-width": 1.5,
+        "width": 30, "height": 30, "color": "#D7ECF9"
       }},
-      // Functions are the call-graph nodes — a hollow ring.
+      // Functions — the hidden layers. A hollow, pale ring over the dark ground.
       { selector: 'node[kind = "function"]', style: {
-        "background-color": "rgba(159,198,224,0.08)", "border-color": "#9FC6E0",
-        "border-width": 1.5, "shape": "ellipse", "width": 14, "height": 14
+        "background-color": "#0C2237", "background-opacity": 0.55,
+        "border-color": "#9FC6E0", "border-width": 1.5,
+        "width": 20, "height": 20
       }},
-      { selector: 'node[kind = "module"]', style: { "background-color": "#2C4660", "border-color": "#4E7493", "shape": "round-rectangle", "width": 13, "height": 13 }},
-      { selector: 'node[kind = "file"]', style: { "background-color": "rgba(78,116,147,0.22)", "border-color": "#4E7493", "shape": "rectangle", "width": 12, "height": 12 }},
-      { selector: 'node[kind = "doc"]', style: { "background-color": "rgba(78,116,147,0.22)", "border-color": "#4E7493", "shape": "diamond", "width": 13, "height": 13 }},
-      // Entry points are the public doors — a wide amber gate at the base of the flow.
+      // Structural kinds (off by default) stay circles too, just small and muted.
+      { selector: 'node[kind = "module"]', style: { "background-color": "#2C4660", "border-color": "#4E7493", "width": 16, "height": 16 }},
+      { selector: 'node[kind = "file"]', style: { "background-color": "rgba(78,116,147,0.28)", "border-color": "#4E7493", "width": 15, "height": 15 }},
+      { selector: 'node[kind = "doc"]', style: { "background-color": "rgba(78,116,147,0.28)", "border-color": "#4E7493", "width": 16, "height": 16 }},
+      // Entry points — the input layer. A solid amber neuron at the base of the flow.
       { selector: 'node[kind = "entrypoint"]', style: {
-        "background-color": "#12304C", "border-color": "#F2B134", "border-width": 2.5,
-        "shape": "round-rectangle", "width": 30, "height": 20, "color": "#F2B134", "font-weight": 600
+        "background-color": "#F2B134", "background-opacity": 0.95,
+        "border-color": "#F7CE78", "border-width": 2,
+        "width": 30, "height": 30, "color": "#F2B134", "font-weight": 600
       }},
 
       /* focused-view only: the compact stand-in for the entry points that reach
@@ -179,34 +187,34 @@
         "border-color": ALERT, "border-width": 3, "color": "#F79885",
         "overlay-color": ALERT, "overlay-opacity": 0.12, "overlay-padding": 5
       }},
-      /* vulnerable AND reachable from a public route — the top visual signal */
+      /* vulnerable AND reachable from a public route — the top visual signal.
+         Kept a circle, just enlarged, so the network stays uniform. */
       { selector: 'node[vreach = 1]', style: {
-        "width": 24, "height": 24, "border-width": 3.5, "font-weight": 600,
+        "width": 38, "height": 38, "border-width": 3.5, "font-weight": 600,
         "overlay-opacity": 0.2, "overlay-padding": 8
       }},
       /* actively exploited (KEV) — strongest ring */
       { selector: 'node[kev = 1]', style: { "border-width": 4, "overlay-opacity": 0.26 } },
 
+      // Connections are thin, straight lines between layers — like the synapses
+      // of a feed-forward network. No arrowheads by default (direction is the
+      // vertical layering, and the amber trace shows the climb when lit).
       { selector: "edge", style: {
-        "width": 1, "line-color": "#3C5E7E", "target-arrow-color": "#3C5E7E",
-        "target-arrow-shape": "triangle", "arrow-scale": 0.7,
-        "curve-style": "bezier", "opacity": 0.72,
+        "width": 1, "line-color": "#345570", "curve-style": "straight",
+        "target-arrow-shape": "none", "opacity": 0.5,
         "transition-property": "line-color, target-arrow-color, width, opacity",
         "transition-duration": REDUCED ? "0s" : "220ms"
       }},
-      // The call-flow spine (route -> handler -> callee) is drawn as orthogonal
-      // wiring, so the diagram reads like the schematic its palette promises.
+      // The call-flow spine (route -> handler -> callee) — the synapses that
+      // actually carry the network, so slightly more present than the rest.
       { selector: 'edge[kind = "route_to_handler"], edge[kind = "calls"]', style: {
-        "curve-style": "taxi", "taxi-direction": "vertical", "taxi-turn": "50%",
-        "taxi-turn-min-distance": "6px", "taxi-radius": "8px",
-        "line-color": "#4E7CA3", "target-arrow-color": "#4E7CA3",
-        "width": 1.4, "opacity": 0.8
+        "curve-style": "straight", "line-color": "#4E7CA3",
+        "width": 1, "opacity": 0.6
       }},
       // Structural edges (imports/contains/declares/documents) are context, not
-      // flow — keep them as faint hairlines so they never fight the spine.
+      // flow — faint hairlines so they never fight the spine when toggled on.
       { selector: 'edge[kind = "imports"], edge[kind = "contains"], edge[kind = "declares"], edge[kind = "documents"]', style: {
-        "line-color": "#2E4B66", "target-arrow-color": "#2E4B66",
-        "width": 0.8, "opacity": 0.4, "arrow-scale": 0.55
+        "line-color": "#283F57", "width": 0.7, "opacity": 0.32
       }},
 
       /* off the call-flow spine (unreached functions, module/file/doc) — kept
@@ -224,10 +232,15 @@
         "color": "#F6C96B", "border-width": 2.5, "opacity": 1,
         "overlay-color": "#F2B134", "overlay-opacity": 0.22, "overlay-padding": 7
       }},
-      { selector: 'node.lit[kind = "function"]', style: { "background-color": "rgba(242,177,52,0.18)" } },
-      { selector: 'node.lit[kind = "entrypoint"]', style: { "background-color": "#1A2E1C", "width": 24, "height": 24, "overlay-padding": 9 } },
+      { selector: 'node.lit[kind = "function"]', style: { "background-color": "#F2B134", "background-opacity": 0.9 } },
+      { selector: 'node.lit[kind = "entrypoint"]', style: { "background-color": "#F2B134", "width": 34, "height": 34, "overlay-padding": 9 } },
+      // The lit trace is a bright amber straight line climbing the layers, with a
+      // small arrowhead to show the direction of the call chain.
       { selector: "edge.lit", style: {
-        "line-color": "#F2B134", "target-arrow-color": "#F2B134", "width": 3, "opacity": 1,
+        "curve-style": "straight",
+        "line-color": "#F2B134", "target-arrow-color": "#F2B134",
+        "target-arrow-shape": "triangle", "arrow-scale": 0.8,
+        "width": 2.4, "opacity": 1,
         "overlay-color": "#F2B134", "overlay-opacity": 0.12, "overlay-padding": 2
       }},
       /* a lit vulnerable dep keeps its red border: amber path -> red endpoint */
@@ -239,7 +252,7 @@
       /* neighborhood focus (click a node) */
       { selector: ".focus", style: { "opacity": 1 } },
       { selector: "node.focus", style: { "border-color": "#CFE4F2" } },
-      { selector: "edge.focus", style: { "line-color": "#6FB8E0", "target-arrow-color": "#6FB8E0", "opacity": 0.9, "width": 1.6 } },
+      { selector: "edge.focus", style: { "curve-style": "straight", "line-color": "#6FB8E0", "opacity": 0.9, "width": 1.6 } },
 
       /* a lit, focused or selected node shows its full label, not an ellipsis */
       { selector: "node.lit, node.focus, node.selected", style: { "text-wrap": "wrap", "text-max-width": 200, "z-index": 30 } },
@@ -355,18 +368,18 @@
   //                (called straight from a handler) sit LOWER. So going up the
   //                screen follows the call chain toward the dependency.
   //   • BOTTOM band: all `entrypoint` nodes (and the focused-view "+N" cluster).
-  // Functions not reachable from any entry point, plus module/file/doc nodes if
-  // shown, are not part of the call-flow spine: they go on a dim shelf off to
-  // the right, visible but visually secondary, never interleaved with the layers.
-  // Only currently-visible nodes are distributed, so toggling a kind re-centers
-  // the remaining rows cleanly with no stale positions.
-  var COL_W = 180;      // x-spacing within a row
-  var ROW_H = 135;      // y-spacing between layers
-  var OFF_COL_W = 165;  // off-spine shelf column width
-  var OFF_ROW_H = 48;   // off-spine shelf row height
+  // Unreached functions are hidden by default (see applyFilter), so the spine is
+  // all that remains in the middle. Any module/file/doc toggled back on is not
+  // part of the call-flow spine: those go on a dim shelf off to the right,
+  // visually secondary, never interleaved with the layers. Only currently-visible
+  // nodes are distributed, so toggling a kind re-centers the rows cleanly.
+  var COL_W = 150;      // x-spacing within a row (neuron to neuron)
+  var ROW_H = 120;      // y-spacing between layers
+  var OFF_COL_W = 150;  // off-spine shelf column width
+  var OFF_ROW_H = 46;   // off-spine shelf row height
 
-  function runLayout() {
-    var depth = computeDepths();
+  function runLayout(depth) {
+    depth = depth || computeDepths();
     var vis = cy.nodes(":visible");
 
     // Deepest visible reachable function sets where the dependency band sits.
@@ -380,17 +393,18 @@
     var topLayer = depsLayer;
 
     var layers = {};     // layerIndex -> [nodes] on the call-flow spine
-    var offspine = [];   // unreached functions + module/file/doc + unknowns
-    function push(L, n) { (layers[L] || (layers[L] = [])).push(n); }
+    var offspine = [];   // module/file/doc + unknowns, only if toggled on
+    var spine = cy.collection();
+    function push(L, n) { (layers[L] || (layers[L] = [])).push(n); spine = spine.add(n); }
 
     vis.forEach(function (n) {
       var k = n.data("kind");
       if (k === "entrypoint" || k === "epcluster") {
-        push(0, n);                       // bottom band
+        push(0, n);                       // bottom band — the input layer
       } else if (k === "dependency") {
-        push(depsLayer, n);               // top band (reachable or not)
+        push(depsLayer, n);               // top band — the output layer
       } else if (k === "function" && (n.id() in depth)) {
-        push(depth[n.id()], n);           // middle: deeper = higher
+        push(depth[n.id()], n);           // hidden layers: deeper = higher
       } else {
         offspine.push(n);                 // off-spine shelf
       }
@@ -408,6 +422,8 @@
     cy.batch(function () {
       cy.nodes().removeClass("offspine");
 
+      // Each layer is a row of evenly-spaced neurons, centered on x = 0, so every
+      // layer shares the same vertical centerline — the symmetric feed-forward look.
       Object.keys(layers).forEach(function (k) {
         var arr = layers[k];
         arr.sort(function (a, b) { return sortKey(a).localeCompare(sortKey(b)); });
@@ -425,7 +441,7 @@
         // it stays a tidy band rather than one long run.
         var spineHeight = topLayer * ROW_H;
         var perCol = Math.max(1, Math.floor(spineHeight / OFF_ROW_H) + 1);
-        var offX0 = maxHalf + COL_W * 1.6;
+        var offX0 = maxHalf + COL_W * 1.8;
         offspine.forEach(function (n, i) {
           var col = Math.floor(i / perCol), row = i % perCol;
           n.position({ x: offX0 + col * OFF_COL_W, y: row * OFF_ROW_H });
@@ -433,17 +449,25 @@
       }
     });
 
-    cy.fit(undefined, 44);
+    // Frame the clean network itself: fit to the spine so the symmetric layers
+    // stay centered even when a dim off-spine shelf exists off to the side. The
+    // "fit everything" zoom control still frames the shelf when the user wants it.
+    cy.fit(spine.length ? spine : cy.nodes(":visible"), 48);
   }
 
   function applyFilter(preserveSelection) {
+    var depth = computeDepths();
     cy.batch(function () {
       cy.nodes().forEach(function (node) {
-        var show = visibleKinds[node.data("kind")] !== false;
+        var kind = node.data("kind");
+        var show = visibleKinds[kind] !== false;
+        // Keep the network clean: a function not reachable from any entry point is
+        // not on the call-flow spine, so it (and its edges) stay hidden by default.
+        if (show && kind === "function" && !(node.id() in depth)) show = false;
         node.style("display", show ? "element" : "none");
       });
     });
-    runLayout();
+    runLayout(depth);
     if (preserveSelection && selectedEp) lightTrace(selectedEp, true);
   }
 
