@@ -411,6 +411,33 @@
   var OFF_COL_W = 150;  // off-spine shelf column width
   var OFF_ROW_H = 46;   // off-spine shelf row height
 
+  // Order-preserving 1D packing: given each node's desired x (already in layer
+  // order), return positions that keep a minimum `gap` between neighbours while
+  // staying as close as possible to the desired x's (least-squares). This is the
+  // pool-adjacent-violators / isotonic-regression solution: substituting
+  // t[i] = desired[i] - i*gap turns the min-gap constraint into a plain
+  // "non-decreasing" one, which PAV solves exactly in O(n).
+  function packWithGap(desired, gap) {
+    var n = desired.length;
+    if (!n) return [];
+    var blocks = []; // each: { sum, count } over a run with a common fitted value
+    for (var i = 0; i < n; i++) {
+      blocks.push({ sum: desired[i] - i * gap, count: 1 });
+      while (blocks.length > 1) {
+        var a = blocks[blocks.length - 2], b = blocks[blocks.length - 1];
+        if (a.sum / a.count <= b.sum / b.count) break; // already non-decreasing
+        blocks.pop(); blocks.pop();
+        blocks.push({ sum: a.sum + b.sum, count: a.count + b.count });
+      }
+    }
+    var pos = [], k = 0;
+    blocks.forEach(function (blk) {
+      var mean = blk.sum / blk.count;
+      for (var j = 0; j < blk.count; j++, k++) pos.push(mean + k * gap);
+    });
+    return pos;
+  }
+
   function runLayout(depth) {
     depth = depth || computeDepths();
     var vis = cy.nodes(":visible");
@@ -428,7 +455,11 @@
     var layers = {};     // layerIndex -> [nodes] on the call-flow spine
     var offspine = [];   // module/file/doc + unknowns, only if toggled on
     var spine = cy.collection();
-    function push(L, n) { (layers[L] || (layers[L] = [])).push(n); spine = spine.add(n); }
+    var inSpine = {};
+    function push(L, n) {
+      (layers[L] || (layers[L] = [])).push(n);
+      spine = spine.add(n); inSpine[n.id()] = true;
+    }
 
     vis.forEach(function (n) {
       var k = n.data("kind");
@@ -445,25 +476,68 @@
 
     function sortKey(n) { return String(n.data("label") || n.data("name") || n.id()); }
     function layerY(L) { return (topLayer - L) * ROW_H; }
+    var layerKeys = Object.keys(layers).map(Number).sort(function (a, b) { return a - b; });
 
-    // Half-width of the widest spine row — where the off-spine shelf begins.
-    var maxHalf = 0;
-    Object.keys(layers).forEach(function (k) {
-      maxHalf = Math.max(maxHalf, (layers[k].length - 1) / 2 * COL_W);
+    // Adjacency among spine nodes (undirected), for barycentre alignment.
+    var adj = {};
+    spine.forEach(function (n) { adj[n.id()] = []; });
+    cy.edges(":visible").forEach(function (e) {
+      var s = e.source().id(), t = e.target().id();
+      if (inSpine[s] && inSpine[t]) { adj[s].push(t); adj[t].push(s); }
     });
+
+    // Start from an even, centred, deterministic order per layer.
+    var xpos = {};
+    layerKeys.forEach(function (k) {
+      var arr = layers[k];
+      arr.sort(function (a, b) { return sortKey(a).localeCompare(sortKey(b)); });
+      var c = arr.length;
+      arr.forEach(function (n, i) { xpos[n.id()] = (i - (c - 1) / 2) * COL_W; });
+    });
+
+    // Barycentre sweeps: pull each node toward the mean x of its neighbours, then
+    // repack the layer (min gap, least-squares to those targets). Alternating the
+    // sweep direction lets the alignment propagate across every layer, so edges
+    // stay short overall and a node between two others lands near their midpoint —
+    // trading a few big jumps for many small ones. Pure placement; verdicts/edges
+    // are untouched.
+    var SWEEPS = 12;
+    for (var s = 0; s < SWEEPS; s++) {
+      var order = (s % 2 === 0) ? layerKeys : layerKeys.slice().reverse();
+      order.forEach(function (k) {
+        var arr = layers[k];
+        if (!arr.length) return;
+        var desired = arr.map(function (n) {
+          var nb = adj[n.id()];
+          if (!nb.length) return xpos[n.id()];
+          var sum = 0;
+          for (var i = 0; i < nb.length; i++) sum += xpos[nb[i]];
+          return sum / nb.length;
+        });
+        // Reorder by barycentre (reduces crossings); stable via current x then key.
+        var idx = arr.map(function (_, i) { return i; });
+        idx.sort(function (a, b) {
+          return (desired[a] - desired[b]) ||
+            (xpos[arr[a].id()] - xpos[arr[b].id()]) ||
+            sortKey(arr[a]).localeCompare(sortKey(arr[b]));
+        });
+        var ordered = idx.map(function (i) { return arr[i]; });
+        var placed = packWithGap(idx.map(function (i) { return desired[i]; }), COL_W);
+        ordered.forEach(function (n, i) { xpos[n.id()] = placed[i]; });
+        layers[k] = ordered; // carry the improved order into the next sweep
+      });
+    }
 
     cy.batch(function () {
       cy.nodes().removeClass("offspine");
 
-      // Each layer is a row of evenly-spaced neurons, centered on x = 0, so every
-      // layer shares the same vertical centerline — the symmetric feed-forward look.
-      Object.keys(layers).forEach(function (k) {
-        var arr = layers[k];
-        arr.sort(function (a, b) { return sortKey(a).localeCompare(sortKey(b)); });
-        var c = arr.length;
-        var y = layerY(Number(k));
-        arr.forEach(function (n, i) {
-          n.position({ x: (i - (c - 1) / 2) * COL_W, y: y });
+      var maxAbsX = 0;
+      layerKeys.forEach(function (k) {
+        var y = layerY(k);
+        layers[k].forEach(function (n) {
+          var x = xpos[n.id()];
+          n.position({ x: x, y: y });
+          if (Math.abs(x) > maxAbsX) maxAbsX = Math.abs(x);
         });
       });
 
@@ -474,7 +548,7 @@
         // it stays a tidy band rather than one long run.
         var spineHeight = topLayer * ROW_H;
         var perCol = Math.max(1, Math.floor(spineHeight / OFF_ROW_H) + 1);
-        var offX0 = maxHalf + COL_W * 1.8;
+        var offX0 = maxAbsX + COL_W * 1.8;
         offspine.forEach(function (n, i) {
           var col = Math.floor(i / perCol), row = i % perCol;
           n.position({ x: offX0 + col * OFF_COL_W, y: row * OFF_ROW_H });
@@ -482,9 +556,9 @@
       }
     });
 
-    // Frame the clean network itself: fit to the spine so the symmetric layers
-    // stay centered even when a dim off-spine shelf exists off to the side. The
-    // "fit everything" zoom control still frames the shelf when the user wants it.
+    // Frame the clean network itself: fit to the spine so the layers stay centred
+    // even when a dim off-spine shelf exists off to the side. The "fit everything"
+    // zoom control still frames the shelf when the user wants it.
     cy.fit(spine.length ? spine : cy.nodes(":visible"), 48);
   }
 
