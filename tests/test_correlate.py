@@ -703,3 +703,152 @@ def test_cache_get_on_corrupt_file_is_a_miss():
     path.write_text("{ this is not valid json ", encoding="utf-8")
     # A garbage entry must fail soft -- a miss, never a raise.
     assert cache.get("corrupt-key") is None
+
+
+# -- symbol-level advisory matching (symbol_match) ----------------------------
+#
+# A deterministic, always-on 3-tier signal derived FROM the resolved
+# reachability verdict: "confirmed" (the advisory's named function is among the
+# dep's reached symbols), "no_path" (verdict unreachable), or "package_reachable"
+# (reachable but the specific vulnerable function is unconfirmed). It must never
+# change `reachable`, the verdict, ranking, or the existing summary counts.
+
+from scanner.reachability import (  # noqa: E402 -- grouped with the feature's tests
+    REACHABLE,
+    UNREACHABLE,
+    EntrypointReachability,
+    ReachedDependency,
+    RepoReachability,
+)
+
+_SYM_DEP = "dep:PyPI:PyYAML"
+
+
+def _reach_with(symbols, verdict):
+    """A minimal ReachabilityResult: one entry point reaching ``_SYM_DEP``.
+
+    ``verdict`` is stored in ``repo.verdict_by_dep``; the dep is listed as
+    reachable only when its verdict is not ``unreachable`` (so the reachable-set
+    and verdict layers stay consistent, as the real engine keeps them).
+    """
+    reachable = verdict != UNREACHABLE
+    ep = EntrypointReachability(
+        id="ep:POST:/import",
+        method="POST",
+        path="/import",
+        handlers=["fn:app.py:do_import"],
+        reachable_function_count=1,
+        reachable_dependencies=(
+            [
+                ReachedDependency(
+                    id=_SYM_DEP,
+                    name="PyYAML",
+                    version="5.3",
+                    ecosystem="PyPI",
+                    symbol=symbols[0] if symbols else None,
+                    symbols=list(symbols),
+                    example_path=["ep:POST:/import", _SYM_DEP],
+                )
+            ]
+            if reachable
+            else []
+        ),
+        unresolved_calls_encountered=0,
+    )
+    repo = RepoReachability(
+        reachable_deps=[{"id": _SYM_DEP}] if reachable else [],
+        verdict_by_dep={_SYM_DEP: verdict},
+    )
+    return ReachabilityResult(entrypoints=[ep], repo=repo)
+
+
+def _sym_finding(summary, details):
+    return Finding(
+        dependency_id=_SYM_DEP,
+        dependency_name="PyYAML",
+        version="5.3",
+        ecosystem="PyPI",
+        vuln_id="GHSA-pyyaml-3pqx",
+        cve_ids=[PYYAML_CVE],
+        summary=summary,
+        fixed_versions=["5.3.1"],
+        details=details,
+    )
+
+
+def test_symbol_match_confirmed_when_named_function_is_reached():
+    # The advisory names ``yaml.load`` and the dep is reached via ``yaml.load``.
+    finding = _sym_finding(
+        "PyYAML code execution", "The yaml.load function is the vulnerable sink."
+    )
+    report.join_reachability(
+        KnowledgeGraph(), [finding], _reach_with(["yaml.load"], REACHABLE)
+    )
+
+    assert finding.reachable is True
+    assert finding.reached_symbols == ["yaml.load"]
+    assert finding.symbol_match == "confirmed"
+
+
+def test_symbol_match_package_reachable_when_named_function_not_reached():
+    # The advisory names ``full_load`` but the project only calls ``safe_load``:
+    # reachable package, but the specific vulnerable function is unconfirmed.
+    finding = _sym_finding("PyYAML code execution", "The full_load method is vulnerable.")
+    report.join_reachability(
+        KnowledgeGraph(), [finding], _reach_with(["yaml.safe_load"], REACHABLE)
+    )
+
+    assert finding.reachable is True
+    assert finding.reached_symbols == ["yaml.safe_load"]
+    assert finding.symbol_match == "package_reachable"
+
+
+def test_symbol_match_package_reachable_when_advisory_names_no_function():
+    # The advisory names no specific function (a generic/transitive description):
+    # still a live finding, never silently "safe".
+    finding = _sym_finding(
+        "PyYAML allows arbitrary code execution",
+        "Parsing untrusted input can lead to arbitrary code execution.",
+    )
+    report.join_reachability(
+        KnowledgeGraph(), [finding], _reach_with(["yaml.safe_load"], REACHABLE)
+    )
+
+    assert finding.reachable is True
+    assert finding.symbol_match == "package_reachable"
+
+
+def test_symbol_match_no_path_when_verdict_unreachable():
+    # The dep's resolved verdict is ``unreachable`` -- the only tier-2 case, and
+    # sound because verdict_by_dep already applied the fully-resolved gate.
+    finding = _sym_finding(
+        "PyYAML code execution", "The yaml.load function is the vulnerable sink."
+    )
+    report.join_reachability(
+        KnowledgeGraph(), [finding], _reach_with(["yaml.load"], UNREACHABLE)
+    )
+
+    assert finding.reachable is False
+    assert finding.symbol_match == "no_path"
+
+
+def test_build_summary_counts_symbol_confirmed():
+    confirmed = _sym_finding("PyYAML", "The yaml.load function is vulnerable.")
+    report.join_reachability(
+        KnowledgeGraph(), [confirmed], _reach_with(["yaml.load"], REACHABLE)
+    )
+
+    pkg = _sym_finding("PyYAML", "The full_load method is vulnerable.")
+    report.join_reachability(
+        KnowledgeGraph(), [pkg], _reach_with(["yaml.safe_load"], REACHABLE)
+    )
+
+    none = _sym_finding("lodash prototype pollution", "Prototype pollution via merge.")
+    none.dependency_id = "dep:npm:lodash"
+    none.dependency_name = "lodash"
+    report.join_reachability(KnowledgeGraph(), [none], ReachabilityResult())
+
+    assert confirmed.symbol_match == "confirmed"
+    assert pkg.symbol_match == "package_reachable"
+    summary = report.build_summary(KnowledgeGraph(), [confirmed, pkg, none])
+    assert summary["symbol_confirmed_vulnerabilities"] == 1

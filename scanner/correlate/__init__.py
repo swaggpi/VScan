@@ -76,6 +76,17 @@ class Finding:
     reachable_entrypoints: list[str] = field(default_factory=list)
     example_path: list[str] = field(default_factory=list)
 
+    # Symbol-level advisory matching (filled by join_reachability; deterministic,
+    # always-on, derived FROM the resolved reachability verdict -- never the
+    # reverse). ``reached_symbols`` is the union of dependency symbols reached
+    # across all reaching entry points. ``symbol_match`` collapses to a 3-tier
+    # signal: "confirmed" (a function the advisory names is among the reached
+    # symbols of a reachable/potentially-reachable dep), "no_path" (the dep's
+    # verdict is unreachable), or "package_reachable" (reachable but the specific
+    # vulnerable function is unconfirmed -- still a live finding, NOT "safe").
+    reached_symbols: list[str] = field(default_factory=list)
+    symbol_match: str = "no_path"
+
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 

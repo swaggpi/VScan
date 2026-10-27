@@ -227,3 +227,29 @@ def test_headline_example_path(reach):
         "fn:services.py:load_yaml",
         "dep:PyPI:PyYAML",
     ]
+
+
+def test_symbol_match_confirmed_for_pyyaml_sink(graph, reach):
+    # Ground truth (README): PyYAML is reached via ``yaml.safe_load`` on
+    # POST /submit. An advisory whose text names ``safe_load`` as the vulnerable
+    # function therefore pins the deterministic symbol signal to "confirmed" --
+    # the vulnerable function is on a reachable call path, not just the package.
+    from scanner.correlate import Finding
+    from scanner.correlate import report
+
+    finding = Finding(
+        dependency_id="dep:PyPI:PyYAML",
+        dependency_name="PyYAML",
+        version=None,
+        ecosystem="PyPI",
+        vuln_id="GHSA-pyyaml-golden",
+        cve_ids=["CVE-2020-1747"],
+        summary="PyYAML arbitrary code execution",
+        fixed_versions=["5.3.1"],
+        details="The yaml.safe_load function mishandles crafted input; the sink is safe_load.",
+    )
+    report.join_reachability(graph, [finding], reach)
+
+    assert finding.reachable is True
+    assert "yaml.safe_load" in finding.reached_symbols
+    assert finding.symbol_match == "confirmed"

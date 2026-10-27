@@ -16,8 +16,14 @@ from typing import Any
 
 from ..coverage import CoverageReport, compute_coverage
 from ..graph import KnowledgeGraph
-from ..reachability import POTENTIALLY_REACHABLE, REACHABLE, ReachabilityResult
+from ..reachability import (
+    POTENTIALLY_REACHABLE,
+    REACHABLE,
+    UNREACHABLE,
+    ReachabilityResult,
+)
 from . import CorrelationResult, Finding
+from .symbols import advisory_matches_called_symbol
 
 # Upper bound on the serialized OSV ``details`` description, so the bundle/--json
 # payload a UI consumes never carries an unbounded advisory blob. Findings from
@@ -53,25 +59,49 @@ def join_reachability(
     A finding is reachable when its dependency id appears in the repo-wide
     reachable set. The reaching entry points and a shortest example path are
     taken from the per-entrypoint reachability records.
+
+    Also populates the deterministic symbol-level advisory signal
+    (``reached_symbols`` / ``symbol_match``). This is derived FROM the resolved
+    reachability verdict and never changes ``reachable``, the verdict, ranking,
+    or any summary count -- a false "confirmed"/"no_path" would be a critical
+    error, so both stay conservative (see :mod:`scanner.correlate.symbols`).
     """
     reachable_ids = {dep["id"] for dep in reach.repo.reachable_deps}
 
     # dep id -> list of (entrypoint label, example path)
     routes: dict[str, list[tuple[str, list[str]]]] = {}
+    # dep id -> union of reached symbols across every reaching entry point
+    symbols_by_dep: dict[str, set[str]] = {}
     for ep in reach.entrypoints:
         label = f"{ep.method} {ep.path}"
         for dep in ep.reachable_dependencies:
             routes.setdefault(dep.id, []).append((label, list(dep.example_path)))
+            symbols_by_dep.setdefault(dep.id, set()).update(dep.symbols)
 
     for finding in findings:
-        if finding.dependency_id not in reachable_ids:
-            continue
-        finding.reachable = True
-        entries = routes.get(finding.dependency_id, [])
-        finding.reachable_entrypoints = sorted({label for label, _ in entries})
-        if entries:
-            # Shortest example path is the clearest evidence.
-            finding.example_path = min((path for _, path in entries), key=len)
+        dep_id = finding.dependency_id
+        if dep_id in reachable_ids:
+            finding.reachable = True
+            entries = routes.get(dep_id, [])
+            finding.reachable_entrypoints = sorted({label for label, _ in entries})
+            if entries:
+                # Shortest example path is the clearest evidence.
+                finding.example_path = min((path for _, path in entries), key=len)
+            finding.reached_symbols = sorted(symbols_by_dep.get(dep_id, set()))
+
+        # Resolved three-way verdict (identical formula to the serialized audit
+        # payload): the fully-resolved gate already decides when "unreachable"
+        # is sound, so the symbol signal is read off it, never off ``reachable``.
+        verdict = reach.repo.verdict_by_dep.get(dep_id) or (
+            REACHABLE if finding.reachable else POTENTIALLY_REACHABLE
+        )
+        advisory_text = f"{finding.summary} {finding.details or ''}"
+        if verdict == UNREACHABLE:
+            finding.symbol_match = "no_path"
+        elif advisory_matches_called_symbol(finding.reached_symbols, advisory_text):
+            finding.symbol_match = "confirmed"
+        else:
+            finding.symbol_match = "package_reachable"
 
 
 def rank_findings(findings: list[Finding]) -> list[Finding]:
@@ -96,6 +126,9 @@ def build_summary(graph: KnowledgeGraph, findings: list[Finding]) -> dict[str, A
         "vulnerable_dependencies": len(vulnerable_deps),
         "total_vulnerabilities": len(findings),
         "reachable_vulnerabilities": sum(1 for f in findings if f.reachable),
+        "symbol_confirmed_vulnerabilities": sum(
+            1 for f in findings if f.symbol_match == "confirmed"
+        ),
         "kev_vulnerabilities": sum(1 for f in findings if f.kev),
         "high_epss_vulnerabilities": sum(
             1 for f in findings if f.epss is not None and f.epss >= 0.5

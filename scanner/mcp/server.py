@@ -659,6 +659,8 @@ def vulnreach_finding_detail(params: FindingDetailInput) -> str:
                     "epss": f.epss,
                     "epss_percentile": f.epss_percentile,
                     "fixed_versions": f.fixed_versions,
+                    "symbol_match": f.symbol_match,
+                    "reached_symbols": f.reached_symbols,
                 }
                 for f in dep_findings
             ],
