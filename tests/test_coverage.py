@@ -150,3 +150,45 @@ def test_parse_error_file_shows_in_report(tmp_path):
     assert cov.files.parsed < cov.files.total
     assert 0.0 <= cov.files.parse_success_rate < 1.0
     assert "failed to parse" in cov.confidence_note.lower()
+
+
+# -- robustness: parsed never negative, resolution rate always in [0, 1] -----
+
+
+def test_module_parse_error_with_no_file_nodes_keeps_parsed_non_negative():
+    # A module node carries parse_error but there is no file node at all, so
+    # the file total (0) is lower than the failure count (1).
+    graph = KnowledgeGraph()
+    graph.add_node("mod:a", "module", "a", relpath="a.py", parse_error="boom")
+    graph.add_node("mod:b", "module", "b", relpath="b.py", parse_error="boom")
+
+    cov = compute_coverage(graph)
+
+    assert cov.files.total == 0
+    assert cov.files.parsed >= 0
+    assert 0.0 <= cov.files.parse_success_rate <= 1.0
+
+
+def test_module_parse_error_exceeding_low_file_total_stays_in_bounds():
+    graph = KnowledgeGraph()
+    graph.add_node("file:a.py", "file", "a.py", relpath="a.py", language="python")
+    graph.add_node("mod:a", "module", "a", relpath="a.py", parse_error="boom")
+    graph.add_node("mod:z", "module", "z", relpath="z.py", parse_error="boom")
+
+    cov = compute_coverage(graph)
+
+    assert cov.files.total == 1
+    assert cov.files.parsed >= 0
+    assert 0.0 <= cov.files.parse_success_rate <= 1.0
+
+
+def test_resolution_rate_in_unit_interval_on_sample():
+    cov = _coverage()
+    assert 0.0 <= cov.call_sites.resolution_rate <= 1.0
+
+
+def test_resolution_rate_defined_when_nothing_resolved_or_unresolved():
+    cov = compute_coverage(KnowledgeGraph())
+    assert cov.call_sites.resolved == 0
+    assert cov.call_sites.unresolved == 0
+    assert cov.call_sites.resolution_rate == 1.0

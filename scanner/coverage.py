@@ -55,12 +55,25 @@ class FunctionCoverage:
 
 @dataclass
 class CallSiteCoverage:
-    """Resolved call edges vs. call sites the analyzers could not resolve."""
+    """Resolved call edges vs. call sites the analyzers could not resolve.
+
+    The two counts are NOT in the same unit, so ``resolution_rate`` is a
+    conservative approximation, not an exact ratio of call sites:
+
+    * ``resolved`` is the number of *distinct* resolved ``calls`` edges. The
+      graph de-duplicates edges on ``(src, dst, kind, symbol)``, so several
+      call sites to the same target collapse into one edge.
+    * ``unresolved`` is the sum of the raw per-node ``unresolved_call_count``
+      (every unresolved call site, not de-duplicated).
+
+    Because ``resolved`` can undercount relative to ``unresolved``, the rate
+    is a lower bound on the true share of call sites that were resolved.
+    """
 
     resolved: int = 0
     unresolved: int = 0
-    # resolved / (resolved + unresolved), in [0, 1]; 1.0 when there are no call
-    # sites at all (nothing was left unresolved).
+    # resolved / (resolved + unresolved), in [0, 1]; 1.0 when both are zero
+    # (nothing was left unresolved). A conservative lower bound -- see above.
     resolution_rate: float = 1.0
 
 
@@ -167,7 +180,9 @@ def _file_coverage(graph: KnowledgeGraph) -> FileCoverage:
     # Each failing relpath counts once; clamp to the file total so the rate
     # stays in [0, 1] even if a module-only failure has no matching file node.
     parse_errors = min(len(failed_relpaths), total) if total else len(failed_relpaths)
-    parsed = total - parse_errors
+    # Never negative: with no file nodes (total == 0) a module-only failure
+    # would otherwise yield ``0 - n``.
+    parsed = max(0, total - parse_errors)
     return FileCoverage(
         total=total,
         by_language=_tally(_language_of(n.attrs) for n in files),
@@ -199,6 +214,9 @@ def _function_coverage(graph: KnowledgeGraph) -> FunctionCoverage:
 
 
 def _call_site_coverage(graph: KnowledgeGraph) -> CallSiteCoverage:
+    # ``resolved`` counts distinct (de-duplicated) calls edges while
+    # ``unresolved`` sums raw call sites, so the rate is a conservative lower
+    # bound rather than an exact ratio (see CallSiteCoverage).
     resolved = sum(1 for e in graph.edges if e.kind == "calls")
     unresolved = sum(
         _unresolved_count(n.attrs)
