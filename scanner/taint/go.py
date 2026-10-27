@@ -95,6 +95,7 @@ Deliberate conservative limitations (documented, not bugs)
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Any
 
@@ -966,6 +967,7 @@ class _GoFile:
     pkg_map: dict[str, tuple[str, str]]  # import name -> (dep_id, import_path)
     stdlib: set[str]  # stdlib import paths
     local_pkg_map: dict[str, dict[str, Any]]  # import name -> local package info
+    pkg_funcs: dict[str, str]  # bare same-package name -> fn_id (own directory)
     relpath: str
     analyzer: GoAnalyzer
 
@@ -988,6 +990,8 @@ class _FileCache:
         self._dep_index = self._analyzer._go_dep_index(self._graph)
         self._go_module = self._repo_index.get("go_module")
         self._go_packages = self._repo_index.get("go_packages", {})
+        # dir relpath -> {bare name: fn_id} for same-package cross-file resolution.
+        self._go_package_funcs = self._repo_index.get("go_package_funcs", {})
 
     def get(self, relpath: str) -> _GoFile | None:
         if relpath in self._cache:
@@ -1027,6 +1031,7 @@ class _FileCache:
             pkg_map=pkg_map,
             stdlib=stdlib,
             local_pkg_map=local_pkg_map,
+            pkg_funcs=self._go_package_funcs.get(os.path.dirname(relpath), {}),
             relpath=relpath,
             analyzer=self._analyzer,
         )
@@ -1047,6 +1052,7 @@ def _resolve(file_info: _GoFile, call: Any, bound: set[str]) -> tuple[str, ...]:
         file_info.local_funcs,
         file_info.relpath,
         file_info.local_pkg_map,
+        file_info.pkg_funcs,
     )
 
 
