@@ -33,6 +33,13 @@ def load_yaml(raw: str):
     return yaml.safe_load(raw)
 
 
+def parse_config(raw):
+    # Reached by POST /load; forwards its argument into the PyYAML sink via
+    # load_yaml (fn -> fn, same file). Carries taint when its caller passes
+    # attacker input.
+    return load_yaml(raw)
+
+
 def fetch_remote(url: str) -> str:
     # fn -> dep edge: services.fetch_remote -> requests  (symbol requests.get)
     return requests.get(url).text

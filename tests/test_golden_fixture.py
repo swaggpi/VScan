@@ -56,6 +56,10 @@ EXPECTED_ENTRYPOINTS = {
     "ep:GET:/fetch",
     "ep:GET:/added",
     "ep:GET:/api/items",
+    # Taint-fixture routes (see scanner/taint.py and this app's README).
+    "ep:POST:/load",
+    "ep:GET:/echo",
+    "ep:GET:/proxy",
 }
 
 EXPECTED_ROUTES = {
@@ -64,6 +68,9 @@ EXPECTED_ROUTES = {
     ("ep:GET:/fetch", "fn:app.py:fetch"),
     ("ep:GET:/added", "fn:app.py:added"),
     ("ep:GET:/api/items", "fn:app.py:list_items"),
+    ("ep:POST:/load", "fn:app.py:load_config"),
+    ("ep:GET:/echo", "fn:app.py:echo"),
+    ("ep:GET:/proxy", "fn:app.py:proxy"),
 }
 
 EXPECTED_FN_CALLS = {
@@ -73,6 +80,10 @@ EXPECTED_FN_CALLS = {
     ("fn:app.py:decorated", "fn:services.py:describe"),
     ("fn:app.py:added", "fn:services.py:describe"),
     ("fn:services.py:ingest", "fn:services.py:load_yaml"),
+    # Taint-fixture cross-file chain: POST /load -> parse_config -> load_yaml.
+    ("fn:app.py:load_config", "fn:services.py:parse_config"),
+    ("fn:services.py:parse_config", "fn:services.py:load_yaml"),
+    ("fn:app.py:proxy", "fn:services.py:fetch_remote"),
     # cross-file, module-level call made from INSIDE a method body:
     ("fn:store.py:Store.save", "fn:services.py:persist"),
     # self-method call (same file): Store.save -> self._validate(...)
@@ -108,10 +119,28 @@ EXPECTED_VERDICTS = {
     "dep:PyPI:PyYAML": REACHABLE,
     "dep:PyPI:requests": REACHABLE,
     "dep:PyPI:python-dateutil": REACHABLE,
-    "dep:PyPI:Flask": UNREACHABLE,
+    # Flask is now reachable: the taint-fixture handlers read the Flask
+    # ``request`` object (request.get_json / request.args.get), which the
+    # analyzer resolves as calls into the Flask dependency.
+    "dep:PyPI:Flask": REACHABLE,
     "dep:PyPI:urllib3": UNREACHABLE,
     "dep:PyPI:click": UNREACHABLE,
     "dep:PyPI:itsdangerous": UNREACHABLE,
+}
+
+# Taint ground truth (hand-verified; see this app's README). Only reached deps
+# can appear; a dep is ``tainted`` iff some reaching path proves attacker input
+# flows into its sink, else ``not_proven``.
+EXPECTED_TAINT = {
+    # POST /load: request.get_json() -> parse_config -> load_yaml -> yaml.safe_load
+    "dep:PyPI:PyYAML": "tainted",
+    # requests is reached only with constant URLs (/fetch, /proxy); the request
+    # source read in /proxy is never forwarded to the sink.
+    "dep:PyPI:requests": "not_proven",
+    # python-dateutil is reached with a constant list literal (/api/items).
+    "dep:PyPI:python-dateutil": "not_proven",
+    # Flask is the SOURCE library, not a sink receiving attacker data.
+    "dep:PyPI:Flask": "not_proven",
 }
 
 
@@ -253,3 +282,44 @@ def test_symbol_match_confirmed_for_pyyaml_sink(graph, reach):
     assert finding.reachable is True
     assert "yaml.safe_load" in finding.reached_symbols
     assert finding.symbol_match == "confirmed"
+
+
+# -- taint (derived, additive) ------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def taint(graph, reach):
+    from scanner.taint import compute_taint
+
+    return compute_taint(graph, reach, APP)
+
+
+def test_taint_verdicts_exactly_match(taint):
+    for dep_id, verdict in EXPECTED_TAINT.items():
+        result = taint.get(dep_id)
+        assert result is not None, dep_id
+        assert result.verdict == verdict, dep_id
+
+
+def test_tainted_pyyaml_has_full_proven_evidence(taint):
+    # The tainted verdict must be backed by a proven source->sink flow along the
+    # POST /load path (request body -> parse_config -> load_yaml -> safe_load).
+    result = taint["dep:PyPI:PyYAML"]
+    assert result.verdict == "tainted"
+    assert result.source == "request.get_json"
+    assert result.sink_symbol == "yaml.safe_load"
+    assert result.entrypoint == "POST /load"
+    assert result.path == [
+        "ep:POST:/load",
+        "fn:app.py:load_config",
+        "fn:services.py:parse_config",
+        "fn:services.py:load_yaml",
+        "dep:PyPI:PyYAML",
+    ]
+
+
+def test_taint_never_claims_an_unreached_dep(taint):
+    # A dep with no reaching path must never appear with a tainted verdict (it
+    # should not appear at all; the caller defaults it to not_proven).
+    for dep_id in ("dep:PyPI:urllib3", "dep:PyPI:click", "dep:PyPI:itsdangerous"):
+        assert taint.get(dep_id) is None

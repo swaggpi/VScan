@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from typing import Sequence
 
@@ -23,6 +24,7 @@ from .dotenv import load_dotenv
 from .graph import KnowledgeGraph
 from .reachability import ReachabilityResult, compute_reachability
 from .scan import scan_repo
+from .taint import TaintResult, compute_taint
 
 _DEFAULT_OUTPUT = "vulnreach-graph.json"
 
@@ -368,6 +370,7 @@ def _build_bundle(
     assessments: list,
     triage: list,
     usage: list,
+    taint: dict[str, TaintResult] | None = None,
 ) -> dict:
     """Assemble one self-contained payload the dashboard viewer can load.
 
@@ -388,7 +391,13 @@ def _build_bundle(
     therefore ALWAYS carries all three tiers (offline-grounded by default).
     """
     audit_payload = correlate_report.audit(
-        graph, correlation, reach, assessments=assessments, triage=triage, usage=usage
+        graph,
+        correlation,
+        reach,
+        assessments=assessments,
+        triage=triage,
+        usage=usage,
+        taint=taint,
     )
     return {
         "graph": graph.to_dict(),
@@ -535,6 +544,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             graph, offline=args.offline, use_nvd=args.nvd
         )
 
+        # Derived, additive taint signal (offline, no model): does attacker input
+        # at an entry handler flow into a call into a vulnerable dep? Strictly
+        # stronger than symbol_match; never changes reachable/verdict/ranking.
+        taint_map = compute_taint(graph, reach, os.path.abspath(args.repo_path))
+
         # The advisory agent tier feeds --bundle (always), the --json/-o audit
         # payload, and the --explain text render. Compute it once -- so the model
         # is called at most once per run -- only when something needs it. The
@@ -565,6 +579,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                             assessments=assessments,
                             triage=triage,
                             usage=usage,
+                            taint=taint_map,
                         ),
                         indent=2,
                     )
@@ -575,6 +590,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 correlate_report.audit(
                     graph, correlation, reach,
                     assessments=assessments, triage=triage, usage=usage,
+                    taint=taint_map,
                 ),
                 indent=2,
             )

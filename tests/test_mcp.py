@@ -108,13 +108,13 @@ def _call(func, model_cls, **kwargs):
 
 def test_scan_overview_golden_counts():
     ov = _call(S.vulnreach_scan_overview, S.ScanOverviewInput, repo_path=GOLDEN)
-    assert ov["entrypoints"] == 5
+    assert ov["entrypoints"] == 8
     assert ov["dependencies"]["total"] == 7
     assert ov["dependencies"]["pinned"] == 7
     assert "python" in ov["languages"]
     endpoints = {r["endpoint"] for r in ov["entrypoint_list"]["items"]}
     assert "POST /submit" in endpoints
-    assert ov["entrypoint_list"]["total"] == 5
+    assert ov["entrypoint_list"]["total"] == 8
 
 
 def test_find_locates_symbol():

@@ -22,6 +22,7 @@ facts rather than raw file contents. Tools never raise: errors come back as a
 from __future__ import annotations
 
 import json
+import os
 from typing import Any, Callable, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -30,6 +31,7 @@ from mcp.server.fastmcp import FastMCP
 
 from scanner.agent import investigate_usage, triage_findings
 from scanner.correlate import report
+from scanner.taint import compute_taint
 
 from . import serialize, state, upgrade
 from .state import ToolError
@@ -629,6 +631,14 @@ def vulnreach_finding_detail(params: FindingDetailInput) -> str:
         node = _require_node(graph, params.dep_id, kind="dependency")
         _, reach = state.get_reachability(params.repo_path)
         report.join_reachability(graph, corr.findings, reach)
+        # Derived, additive taint signal (offline, no model); never changes
+        # reachable/verdict/symbol_match.
+        taint_map = compute_taint(graph, reach, os.path.abspath(params.repo_path))
+        for finding in corr.findings:
+            result = taint_map.get(finding.dependency_id)
+            if result is not None:
+                finding.taint = result.verdict
+                finding.taint_evidence = result.to_dict()
         dep_findings = [f for f in corr.findings if f.dependency_id == params.dep_id]
         if not dep_findings:
             raise ToolError(
@@ -661,6 +671,8 @@ def vulnreach_finding_detail(params: FindingDetailInput) -> str:
                     "fixed_versions": f.fixed_versions,
                     "symbol_match": f.symbol_match,
                     "reached_symbols": f.reached_symbols,
+                    "taint": f.taint,
+                    "taint_evidence": f.taint_evidence,
                 }
                 for f in dep_findings
             ],

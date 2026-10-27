@@ -133,6 +133,9 @@ def build_summary(graph: KnowledgeGraph, findings: list[Finding]) -> dict[str, A
         "high_epss_vulnerabilities": sum(
             1 for f in findings if f.epss is not None and f.epss >= 0.5
         ),
+        "taint_confirmed_vulnerabilities": sum(
+            1 for f in findings if f.taint == "tainted"
+        ),
     }
 
 
@@ -144,6 +147,7 @@ def audit(
     assessments: list[Any] | None = None,
     triage: list[Any] | None = None,
     usage: list[Any] | None = None,
+    taint: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run the join + ranking and return a JSON-serializable audit payload.
 
@@ -174,8 +178,26 @@ def audit(
     key carrying its own ``"key"`` of ``<dependency_id>`` for UI keying. Advisory
     only. When ``None`` the key is omitted and the payload is byte-for-byte as
     before.
+
+    ``taint`` is the optional DERIVED taint signal (a ``dependency_id ->
+    TaintResult`` map from :func:`scanner.taint.compute_taint`). When provided,
+    each finding's ``taint`` / ``taint_evidence`` is set from the map before
+    ranking and the summary. It is strictly additive -- it never changes
+    ``reachable``, the verdict, ``symbol_match`` or ranking -- and only ever
+    escalates a finding to ``"tainted"`` when a source->sink flow is proven.
     """
     join_reachability(graph, correlation.findings, reach)
+    if taint is not None:
+        # Strictly additive: set only the derived taint fields, before ranking
+        # and the summary. Never touches reachable/verdict/symbol_match/ranking.
+        for finding in correlation.findings:
+            result = taint.get(finding.dependency_id)
+            if result is not None:
+                evidence = (
+                    result.to_dict() if hasattr(result, "to_dict") else dict(result)
+                )
+                finding.taint = evidence.get("verdict", "not_proven")
+                finding.taint_evidence = evidence
     ranked = rank_findings(correlation.findings)
     verdicts = reach.repo.verdict_by_dep
 

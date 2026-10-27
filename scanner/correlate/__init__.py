@@ -87,6 +87,17 @@ class Finding:
     reached_symbols: list[str] = field(default_factory=list)
     symbol_match: str = "no_path"
 
+    # Taint signal (filled by join_reachability from a taint map when provided;
+    # see :mod:`scanner.taint`). A 3rd, STRICTLY STRONGER escalation above
+    # ``symbol_match``: ``"tainted"`` means attacker-controlled input at a web
+    # entry handler is PROVEN to flow, hop by hop, into a call into this
+    # dependency; the default ``"not_proven"`` is NOT a claim of safety. Strictly
+    # DERIVED and ADDITIVE -- it never changes ``reachable``, the verdict,
+    # ``symbol_match``, ranking, or any summary counter. ``taint_evidence`` holds
+    # the proving flow (source / sink_symbol / entrypoint / path) when tainted.
+    taint: str = "not_proven"
+    taint_evidence: dict | None = None
+
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 

@@ -18,7 +18,7 @@ Shadowing negatives (ground truth: NO edge to PyYAML):
 from __future__ import annotations
 
 import yaml  # legitimately shadowed below; see transform()/rebind()
-from flask import Blueprint, Flask
+from flask import Blueprint, Flask, request
 
 import services
 
@@ -58,6 +58,39 @@ def list_items():
 
 
 app.register_blueprint(api, url_prefix="/api")
+
+
+# -- taint ground truth (layer: scanner/taint.py) -----------------------------
+#    These routes exercise the taint pass. They do not change any reachability
+#    verdict; they pin whether attacker input flows into a dependency sink.
+
+
+@app.route("/load", methods=["POST"])
+def load_config():
+    # TAINTED: the attacker-controlled request body flows cross-file into the
+    # PyYAML sink: load_config -> services.parse_config -> services.load_yaml
+    # -> yaml.safe_load. Source: request.get_json.
+    payload = request.get_json()
+    return services.parse_config(payload)
+
+
+@app.route("/echo")
+def echo():
+    # NOT_PROVEN (no sink): a request source is read but only echoed back in a
+    # local dict; it never reaches a dependency call. Source present, no flow.
+    message = request.args.get("q", "")
+    return {"echo": message}
+
+
+@app.route("/proxy")
+def proxy():
+    # NOT_PROVEN (shadow): a request source is read into `requested`, but the
+    # value that reaches the requests sink (services.fetch_remote -> requests.get)
+    # is a pinned constant, not attacker data. `requested` is never forwarded.
+    requested = request.args.get("url")  # looks like it drives the fetch...
+    target = "https://example.com/pinned"  # ...but the sink argument is a constant
+    assert requested is None or isinstance(requested, str)
+    return services.fetch_remote(target)
 
 
 # -- shadowing negatives: these define `yaml.load(...)` but on a NON-package
