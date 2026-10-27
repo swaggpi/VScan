@@ -36,6 +36,10 @@
   --alert-glow: rgba(242, 101, 78, 0.5);
   --alert-ink:  #F79885;  /* lighter tint for text on the dark ground */
 
+  /* Triage "likely safe" — a cool green, distinct from amber and red. */
+  --safe:      #4FB286;  /* exploitability triage: likely unaffected */
+  --safe-ink:  #7FD3AC;
+
   --radius: 4px;
   --rail-w: 20rem;
   --detail-w: 21rem;
@@ -365,6 +369,54 @@ body {
   0%, 100% { box-shadow: 0 0 6px var(--alert-glow); }
   50% { box-shadow: 0 0 13px var(--alert-glow); }
 }
+
+/* Advisory exploitability-triage badges — a verdict distinct from the severity
+   and reachability tags: "exploitable" (the code calls the vulnerable surface),
+   "likely safe" (it demonstrably does not), or "unsure". */
+.tri {
+  font: 600 0.58rem/1 var(--f-mono);
+  letter-spacing: 0.05em;
+  padding: 0.22rem 0.42rem;
+  border-radius: 2px;
+  border: 1px solid var(--hair);
+  color: var(--ink-dim);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.tri--affected {
+  background: var(--alert);
+  color: var(--ground);
+  border-color: var(--alert);
+  box-shadow: 0 0 8px var(--alert-glow);
+}
+.tri--safe { border-color: var(--safe); color: var(--safe-ink); }
+.tri--uncertain { border-color: var(--ink-mut); color: var(--ink-mut); }
+
+/* Per-CVE triage rationale under a finding row in the left rail. */
+.cve__triage {
+  margin-top: 0.3rem;
+  font: 400 0.7rem/1.45 var(--f-body);
+  color: var(--ink-dim);
+  border-left: 2px solid var(--panel-edge);
+  padding-left: 0.5rem;
+}
+.cve__triage-h {
+  font: 600 0.58rem/1 var(--f-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-mut);
+  margin-right: 0.3rem;
+}
+
+/* Exploitability section in the dependency detail panel. */
+.tri-lead { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; margin-bottom: 0.35rem; }
+.tri-conf {
+  font: 500 0.62rem/1 var(--f-mono);
+  letter-spacing: 0.04em;
+  color: var(--ink-mut);
+  text-transform: uppercase;
+}
+.tri-detail { margin-top: 0.4rem; }
 
 .vuln__path {
   margin-top: 0.35rem;

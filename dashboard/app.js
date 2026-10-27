@@ -47,6 +47,8 @@
   var bundleMeta = null;      // { summary, offline, network_ok, notices } or null
   var bundleReach = null;     // bundle.reachability (per-entrypoint reachable chains) or null
   var assessments = [];       // per-endpoint advisory exposure assessments (bundle.assessments)
+  var triage = [];            // per-(dep,CVE) advisory exploitability triage (bundle.triage)
+  var triageByDep = {};       // dep node id -> [triage entries], built from `triage`
   var selectedNodeId = null;  // node whose datasheet the detail panel shows
 
   // Focused-view state. When a loaded graph exceeds LARGE_GRAPH we render only
@@ -836,7 +838,52 @@
         if (vs.entrypoints.indexOf(ep) < 0) vs.entrypoints.push(ep);
       });
     });
+
+    // Index the advisory exploitability triage by dependency, and mark the dep
+    // with its strongest verdict so the finding list can surface and rank it.
+    triageByDep = {};
+    triage.forEach(function (t) {
+      var id = t.dependency_id;
+      if (!id) return;
+      (triageByDep[id] || (triageByDep[id] = [])).push(t);
+      var vs = vulnByDep[id];
+      if (vs && t.affected === "affected") vs.triageAffected = true;
+    });
   }
+
+  // The triage entry matching a finding's CVE within its dependency, if any:
+  // a triage row covers a (dependency, CVE) pair via its `cve`/`cves` fields.
+  function triageForFinding(f) {
+    var rows = triageByDep[f.dependency_id];
+    if (!rows || !rows.length) return null;
+    var ids = (f.cve_ids && f.cve_ids.length) ? f.cve_ids.slice() : [];
+    if (f.vuln_id) ids.push(f.vuln_id);
+    for (var i = 0; i < rows.length; i++) {
+      var t = rows[i];
+      var tc = (t.cves && t.cves.length) ? t.cves.slice() : [];
+      if (t.cve) tc.push(t.cve);
+      if (t.vuln_id) tc.push(t.vuln_id);
+      for (var j = 0; j < tc.length; j++) {
+        if (ids.indexOf(tc[j]) >= 0) return t;
+      }
+    }
+    return null;
+  }
+
+  // Advisory-triage verdict -> { label, cls } for a compact badge.
+  var TRIAGE_META = {
+    affected:          { label: "exploitable",   cls: "tri tri--affected" },
+    likely_unaffected: { label: "likely safe",   cls: "tri tri--safe" },
+    uncertain:         { label: "triage: unsure", cls: "tri tri--uncertain" }
+  };
+  function triageBadge(t) {
+    if (!t || !t.affected) return "";
+    var m = TRIAGE_META[t.affected] || TRIAGE_META.uncertain;
+    return '<span class="' + m.cls + '" title="Advisory exploitability triage">' +
+      esc(m.label) + '</span>';
+  }
+  var TRIAGE_RANK = { affected: 3, uncertain: 2, likely_unaffected: 1 };
+  function triageRank(v) { return TRIAGE_RANK[v] || 0; }
 
   // Map an entry-point LABEL ("POST /import") back to its node id, so clicking
   // a reachable finding can light that route's path.
@@ -919,11 +966,13 @@
       groups.push({
         id: id, name: f0.dependency_name || id, version: f0.version || "",
         ecosystem: f0.ecosystem || "", findings: vs.findings,
-        reachable: vs.reachable, kev: vs.kev, worst: vs.worst, maxEpss: maxEpss
+        reachable: vs.reachable, kev: vs.kev, worst: vs.worst, maxEpss: maxEpss,
+        triageAffected: !!vs.triageAffected
       });
     });
     groups.sort(function (a, b) {
-      return (b.reachable - a.reachable) || (b.kev - a.kev) ||
+      return ((b.triageAffected ? 1 : 0) - (a.triageAffected ? 1 : 0)) ||
+        (b.reachable - a.reachable) || (b.kev - a.kev) ||
         (b.worst - a.worst) || (b.maxEpss - a.maxEpss) ||
         a.name.localeCompare(b.name);
     });
@@ -956,6 +1005,7 @@
         '<span class="' + sevCls + '">' + esc(sev) + '</span>' +
         (g.reachable ? '<span class="tag tag--reach">reachable</span>' : '') +
         (g.kev ? '<span class="tag tag--kev">KEV</span>' : '') +
+        (g.triageAffected ? '<span class="tri tri--affected">exploitable</span>' : '') +
       '</span></summary>';
 
     var body = '<ul class="cvelist">';
@@ -965,13 +1015,16 @@
         ((b.epss || 0) - (a.epss || 0));
     }).forEach(function (f) {
       var cve = (f.cve_ids && f.cve_ids.length) ? f.cve_ids.join(", ") : (f.vuln_id || "");
+      var t = triageForFinding(f);
       body += '<li class="cve' + (f.reachable ? " cve--reachable" : "") + '"><div class="cve__id">' + esc(cve) + '</div>' +
         (f.summary ? '<div class="cve__sum">' + esc(f.summary) + '</div>' : "") +
         '<div class="vuln__tags">' + sevTag(f) +
         (f.kev ? '<span class="tag tag--kev">KEV</span>' : "") +
         (f.epss != null ? '<span class="tag tag--epss">EPSS ' + Number(f.epss).toFixed(3) + '</span>' : "") +
         (f.reachable ? '<span class="tag tag--reach">reachable</span>' : "") +
+        triageBadge(t) +
         '</div>' +
+        (t && t.rationale ? '<div class="cve__triage"><span class="cve__triage-h">Exploitability</span> ' + esc(t.rationale) + '</div>' : "") +
         (f.fixed_versions && f.fixed_versions.length ? '<div class="cve__fix">Fixed in <b>' + esc(f.fixed_versions.join(", ")) + '</b></div>' : "") +
         (f.reachable && f.example_path && f.example_path.length
           ? '<div class="vuln__path"><span class="path-steps">' + esc(f.example_path.join(" → ")) + '</span></div>' : "") +
@@ -1265,6 +1318,38 @@
       : '<button type="button" class="btn-trace" disabled>Nothing reaches this</button>';
     html += '</section>';
 
+    // Advisory exploitability triage: does the code actually call the vulnerable
+    // surface? Leads with the strongest verdict; per-CVE rationale sits below.
+    var trows = triageByDep[n.id] || [];
+    if (trows.length) {
+      var ranked = trows.slice().sort(function (a, b) {
+        return triageRank(b.affected) - triageRank(a.affected);
+      });
+      var top = ranked[0];
+      var symbols = uniq([].concat.apply([], trows.map(function (t) {
+        return (t.called_symbols || []);
+      })));
+      html += '<section class="dsec"><h2 class="dsec__h">Exploitability ' +
+        '<span class="advisory-flag">Advisory</span></h2>' +
+        '<div class="tri-lead">' + triageBadge(top) +
+        (top.confidence ? '<span class="tri-conf">' + esc(top.confidence) + ' confidence</span>' : "") +
+        '</div>' +
+        (symbols.length
+          ? '<p class="dim-note">Called into this package: <code>' +
+            symbols.map(esc).join('</code>, <code>') + '</code></p>'
+          : '<p class="dim-note">No resolved calls into this package.</p>');
+      var triBody = '<ul class="cvelist">';
+      ranked.forEach(function (t) {
+        var tcve = (t.cves && t.cves.length) ? t.cves.join(", ") : (t.cve || t.vuln_id || "");
+        triBody += '<li class="cve"><div class="cve__id">' + esc(tcve) + ' ' + triageBadge(t) + '</div>' +
+          (t.rationale ? '<div class="cve__sum">' + esc(t.rationale) + '</div>' : "") + '</li>';
+      });
+      triBody += '</ul>';
+      html += '<div class="tri-detail">' + disclosure("Per-CVE reasoning", triBody, false) + '</div>';
+      html += '<p class="advisory-foot">Advisory only — compares called symbols to the advisory text; it never changes the reachability verdict or the call graph.</p>';
+      html += '</section>';
+    }
+
     // Its CVEs — the dependency's reason to care. Inline when few; one click away
     // when there are many, so a 7-CVE package doesn't flood the panel.
     if (!depFindings.length) {
@@ -1280,6 +1365,7 @@
           (f.kev ? '<span class="tag tag--kev">KEV</span>' : "") +
           (f.epss != null ? '<span class="tag tag--epss">EPSS ' + Number(f.epss).toFixed(3) + '</span>' : "") +
           (f.reachable ? '<span class="tag tag--reach">reachable</span>' : "") +
+          triageBadge(triageForFinding(f)) +
           '</div>' +
           (f.fixed_versions && f.fixed_versions.length ? '<div class="cve__fix">Fixed in <b>' + esc(f.fixed_versions.join(", ")) + '</b></div>' : "") +
           '</li>';
@@ -1552,6 +1638,8 @@
     bundleMeta = null;
     bundleReach = null;
     assessments = [];
+    triage = [];
+    triageByDep = {};
     installGraph(graph, name);
   }
 
@@ -1567,6 +1655,7 @@
     };
     bundleReach = bundle.reachability || null;
     assessments = Array.isArray(bundle.assessments) ? bundle.assessments : [];
+    triage = Array.isArray(bundle.triage) ? bundle.triage : [];
     computeVulnState();
     installGraph(bundle.graph || {}, name);
   }
