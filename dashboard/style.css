@@ -28,6 +28,14 @@
   --signal-soft: rgba(242, 177, 52, 0.16);
   --signal-glow: rgba(242, 177, 52, 0.55);
 
+  /* Severity accent — vulnerability only. A warm red-orange, held apart from
+     the amber reachability signal so the two read as distinct facts: amber =
+     "reached", red = "vulnerable", and a node wearing both is the top problem. */
+  --alert:      #F2654E;  /* warning red-orange (KEV / critical) */
+  --alert-soft: rgba(242, 101, 78, 0.16);
+  --alert-glow: rgba(242, 101, 78, 0.5);
+  --alert-ink:  #F79885;  /* lighter tint for text on the dark ground */
+
   --radius: 4px;
   --rail-w: 20rem;
 
@@ -142,6 +150,9 @@ body {
   color: var(--ink);
 }
 .counts dd.is-signal { color: var(--signal); }
+.counts dd.is-alert { color: var(--alert-ink); }
+/* Separator before the vulnerability counts so they read as a second group. */
+.counts > div.counts__vuln-lead { border-left: 1px solid var(--hair); padding-left: 1.4rem; margin-left: -0.3rem; }
 
 .titleblock__load { display: flex; flex-direction: column; align-items: flex-end; gap: 0.35rem; }
 .loadbtn {
@@ -264,6 +275,80 @@ body {
 .dep__ver { color: var(--signal); }
 .reach-none { font-size: 0.78rem; color: var(--ink-dim); line-height: 1.45; margin: 0; }
 
+/* ---------------------------------------------------------------- vulnerability findings */
+.vuln-head {
+  margin: 0 0 0.75rem;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: var(--ink-dim);
+}
+.vuln-head b { color: var(--alert-ink); font-weight: 600; }
+.vuln-head .is-signal { color: var(--signal); }
+
+.vulnlist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.45rem; }
+
+/* A finding card. The left rule encodes the verdict: a muted hairline for a
+   non-reached finding, the amber signal for a reachable one. */
+.vuln {
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--hair);
+  border-left: 2px solid var(--muted);
+  border-radius: var(--radius);
+  background: var(--ground-sink);
+}
+.vuln--reachable {
+  border-left-color: var(--signal);
+  background: linear-gradient(90deg, var(--alert-soft), var(--ground-sink) 72%);
+}
+/* A reachable finding is actionable: clicking it lights its path. */
+.vuln--reachable { cursor: pointer; }
+.vuln--reachable:hover { border-color: var(--alert); }
+.vuln--reachable:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+
+.vuln__top { display: flex; align-items: baseline; justify-content: space-between; gap: 0.5rem; }
+.vuln__name { font: 600 0.82rem/1.25 var(--f-mono); color: var(--ink); word-break: break-all; }
+.vuln__ver { color: var(--signal); font-weight: 500; }
+.vuln__cve { margin-top: 0.25rem; font: 500 0.7rem/1.3 var(--f-mono); color: var(--alert-ink); word-break: break-all; }
+
+.vuln__tags { margin-top: 0.3rem; display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; }
+.tag {
+  font: 500 0.6rem/1 var(--f-mono);
+  letter-spacing: 0.04em;
+  padding: 0.22rem 0.4rem;
+  border-radius: 2px;
+  border: 1px solid var(--hair);
+  color: var(--ink-dim);
+  text-transform: uppercase;
+}
+.tag--sev { border-color: var(--alert); color: var(--alert-ink); }
+.tag--sev-critical { background: var(--alert); color: var(--ground); border-color: var(--alert); }
+.tag--kev {
+  background: var(--alert);
+  color: var(--ground);
+  border-color: var(--alert);
+  box-shadow: 0 0 8px var(--alert-glow);
+  animation: kevpulse 2.4s ease-in-out infinite;
+}
+.tag--epss { color: var(--ink-mut); }
+.tag--reach { border-color: var(--signal); color: var(--signal); }
+
+@keyframes kevpulse {
+  0%, 100% { box-shadow: 0 0 6px var(--alert-glow); }
+  50% { box-shadow: 0 0 13px var(--alert-glow); }
+}
+
+.vuln__path {
+  margin-top: 0.35rem;
+  font: 400 0.66rem/1.4 var(--f-mono);
+  color: var(--ink-dim);
+}
+.vuln__path b { color: var(--signal); font-weight: 600; }
+.vuln__path .path-steps { color: var(--ink-mut); word-break: break-all; }
+.vuln__verdict { margin-top: 0.35rem; font: 400 0.66rem/1.4 var(--f-mono); color: var(--ink-mut); }
+
+.vuln-note { font-size: 0.78rem; color: var(--ink-dim); line-height: 1.45; margin: 0; }
+.vuln-note--warn { color: var(--alert-ink); }
+
 /* ---------------------------------------------------------------- filters */
 .filters { display: flex; flex-wrap: wrap; gap: 0.4rem; }
 .chip {
@@ -334,6 +419,12 @@ body {
 .dot--fn  { background: transparent; border: 1.5px solid var(--fn); }
 .dot--mut { background: var(--muted); }
 .dot--sig { background: var(--signal); box-shadow: 0 0 7px var(--signal-glow); }
+.dot--vuln { background: var(--dep); border: 2px solid var(--alert); }
+.dot--vulnhot { background: var(--signal); border: 2px solid var(--alert); box-shadow: 0 0 7px var(--alert-glow); }
+
+/* Vulnerability legend rows appear only once an audit bundle is loaded. */
+.legend__item--vuln { display: none; }
+body.has-vulns .legend__item--vuln { display: flex; }
 
 /* ---------------------------------------------------------------- tooltip */
 .tooltip {
@@ -350,6 +441,7 @@ body {
   transform: translate(-50%, -115%);
 }
 .tooltip b { color: var(--signal); font-weight: 600; }
+.tooltip .t-vuln { color: var(--alert-ink); font-size: 0.66rem; }
 .tooltip .t-id { color: var(--ink-mut); font-size: 0.66rem; word-break: break-all; }
 
 /* ---------------------------------------------------------------- responsive */

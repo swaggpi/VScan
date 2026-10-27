@@ -24,16 +24,28 @@
     module: "#4E7493", file: "#4E7493", doc: "#4E7493"
   };
 
+  // Severity accent used on the canvas (cytoscape styles are canvas-rendered, so
+  // they take literal colors, not CSS custom properties). Mirrors --alert.
+  var ALERT = "#F2654E";
+
   var cy = null;
   var model = { nodes: [], edges: [], index: {}, outByKind: {} };
   var visibleKinds = {};
   var selectedEp = null;
+
+  // Vulnerability overlay state (populated only in bundle mode; empty for a
+  // plain {nodes,edges} graph, which keeps the original viewer unchanged).
+  var findings = [];          // ranked finding dicts from the bundle
+  var vulnByDep = {};         // dep node id -> { findings, kev, reachable, worst, entrypoints }
+  var bundleMeta = null;      // { summary, offline, network_ok, notices } or null
 
   var el = {
     counts: document.getElementById("counts"),
     eplist: document.getElementById("eplist"),
     epNote: document.getElementById("ep-note"),
     reachBody: document.getElementById("reach-body"),
+    vulnBody: document.getElementById("vuln-body"),
+    vulnNote: document.getElementById("vuln-note"),
     filters: document.getElementById("filters"),
     stage: document.querySelector(".stage"),
     graph: document.getElementById("graph"),
@@ -118,6 +130,19 @@
         "shape": "ellipse", "width": 20, "height": 20, "color": "#F2B134", "font-weight": 600
       }},
 
+      /* vulnerability overlay — a red ring marks a dependency with findings */
+      { selector: 'node[vuln = 1]', style: {
+        "border-color": ALERT, "border-width": 3, "color": "#F79885",
+        "overlay-color": ALERT, "overlay-opacity": 0.12, "overlay-padding": 5
+      }},
+      /* vulnerable AND reachable from a public route — the top visual signal */
+      { selector: 'node[vreach = 1]', style: {
+        "width": 24, "height": 24, "border-width": 3.5, "font-weight": 600,
+        "overlay-opacity": 0.2, "overlay-padding": 8
+      }},
+      /* actively exploited (KEV) — strongest ring */
+      { selector: 'node[kev = 1]', style: { "border-width": 4, "overlay-opacity": 0.26 } },
+
       { selector: "edge", style: {
         "width": 1, "line-color": "#3C5E7E", "target-arrow-color": "#3C5E7E",
         "target-arrow-shape": "triangle", "arrow-scale": 0.7,
@@ -142,6 +167,11 @@
         "line-color": "#F2B134", "target-arrow-color": "#F2B134", "width": 3, "opacity": 1,
         "overlay-color": "#F2B134", "overlay-opacity": 0.12, "overlay-padding": 2
       }},
+      /* a lit vulnerable dep keeps its red border: amber path -> red endpoint */
+      { selector: 'node.lit[vuln = 1]', style: {
+        "border-color": ALERT, "border-width": 3.5,
+        "overlay-color": ALERT, "overlay-opacity": 0.24, "overlay-padding": 8
+      }},
 
       /* neighborhood focus (click a node) */
       { selector: ".focus", style: { "opacity": 1 } },
@@ -153,10 +183,15 @@
   function toCy() {
     var eles = [];
     model.nodes.forEach(function (n) {
+      var vs = vulnByDep[n.id];
       eles.push({ data: {
         id: n.id, kind: n.kind,
         label: labelFor(n),
-        name: n.name || n.id
+        name: n.name || n.id,
+        // Overlay flags (0 unless an audit bundle marked this dependency).
+        vuln: vs ? 1 : 0,
+        vreach: vs && vs.reachable ? 1 : 0,
+        kev: vs && vs.kev ? 1 : 0
       }});
     });
     model.edges.forEach(function (e) {
@@ -299,6 +334,26 @@
       div.appendChild(dt); div.appendChild(dd);
       el.counts.appendChild(div);
     });
+
+    // Vulnerability stats, appended as a second group only in bundle mode.
+    if (bundleMeta && bundleMeta.summary) {
+      var s = bundleMeta.summary;
+      var vuln = [
+        ["vulnerable deps", s.vulnerable_dependencies, "is-alert", true],
+        ["reachable vulns", s.reachable_vulnerabilities, "is-alert", false],
+        ["actively exploited", s.kev_vulnerabilities, "is-alert", false]
+      ];
+      vuln.forEach(function (row, i) {
+        if (row[1] == null) return;
+        var div = document.createElement("div");
+        if (i === 0) div.className = "counts__vuln-lead";
+        var dt = document.createElement("dt"); dt.textContent = row[0];
+        var dd = document.createElement("dd"); dd.textContent = row[1];
+        if (row[1] > 0) dd.className = row[2];
+        div.appendChild(dt); div.appendChild(dd);
+        el.counts.appendChild(div);
+      });
+    }
   }
 
   function renderEntryPoints() {
@@ -373,6 +428,144 @@
     el.reachBody.innerHTML = html;
   }
 
+  /* ---------------------------------------------------------------- vulnerabilities */
+  var SEV_RANK = { CRITICAL: 4, HIGH: 3, MODERATE: 2, MEDIUM: 2, LOW: 1 };
+
+  // Build a per-dependency roll-up from the ranked findings so the graph and
+  // the panel agree on what is vulnerable, reachable and actively exploited.
+  function computeVulnState() {
+    vulnByDep = {};
+    findings.forEach(function (f) {
+      var id = f.dependency_id;
+      if (!id) return;
+      var vs = vulnByDep[id] || (vulnByDep[id] = {
+        findings: [], kev: false, reachable: false, worst: 0, entrypoints: []
+      });
+      vs.findings.push(f);
+      if (f.kev) vs.kev = true;
+      if (f.reachable) vs.reachable = true;
+      var rank = SEV_RANK[(f.severity || "").toUpperCase()] || 0;
+      if (rank > vs.worst) vs.worst = rank;
+      (f.reachable_entrypoints || []).forEach(function (ep) {
+        if (vs.entrypoints.indexOf(ep) < 0) vs.entrypoints.push(ep);
+      });
+    });
+  }
+
+  // Map an entry-point LABEL ("POST /import") back to its node id, so clicking
+  // a reachable finding can light that route's path.
+  function epIdForLabel(label) {
+    var match = null;
+    model.nodes.forEach(function (n) {
+      if (n.kind !== "entrypoint") return;
+      var a = n.attrs || {};
+      var l = (a.method ? a.method + " " : "") + (a.path || "");
+      if (l.trim() === String(label).trim()) match = n.id;
+    });
+    return match;
+  }
+
+  function sevTag(f) {
+    var label = (f.severity || "UNKNOWN").toUpperCase();
+    var cls = "tag tag--sev";
+    if (label === "CRITICAL") cls += " tag--sev-critical";
+    var txt = label;
+    if (f.cvss_score != null) txt += " " + Number(f.cvss_score).toFixed(1);
+    return '<span class="' + cls + '">' + esc(txt) + '</span>';
+  }
+
+  function renderVulns() {
+    // Plain graph (no bundle): honest structure-only note, no finding list.
+    if (!bundleMeta) {
+      el.vulnNote.textContent = "Structure only — load an audit bundle to see findings.";
+      el.vulnBody.innerHTML = "";
+      return;
+    }
+
+    // Degraded bundle: offline run or the vuln database was unreachable.
+    if (bundleMeta.offline || bundleMeta.network_ok === false) {
+      el.vulnNote.textContent = "Vulnerability data was not available for this scan.";
+      var why = (bundleMeta.notices && bundleMeta.notices.length)
+        ? bundleMeta.notices[0]
+        : (bundleMeta.offline
+            ? "Scanned offline (--offline), so no advisory database was queried."
+            : "The advisory database could not be reached.");
+      el.vulnBody.innerHTML =
+        '<p class="vuln-note vuln-note--warn">' + esc(why) +
+        ' This is not a clean bill of health — the graph and reachability still apply.</p>';
+      return;
+    }
+
+    if (!findings.length) {
+      el.vulnNote.textContent = "Ranked by exploitation and reachability.";
+      el.vulnBody.innerHTML =
+        '<p class="vuln-note">No known vulnerabilities matched the resolved dependencies.</p>';
+      return;
+    }
+
+    var reachN = findings.filter(function (f) { return f.reachable; }).length;
+    el.vulnNote.innerHTML = reachN
+      ? '<b>' + reachN + '</b> of ' + findings.length + ' findings reach a public route.'
+      : 'None of the ' + findings.length + ' findings reach a public route.';
+
+    var html = '<ul class="vulnlist">';
+    findings.forEach(function (f, i) {
+      var cve = (f.cve_ids && f.cve_ids.length) ? f.cve_ids.join(", ") : (f.vuln_id || "");
+      var epLabel = (f.reachable_entrypoints && f.reachable_entrypoints[0]) || "";
+      var epId = f.reachable ? epIdForLabel(epLabel) : null;
+      var cls = "vuln" + (f.reachable ? " vuln--reachable" : "");
+      var attrs = f.reachable && epId
+        ? ' tabindex="0" role="button" data-ep="' + esc(epId) + '"'
+          + ' aria-label="Light the path from ' + esc(epLabel) + ' to ' + esc(f.dependency_name) + '"'
+        : "";
+
+      html += '<li class="' + cls + '" data-idx="' + i + '"' + attrs + '>';
+      html += '<div class="vuln__top"><span class="vuln__name">' + esc(f.dependency_name) +
+        (f.version ? ' <span class="vuln__ver">' + esc(f.version) + '</span>' : '') +
+        '</span></div>';
+      html += '<div class="vuln__cve">' + esc(cve) + '</div>';
+
+      html += '<div class="vuln__tags">';
+      html += sevTag(f);
+      if (f.kev) html += '<span class="tag tag--kev">KEV</span>';
+      if (f.epss != null) html += '<span class="tag tag--epss">EPSS ' + Number(f.epss).toFixed(3) + '</span>';
+      if (f.reachable) html += '<span class="tag tag--reach">reachable</span>';
+      html += '</div>';
+
+      if (f.reachable) {
+        var via = (f.reachable_entrypoints && f.reachable_entrypoints.length)
+          ? f.reachable_entrypoints.join(", ") : "a public entry point";
+        var path = (f.example_path && f.example_path.length) ? f.example_path.join(" → ") : "";
+        html += '<div class="vuln__path">Reachable via <b>' + esc(via) + '</b>' +
+          (path ? '<br><span class="path-steps">' + esc(path) + '</span>' : '') + '</div>';
+      } else {
+        html += '<div class="vuln__verdict">' + esc(verdictText(f)) + '</div>';
+      }
+      html += '</li>';
+    });
+    html += '</ul>';
+    el.vulnBody.innerHTML = html;
+
+    // Clicking (or Enter/Space on) a reachable finding lights its route.
+    Array.prototype.forEach.call(el.vulnBody.querySelectorAll(".vuln--reachable[data-ep]"), function (row) {
+      var epId = row.getAttribute("data-ep");
+      row.addEventListener("click", function () { lightTrace(epId, false); });
+      row.addEventListener("keydown", function (ev) {
+        if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); lightTrace(epId, false); }
+      });
+    });
+  }
+
+  function verdictText(f) {
+    if (f.verdict === "potentially_reachable") {
+      return "Potentially reachable: no resolved path reaches it, but unresolved calls could.";
+    }
+    if (f.verdict === "unreachable") {
+      return "Not reachable from a public entry point (call graph fully resolved).";
+    }
+    return "Not reachable from a public entry point.";
+  }
+
   function renderFilters() {
     el.filters.innerHTML = "";
     kindsPresent().forEach(function (kind) {
@@ -401,9 +594,16 @@
       var node = evt.target;
       if (node.data("kind") === "entrypoint") {
         if (selectedEp === node.id()) resetView(); else lightTrace(node.id(), false);
-      } else {
-        focusNeighborhood(node);
+        return;
       }
+      // A reachable vulnerable dep is the demo payoff: clicking it lights the
+      // path from the public route that reaches it, as an entry point would.
+      var vs = vulnByDep[node.id()];
+      if (vs && vs.reachable && vs.entrypoints.length) {
+        var epId = epIdForLabel(vs.entrypoints[0]);
+        if (epId) { lightTrace(epId, false); return; }
+      }
+      focusNeighborhood(node);
     });
     cy.on("tap", function (evt) { if (evt.target === cy) resetView(); });
 
@@ -420,8 +620,24 @@
     if (n.kind === "dependency") extra = (a.ecosystem || "") + (a.version ? " · " + a.version : "");
     else if (n.kind === "entrypoint") extra = (a.method || "") + " " + (a.path || "");
     else if (a.relpath) extra = a.relpath;
+    // In bundle mode, a vulnerable dependency names its findings in the tooltip.
+    var vuln = "";
+    var vs = vulnByDep[node.id()];
+    if (vs) {
+      var cves = [];
+      vs.findings.forEach(function (f) {
+        (f.cve_ids && f.cve_ids.length ? f.cve_ids : [f.vuln_id]).forEach(function (c) {
+          if (c && cves.indexOf(c) < 0) cves.push(c);
+        });
+      });
+      vuln = (vs.kev ? "KEV · " : "") +
+        vs.findings.length + (vs.findings.length === 1 ? " finding" : " findings") +
+        (vs.reachable ? " · reachable" : "") +
+        (cves.length ? "<br>" + esc(cves.slice(0, 4).join(", ")) : "");
+    }
     el.tooltip.innerHTML = '<b>' + esc(n.name || n.id) + '</b>' +
       (extra ? '<br>' + esc(extra) : '') +
+      (vuln ? '<br><span class="t-vuln">' + vuln + '</span>' : '') +
       '<br><span class="t-id">' + esc(n.id) + '</span>';
     el.tooltip.hidden = false;
     var bb = node.renderedBoundingBox();
@@ -437,16 +653,55 @@
   }
 
   /* ---------------------------------------------------------------- load */
-  function loadGraph(graph, name) {
-    buildModel(graph);
+  // Render the model that buildModel() just populated. Shared by both modes;
+  // the vuln overlay is driven entirely by vulnByDep / bundleMeta, which are
+  // empty in plain-graph mode (so the original viewer is unchanged).
+  function renderAll(name) {
     selectedEp = null;
     visibleKinds = {};
     renderCounts();
     renderEntryPoints();
     renderFilters();
     renderReachInitial();
+    renderVulns();
     renderGraph();
+    document.body.classList.toggle("has-vulns", !!(bundleMeta && findings.length));
     if (name) el.scanname.textContent = name;
+  }
+
+  // A plain {nodes,edges} graph: structure only, overlay cleared.
+  function loadGraph(graph, name) {
+    findings = [];
+    vulnByDep = {};
+    bundleMeta = null;
+    buildModel(graph);
+    renderAll(name);
+  }
+
+  // A self-contained audit bundle {graph, findings, summary, ...}: render the
+  // graph from bundle.graph and overlay the findings.
+  function loadBundle(bundle, name) {
+    findings = Array.isArray(bundle.findings) ? bundle.findings : [];
+    bundleMeta = {
+      summary: bundle.summary || null,
+      offline: !!bundle.offline,
+      network_ok: bundle.network_ok,
+      notices: bundle.notices || []
+    };
+    computeVulnState();
+    buildModel(bundle.graph || {});
+    renderAll(name);
+  }
+
+  // Auto-detect: a bundle carries a `graph` object; a plain scan is {nodes:[...]}.
+  function isBundle(obj) {
+    return !!(obj && obj.graph && Array.isArray(obj.graph.nodes));
+  }
+
+  function loadAuto(obj, name) {
+    if (isBundle(obj)) { loadBundle(obj, name); return; }
+    if (obj && Array.isArray(obj.nodes)) { loadGraph(obj, name); return; }
+    throw new Error("unrecognized file");
   }
 
   el.file.addEventListener("change", function (e) {
@@ -455,11 +710,10 @@
     var reader = new FileReader();
     reader.onload = function () {
       try {
-        var graph = JSON.parse(reader.result);
-        if (!graph || !Array.isArray(graph.nodes)) throw new Error("missing nodes array");
-        loadGraph(graph, f.name);
+        loadAuto(JSON.parse(reader.result), f.name);
       } catch (err) {
-        el.scanname.textContent = "Could not read " + f.name + " — expected a scan JSON with a nodes array.";
+        el.scanname.textContent = "Could not read " + f.name +
+          " — expected a scan graph (nodes array) or an audit bundle.";
       }
     };
     reader.readAsText(f);
@@ -469,9 +723,13 @@
   window.addEventListener("resize", function () { if (cy) cy.resize(); });
 
   /* ---------------------------------------------------------------- boot */
-  if (window.SAMPLE_GRAPH) {
+  // Prefer the vulnerability bundle so the overlay shows on open; fall back to
+  // the plain structural sample, then to an empty prompt.
+  if (window.SAMPLE_BUNDLE && isBundle(window.SAMPLE_BUNDLE)) {
+    loadBundle(window.SAMPLE_BUNDLE, "sample · vulnerable-app · audit");
+  } else if (window.SAMPLE_GRAPH) {
     loadGraph(window.SAMPLE_GRAPH, "sample · vulnerable-app");
   } else {
-    el.reachBody.innerHTML = '<p class="reach-none">No bundled sample found. Use “Load a scan” to open a graph.json.</p>';
+    el.reachBody.innerHTML = '<p class="reach-none">No bundled sample found. Use “Load a scan” to open a graph.json or an audit bundle.</p>';
   }
 })();

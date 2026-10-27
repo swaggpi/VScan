@@ -1,0 +1,2496 @@
+// Bundled copy of sample-bundle.json so the viewer shows the vulnerability
+// overlay on open (file:// cannot fetch local JSON).
+// Regenerate: vulnreach audit samples/vulnerable-app --bundle dashboard/sample-bundle.json,
+// then re-embed as window.SAMPLE_BUNDLE.
+window.SAMPLE_BUNDLE = {
+  "graph": {
+    "version": 1,
+    "nodes": [
+      {
+        "id": "dep:Go:github.com/gin-gonic/gin",
+        "kind": "dependency",
+        "name": "github.com/gin-gonic/gin",
+        "attrs": {
+          "ecosystem": "Go",
+          "version": "v1.6.0",
+          "declared": "v1.6.0",
+          "resolved": false,
+          "source_file": "go.mod"
+        }
+      },
+      {
+        "id": "dep:Go:gopkg.in/yaml.v2",
+        "kind": "dependency",
+        "name": "gopkg.in/yaml.v2",
+        "attrs": {
+          "ecosystem": "Go",
+          "version": "v2.2.2",
+          "declared": "v2.2.2",
+          "resolved": false,
+          "source_file": "go.mod"
+        }
+      },
+      {
+        "id": "dep:Packagist:guzzlehttp/guzzle",
+        "kind": "dependency",
+        "name": "guzzlehttp/guzzle",
+        "attrs": {
+          "ecosystem": "Packagist",
+          "version": "6.3.0",
+          "declared": "6.3.0",
+          "resolved": false,
+          "source_file": "composer.json"
+        }
+      },
+      {
+        "id": "dep:Packagist:monolog/monolog",
+        "kind": "dependency",
+        "name": "monolog/monolog",
+        "attrs": {
+          "ecosystem": "Packagist",
+          "version": "1.23.0",
+          "declared": "1.23.0",
+          "resolved": false,
+          "source_file": "composer.json"
+        }
+      },
+      {
+        "id": "dep:Packagist:phpunit/phpunit",
+        "kind": "dependency",
+        "name": "phpunit/phpunit",
+        "attrs": {
+          "ecosystem": "Packagist",
+          "version": "6.5.0",
+          "declared": "6.5.0",
+          "resolved": false,
+          "source_file": "composer.json"
+        }
+      },
+      {
+        "id": "dep:PyPI:Flask",
+        "kind": "dependency",
+        "name": "Flask",
+        "attrs": {
+          "ecosystem": "PyPI",
+          "version": "0.12.2",
+          "declared": "==0.12.2",
+          "resolved": false,
+          "source_file": "requirements.txt"
+        }
+      },
+      {
+        "id": "dep:PyPI:Jinja2",
+        "kind": "dependency",
+        "name": "Jinja2",
+        "attrs": {
+          "ecosystem": "PyPI",
+          "version": "2.10",
+          "declared": "==2.10",
+          "resolved": false,
+          "source_file": "requirements.txt"
+        }
+      },
+      {
+        "id": "dep:PyPI:PyYAML",
+        "kind": "dependency",
+        "name": "PyYAML",
+        "attrs": {
+          "ecosystem": "PyPI",
+          "version": "3.13",
+          "declared": "==3.13",
+          "resolved": false,
+          "source_file": "requirements.txt"
+        }
+      },
+      {
+        "id": "dep:PyPI:requests",
+        "kind": "dependency",
+        "name": "requests",
+        "attrs": {
+          "ecosystem": "PyPI",
+          "version": ">=2.20.0",
+          "declared": ">=2.20.0",
+          "resolved": false,
+          "source_file": "requirements.txt"
+        }
+      },
+      {
+        "id": "dep:PyPI:urllib3",
+        "kind": "dependency",
+        "name": "urllib3",
+        "attrs": {
+          "ecosystem": "PyPI",
+          "version": "1.24.1",
+          "declared": "==1.24.1",
+          "resolved": false,
+          "source_file": "requirements.txt"
+        }
+      },
+      {
+        "id": "dep:npm:lodash",
+        "kind": "dependency",
+        "name": "lodash",
+        "attrs": {
+          "ecosystem": "npm",
+          "version": "4.17.4",
+          "declared": "^4.17.4",
+          "resolved": true,
+          "source_file": "frontend/package.json"
+        }
+      },
+      {
+        "id": "dep:npm:minimist",
+        "kind": "dependency",
+        "name": "minimist",
+        "attrs": {
+          "ecosystem": "npm",
+          "version": "1.2.0",
+          "declared": "^1.2.0",
+          "resolved": true,
+          "source_file": "frontend/package.json"
+        }
+      },
+      {
+        "id": "doc:README.md",
+        "kind": "doc",
+        "name": "README.md",
+        "attrs": {
+          "relpath": "README.md",
+          "kind_hint": "prose",
+          "excerpt": "# demo app\n\nA small, multi-ecosystem demo target for the vulnreach scanner. It pins old\ndependencies on purpose and keeps a short, resolvable call chain.\n\n## Endpoints\n\nThe `/import` endpoint accepts uploads from any user and passes the body into\n`load_config`, which parses it as YAML. The `/health`"
+        }
+      },
+      {
+        "id": "doc:docs/openapi.yaml",
+        "kind": "doc",
+        "name": "openapi.yaml",
+        "attrs": {
+          "relpath": "docs/openapi.yaml",
+          "kind_hint": "openapi",
+          "excerpt": "openapi: 3.0.0\ninfo:\n  title: Demo API\n  version: 1.0.0\npaths:\n  /import:\n    post:\n      summary: Import configuration from an uploaded body.\n  /health:\n    get:\n      summary: Liveness probe."
+        }
+      },
+      {
+        "id": "ep:GET:/health",
+        "kind": "entrypoint",
+        "name": "GET /health",
+        "attrs": {
+          "method": "GET",
+          "path": "/health",
+          "framework": "flask",
+          "handler": "health",
+          "handler_file": "app.py"
+        }
+      },
+      {
+        "id": "ep:POST:/import",
+        "kind": "entrypoint",
+        "name": "POST /import",
+        "attrs": {
+          "method": "POST",
+          "path": "/import",
+          "framework": "flask",
+          "handler": "import_data",
+          "handler_file": "app.py"
+        }
+      },
+      {
+        "id": "file:README.md",
+        "kind": "file",
+        "name": "README.md",
+        "attrs": {
+          "relpath": "README.md",
+          "language": "markdown",
+          "role": "doc",
+          "size": 338
+        }
+      },
+      {
+        "id": "file:app.py",
+        "kind": "file",
+        "name": "app.py",
+        "attrs": {
+          "relpath": "app.py",
+          "language": "python",
+          "role": "source",
+          "size": 794
+        }
+      },
+      {
+        "id": "file:composer.json",
+        "kind": "file",
+        "name": "composer.json",
+        "attrs": {
+          "relpath": "composer.json",
+          "language": "json",
+          "role": "manifest",
+          "size": 251
+        }
+      },
+      {
+        "id": "file:docs/openapi.yaml",
+        "kind": "file",
+        "name": "openapi.yaml",
+        "attrs": {
+          "relpath": "docs/openapi.yaml",
+          "language": "yaml",
+          "role": "doc",
+          "size": 194
+        }
+      },
+      {
+        "id": "file:frontend/package-lock.json",
+        "kind": "file",
+        "name": "package-lock.json",
+        "attrs": {
+          "relpath": "frontend/package-lock.json",
+          "language": "json",
+          "role": "lockfile",
+          "size": 565
+        }
+      },
+      {
+        "id": "file:frontend/package.json",
+        "kind": "file",
+        "name": "package.json",
+        "attrs": {
+          "relpath": "frontend/package.json",
+          "language": "json",
+          "role": "manifest",
+          "size": 173
+        }
+      },
+      {
+        "id": "file:go.mod",
+        "kind": "file",
+        "name": "go.mod",
+        "attrs": {
+          "relpath": "go.mod",
+          "language": "unknown",
+          "role": "manifest",
+          "size": 104
+        }
+      },
+      {
+        "id": "file:requirements-extra.txt",
+        "kind": "file",
+        "name": "requirements-extra.txt",
+        "attrs": {
+          "relpath": "requirements-extra.txt",
+          "language": "text",
+          "role": "manifest",
+          "size": 99
+        }
+      },
+      {
+        "id": "file:requirements.txt",
+        "kind": "file",
+        "name": "requirements.txt",
+        "attrs": {
+          "relpath": "requirements.txt",
+          "language": "text",
+          "role": "manifest",
+          "size": 267
+        }
+      },
+      {
+        "id": "file:utils/__init__.py",
+        "kind": "file",
+        "name": "__init__.py",
+        "attrs": {
+          "relpath": "utils/__init__.py",
+          "language": "python",
+          "role": "source",
+          "size": 48
+        }
+      },
+      {
+        "id": "file:utils/config_loader.py",
+        "kind": "file",
+        "name": "config_loader.py",
+        "attrs": {
+          "relpath": "utils/config_loader.py",
+          "language": "python",
+          "role": "source",
+          "size": 313
+        }
+      },
+      {
+        "id": "fn:app.py:health",
+        "kind": "function",
+        "name": "health",
+        "attrs": {
+          "relpath": "app.py",
+          "module": "app",
+          "lineno": 24,
+          "is_method": false
+        }
+      },
+      {
+        "id": "fn:app.py:import_data",
+        "kind": "function",
+        "name": "import_data",
+        "attrs": {
+          "relpath": "app.py",
+          "module": "app",
+          "lineno": 16,
+          "is_method": false
+        }
+      },
+      {
+        "id": "fn:utils/config_loader.py:load_config",
+        "kind": "function",
+        "name": "load_config",
+        "attrs": {
+          "relpath": "utils/config_loader.py",
+          "module": "utils.config_loader",
+          "lineno": 6,
+          "is_method": false
+        }
+      },
+      {
+        "id": "mod:app",
+        "kind": "module",
+        "name": "app",
+        "attrs": {
+          "relpath": "app.py",
+          "docstring": "Demo application: a tiny Flask service used to exercise the scanner.\n\nIt exposes a public upload endpoint that flows user input into a configuration\nloader, plus a health check. There is nothing malic",
+          "unresolved_calls": [
+            "app.run"
+          ],
+          "unresolved_call_count": 1
+        }
+      },
+      {
+        "id": "mod:utils",
+        "kind": "module",
+        "name": "utils",
+        "attrs": {
+          "relpath": "utils/__init__.py",
+          "docstring": "Utility helpers for the demo application."
+        }
+      },
+      {
+        "id": "mod:utils.config_loader",
+        "kind": "module",
+        "name": "utils.config_loader",
+        "attrs": {
+          "relpath": "utils/config_loader.py",
+          "docstring": "Configuration loading helpers."
+        }
+      }
+    ],
+    "edges": [
+      {
+        "src": "fn:app.py:health",
+        "dst": "dep:PyPI:Flask",
+        "kind": "calls",
+        "attrs": {
+          "symbol": "flask.jsonify"
+        }
+      },
+      {
+        "src": "fn:app.py:import_data",
+        "dst": "dep:PyPI:Flask",
+        "kind": "calls",
+        "attrs": {
+          "symbol": "flask.jsonify"
+        }
+      },
+      {
+        "src": "fn:app.py:import_data",
+        "dst": "dep:PyPI:Flask",
+        "kind": "calls",
+        "attrs": {
+          "symbol": "flask.request.get_data"
+        }
+      },
+      {
+        "src": "fn:app.py:import_data",
+        "dst": "fn:utils/config_loader.py:load_config",
+        "kind": "calls",
+        "attrs": {}
+      },
+      {
+        "src": "fn:utils/config_loader.py:load_config",
+        "dst": "dep:PyPI:PyYAML",
+        "kind": "calls",
+        "attrs": {
+          "symbol": "yaml.load"
+        }
+      },
+      {
+        "src": "mod:app",
+        "dst": "dep:PyPI:Flask",
+        "kind": "calls",
+        "attrs": {
+          "symbol": "flask.Flask"
+        }
+      },
+      {
+        "src": "file:app.py",
+        "dst": "mod:app",
+        "kind": "contains",
+        "attrs": {}
+      },
+      {
+        "src": "file:utils/__init__.py",
+        "dst": "mod:utils",
+        "kind": "contains",
+        "attrs": {}
+      },
+      {
+        "src": "file:utils/config_loader.py",
+        "dst": "mod:utils.config_loader",
+        "kind": "contains",
+        "attrs": {}
+      },
+      {
+        "src": "file:composer.json",
+        "dst": "dep:Packagist:guzzlehttp/guzzle",
+        "kind": "declares",
+        "attrs": {}
+      },
+      {
+        "src": "file:composer.json",
+        "dst": "dep:Packagist:monolog/monolog",
+        "kind": "declares",
+        "attrs": {}
+      },
+      {
+        "src": "file:composer.json",
+        "dst": "dep:Packagist:phpunit/phpunit",
+        "kind": "declares",
+        "attrs": {}
+      },
+      {
+        "src": "file:frontend/package.json",
+        "dst": "dep:npm:lodash",
+        "kind": "declares",
+        "attrs": {}
+      },
+      {
+        "src": "file:frontend/package.json",
+        "dst": "dep:npm:minimist",
+        "kind": "declares",
+        "attrs": {}
+      },
+      {
+        "src": "file:go.mod",
+        "dst": "dep:Go:github.com/gin-gonic/gin",
+        "kind": "declares",
+        "attrs": {}
+      },
+      {
+        "src": "file:go.mod",
+        "dst": "dep:Go:gopkg.in/yaml.v2",
+        "kind": "declares",
+        "attrs": {}
+      },
+      {
+        "src": "file:requirements-extra.txt",
+        "dst": "dep:PyPI:urllib3",
+        "kind": "declares",
+        "attrs": {}
+      },
+      {
+        "src": "file:requirements.txt",
+        "dst": "dep:PyPI:Flask",
+        "kind": "declares",
+        "attrs": {}
+      },
+      {
+        "src": "file:requirements.txt",
+        "dst": "dep:PyPI:Jinja2",
+        "kind": "declares",
+        "attrs": {}
+      },
+      {
+        "src": "file:requirements.txt",
+        "dst": "dep:PyPI:PyYAML",
+        "kind": "declares",
+        "attrs": {}
+      },
+      {
+        "src": "file:requirements.txt",
+        "dst": "dep:PyPI:requests",
+        "kind": "declares",
+        "attrs": {}
+      },
+      {
+        "src": "file:requirements.txt",
+        "dst": "dep:PyPI:urllib3",
+        "kind": "declares",
+        "attrs": {}
+      },
+      {
+        "src": "mod:app",
+        "dst": "fn:app.py:health",
+        "kind": "declares",
+        "attrs": {}
+      },
+      {
+        "src": "mod:app",
+        "dst": "fn:app.py:import_data",
+        "kind": "declares",
+        "attrs": {}
+      },
+      {
+        "src": "mod:utils.config_loader",
+        "dst": "fn:utils/config_loader.py:load_config",
+        "kind": "declares",
+        "attrs": {}
+      },
+      {
+        "src": "doc:README.md",
+        "dst": "ep:GET:/health",
+        "kind": "documents",
+        "attrs": {
+          "matched": "/health",
+          "snippet": "_config`, which parses it as YAML. The `/health` endpoint is a simple liveness probe."
+        }
+      },
+      {
+        "src": "doc:README.md",
+        "dst": "ep:POST:/import",
+        "kind": "documents",
+        "attrs": {
+          "matched": "/import",
+          "snippet": "olvable call chain. ## Endpoints The `/import` endpoint accepts uploads from any user"
+        }
+      },
+      {
+        "src": "doc:README.md",
+        "dst": "fn:utils/config_loader.py:load_config",
+        "kind": "documents",
+        "attrs": {
+          "matched": "load_config",
+          "snippet": "from any user and passes the body into `load_config`, which parses it as YAML. The `/healt"
+        }
+      },
+      {
+        "src": "doc:docs/openapi.yaml",
+        "dst": "ep:GET:/health",
+        "kind": "documents",
+        "attrs": {
+          "matched": "/health",
+          "snippet": "configuration from an uploaded body. /health: get: summary: Liveness probe"
+        }
+      },
+      {
+        "src": "doc:docs/openapi.yaml",
+        "dst": "ep:POST:/import",
+        "kind": "documents",
+        "attrs": {
+          "matched": "/import",
+          "snippet": "tle: Demo API version: 1.0.0 paths: /import: post: summary: Import config"
+        }
+      },
+      {
+        "src": "mod:app",
+        "dst": "dep:PyPI:Flask",
+        "kind": "imports",
+        "attrs": {}
+      },
+      {
+        "src": "mod:app",
+        "dst": "mod:utils.config_loader",
+        "kind": "imports",
+        "attrs": {}
+      },
+      {
+        "src": "mod:utils.config_loader",
+        "dst": "dep:PyPI:PyYAML",
+        "kind": "imports",
+        "attrs": {}
+      },
+      {
+        "src": "ep:GET:/health",
+        "dst": "fn:app.py:health",
+        "kind": "route_to_handler",
+        "attrs": {}
+      },
+      {
+        "src": "ep:POST:/import",
+        "dst": "fn:app.py:import_data",
+        "kind": "route_to_handler",
+        "attrs": {}
+      }
+    ],
+    "summary": {
+      "node_counts": {
+        "dependency": 12,
+        "doc": 2,
+        "entrypoint": 2,
+        "file": 11,
+        "function": 3,
+        "module": 3
+      },
+      "edge_counts": {
+        "calls": 6,
+        "contains": 3,
+        "declares": 16,
+        "documents": 5,
+        "imports": 3,
+        "route_to_handler": 2
+      },
+      "dependencies": [
+        {
+          "name": "github.com/gin-gonic/gin",
+          "ecosystem": "Go",
+          "version": "v1.6.0",
+          "resolved": false,
+          "source_file": "go.mod"
+        },
+        {
+          "name": "gopkg.in/yaml.v2",
+          "ecosystem": "Go",
+          "version": "v2.2.2",
+          "resolved": false,
+          "source_file": "go.mod"
+        },
+        {
+          "name": "guzzlehttp/guzzle",
+          "ecosystem": "Packagist",
+          "version": "6.3.0",
+          "resolved": false,
+          "source_file": "composer.json"
+        },
+        {
+          "name": "monolog/monolog",
+          "ecosystem": "Packagist",
+          "version": "1.23.0",
+          "resolved": false,
+          "source_file": "composer.json"
+        },
+        {
+          "name": "phpunit/phpunit",
+          "ecosystem": "Packagist",
+          "version": "6.5.0",
+          "resolved": false,
+          "source_file": "composer.json"
+        },
+        {
+          "name": "Flask",
+          "ecosystem": "PyPI",
+          "version": "0.12.2",
+          "resolved": false,
+          "source_file": "requirements.txt"
+        },
+        {
+          "name": "Jinja2",
+          "ecosystem": "PyPI",
+          "version": "2.10",
+          "resolved": false,
+          "source_file": "requirements.txt"
+        },
+        {
+          "name": "PyYAML",
+          "ecosystem": "PyPI",
+          "version": "3.13",
+          "resolved": false,
+          "source_file": "requirements.txt"
+        },
+        {
+          "name": "requests",
+          "ecosystem": "PyPI",
+          "version": ">=2.20.0",
+          "resolved": false,
+          "source_file": "requirements.txt"
+        },
+        {
+          "name": "urllib3",
+          "ecosystem": "PyPI",
+          "version": "1.24.1",
+          "resolved": false,
+          "source_file": "requirements.txt"
+        },
+        {
+          "name": "lodash",
+          "ecosystem": "npm",
+          "version": "4.17.4",
+          "resolved": true,
+          "source_file": "frontend/package.json"
+        },
+        {
+          "name": "minimist",
+          "ecosystem": "npm",
+          "version": "1.2.0",
+          "resolved": true,
+          "source_file": "frontend/package.json"
+        }
+      ]
+    }
+  },
+  "reachability": {
+    "entrypoints": [
+      {
+        "id": "ep:GET:/health",
+        "method": "GET",
+        "path": "/health",
+        "handlers": [
+          "fn:app.py:health"
+        ],
+        "reachable_function_count": 1,
+        "reachable_dependencies": [
+          {
+            "id": "dep:PyPI:Flask",
+            "name": "Flask",
+            "version": "0.12.2",
+            "ecosystem": "PyPI",
+            "symbol": "flask.jsonify",
+            "symbols": [
+              "flask.jsonify"
+            ],
+            "example_path": [
+              "ep:GET:/health",
+              "fn:app.py:health",
+              "dep:PyPI:Flask"
+            ],
+            "verdict": "reachable"
+          }
+        ],
+        "unresolved_calls_encountered": 0,
+        "fully_resolved": true,
+        "verdict_by_dep": {
+          "dep:Go:github.com/gin-gonic/gin": "unreachable",
+          "dep:PyPI:Flask": "reachable",
+          "dep:Packagist:guzzlehttp/guzzle": "unreachable",
+          "dep:PyPI:urllib3": "unreachable",
+          "dep:npm:lodash": "unreachable",
+          "dep:PyPI:requests": "unreachable",
+          "dep:PyPI:PyYAML": "unreachable",
+          "dep:Packagist:monolog/monolog": "unreachable",
+          "dep:npm:minimist": "unreachable",
+          "dep:PyPI:Jinja2": "unreachable",
+          "dep:Go:gopkg.in/yaml.v2": "unreachable",
+          "dep:Packagist:phpunit/phpunit": "unreachable"
+        }
+      },
+      {
+        "id": "ep:POST:/import",
+        "method": "POST",
+        "path": "/import",
+        "handlers": [
+          "fn:app.py:import_data"
+        ],
+        "reachable_function_count": 2,
+        "reachable_dependencies": [
+          {
+            "id": "dep:PyPI:Flask",
+            "name": "Flask",
+            "version": "0.12.2",
+            "ecosystem": "PyPI",
+            "symbol": "flask.jsonify",
+            "symbols": [
+              "flask.jsonify",
+              "flask.request.get_data"
+            ],
+            "example_path": [
+              "ep:POST:/import",
+              "fn:app.py:import_data",
+              "dep:PyPI:Flask"
+            ],
+            "verdict": "reachable"
+          },
+          {
+            "id": "dep:PyPI:PyYAML",
+            "name": "PyYAML",
+            "version": "3.13",
+            "ecosystem": "PyPI",
+            "symbol": "yaml.load",
+            "symbols": [
+              "yaml.load"
+            ],
+            "example_path": [
+              "ep:POST:/import",
+              "fn:app.py:import_data",
+              "fn:utils/config_loader.py:load_config",
+              "dep:PyPI:PyYAML"
+            ],
+            "verdict": "reachable"
+          }
+        ],
+        "unresolved_calls_encountered": 0,
+        "fully_resolved": true,
+        "verdict_by_dep": {
+          "dep:Go:github.com/gin-gonic/gin": "unreachable",
+          "dep:PyPI:Flask": "reachable",
+          "dep:Packagist:guzzlehttp/guzzle": "unreachable",
+          "dep:PyPI:urllib3": "unreachable",
+          "dep:npm:lodash": "unreachable",
+          "dep:PyPI:requests": "unreachable",
+          "dep:PyPI:PyYAML": "reachable",
+          "dep:Packagist:monolog/monolog": "unreachable",
+          "dep:npm:minimist": "unreachable",
+          "dep:PyPI:Jinja2": "unreachable",
+          "dep:Go:gopkg.in/yaml.v2": "unreachable",
+          "dep:Packagist:phpunit/phpunit": "unreachable"
+        }
+      }
+    ],
+    "repo": {
+      "reachable_deps": [
+        {
+          "id": "dep:PyPI:Flask",
+          "name": "Flask",
+          "version": "0.12.2",
+          "ecosystem": "PyPI"
+        },
+        {
+          "id": "dep:PyPI:PyYAML",
+          "name": "PyYAML",
+          "version": "3.13",
+          "ecosystem": "PyPI"
+        }
+      ],
+      "unreachable_deps": [
+        {
+          "id": "dep:Go:github.com/gin-gonic/gin",
+          "name": "github.com/gin-gonic/gin",
+          "version": "v1.6.0",
+          "ecosystem": "Go"
+        },
+        {
+          "id": "dep:Go:gopkg.in/yaml.v2",
+          "name": "gopkg.in/yaml.v2",
+          "version": "v2.2.2",
+          "ecosystem": "Go"
+        },
+        {
+          "id": "dep:Packagist:guzzlehttp/guzzle",
+          "name": "guzzlehttp/guzzle",
+          "version": "6.3.0",
+          "ecosystem": "Packagist"
+        },
+        {
+          "id": "dep:Packagist:monolog/monolog",
+          "name": "monolog/monolog",
+          "version": "1.23.0",
+          "ecosystem": "Packagist"
+        },
+        {
+          "id": "dep:Packagist:phpunit/phpunit",
+          "name": "phpunit/phpunit",
+          "version": "6.5.0",
+          "ecosystem": "Packagist"
+        },
+        {
+          "id": "dep:PyPI:Jinja2",
+          "name": "Jinja2",
+          "version": "2.10",
+          "ecosystem": "PyPI"
+        },
+        {
+          "id": "dep:PyPI:requests",
+          "name": "requests",
+          "version": ">=2.20.0",
+          "ecosystem": "PyPI"
+        },
+        {
+          "id": "dep:PyPI:urllib3",
+          "name": "urllib3",
+          "version": "1.24.1",
+          "ecosystem": "PyPI"
+        },
+        {
+          "id": "dep:npm:lodash",
+          "name": "lodash",
+          "version": "4.17.4",
+          "ecosystem": "npm"
+        },
+        {
+          "id": "dep:npm:minimist",
+          "name": "minimist",
+          "version": "1.2.0",
+          "ecosystem": "npm"
+        }
+      ],
+      "deps_without_call_site": [
+        {
+          "id": "dep:Go:github.com/gin-gonic/gin",
+          "name": "github.com/gin-gonic/gin",
+          "version": "v1.6.0",
+          "ecosystem": "Go"
+        },
+        {
+          "id": "dep:Go:gopkg.in/yaml.v2",
+          "name": "gopkg.in/yaml.v2",
+          "version": "v2.2.2",
+          "ecosystem": "Go"
+        },
+        {
+          "id": "dep:Packagist:guzzlehttp/guzzle",
+          "name": "guzzlehttp/guzzle",
+          "version": "6.3.0",
+          "ecosystem": "Packagist"
+        },
+        {
+          "id": "dep:Packagist:monolog/monolog",
+          "name": "monolog/monolog",
+          "version": "1.23.0",
+          "ecosystem": "Packagist"
+        },
+        {
+          "id": "dep:Packagist:phpunit/phpunit",
+          "name": "phpunit/phpunit",
+          "version": "6.5.0",
+          "ecosystem": "Packagist"
+        },
+        {
+          "id": "dep:PyPI:Jinja2",
+          "name": "Jinja2",
+          "version": "2.10",
+          "ecosystem": "PyPI"
+        },
+        {
+          "id": "dep:PyPI:requests",
+          "name": "requests",
+          "version": ">=2.20.0",
+          "ecosystem": "PyPI"
+        },
+        {
+          "id": "dep:PyPI:urllib3",
+          "name": "urllib3",
+          "version": "1.24.1",
+          "ecosystem": "PyPI"
+        },
+        {
+          "id": "dep:npm:lodash",
+          "name": "lodash",
+          "version": "4.17.4",
+          "ecosystem": "npm"
+        },
+        {
+          "id": "dep:npm:minimist",
+          "name": "minimist",
+          "version": "1.2.0",
+          "ecosystem": "npm"
+        }
+      ],
+      "reachable_region_fully_resolved": true,
+      "verdict_by_dep": {
+        "dep:Go:github.com/gin-gonic/gin": "unreachable",
+        "dep:PyPI:Flask": "reachable",
+        "dep:Packagist:guzzlehttp/guzzle": "unreachable",
+        "dep:PyPI:urllib3": "unreachable",
+        "dep:npm:lodash": "unreachable",
+        "dep:PyPI:requests": "unreachable",
+        "dep:PyPI:PyYAML": "reachable",
+        "dep:Packagist:monolog/monolog": "unreachable",
+        "dep:npm:minimist": "unreachable",
+        "dep:PyPI:Jinja2": "unreachable",
+        "dep:Go:gopkg.in/yaml.v2": "unreachable",
+        "dep:Packagist:phpunit/phpunit": "unreachable"
+      },
+      "verdict_counts": {
+        "reachable": 2,
+        "potentially_reachable": 0,
+        "unreachable": 10
+      },
+      "has_entrypoints": true,
+      "entrypoints_without_handler": 0,
+      "nodes_with_unresolved_routes": 0,
+      "unresolved_calls": 0
+    }
+  },
+  "findings": [
+    {
+      "dependency_id": "dep:npm:lodash",
+      "dependency_name": "lodash",
+      "version": "4.17.4",
+      "ecosystem": "npm",
+      "vuln_id": "GHSA-35jh-r3h4-6jhm",
+      "cve_ids": [
+        "CVE-2021-23337"
+      ],
+      "summary": "Command Injection in lodash",
+      "fixed_versions": [
+        "4.17.21"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:H/UI:N/S:U/C:H/I:H/A:H",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.21333,
+      "epss_percentile": 0.97583,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:npm:lodash",
+      "dependency_name": "lodash",
+      "version": "4.17.4",
+      "ecosystem": "npm",
+      "vuln_id": "GHSA-29mw-wpgm-hmr9",
+      "cve_ids": [
+        "CVE-2020-28500"
+      ],
+      "summary": "Regular Expression Denial of Service (ReDoS) in lodash",
+      "fixed_versions": [
+        "4.17.21"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.07336,
+      "epss_percentile": 0.94352,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:PyYAML",
+      "dependency_name": "PyYAML",
+      "version": "3.13",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-8q59-q68h-6hv4",
+      "cve_ids": [
+        "CVE-2020-14343"
+      ],
+      "summary": "Improper Input Validation in PyYAML",
+      "fixed_versions": [
+        "5.4"
+      ],
+      "severity": "CRITICAL",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.05984,
+      "epss_percentile": 0.93257,
+      "reachable": true,
+      "reachable_entrypoints": [
+        "POST /import"
+      ],
+      "example_path": [
+        "ep:POST:/import",
+        "fn:app.py:import_data",
+        "fn:utils/config_loader.py:load_config",
+        "dep:PyPI:PyYAML"
+      ],
+      "verdict": "reachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:PyYAML",
+      "dependency_name": "PyYAML",
+      "version": "3.13",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-rprw-h62v-c2w7",
+      "cve_ids": [
+        "CVE-2017-18342"
+      ],
+      "summary": "PyYAML insecurely deserializes YAML strings leading to arbitrary code execution",
+      "fixed_versions": [
+        "5.1"
+      ],
+      "severity": "CRITICAL",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.05656,
+      "epss_percentile": 0.92916,
+      "reachable": true,
+      "reachable_entrypoints": [
+        "POST /import"
+      ],
+      "example_path": [
+        "ep:POST:/import",
+        "fn:app.py:import_data",
+        "fn:utils/config_loader.py:load_config",
+        "dep:PyPI:PyYAML"
+      ],
+      "verdict": "reachable"
+    },
+    {
+      "dependency_id": "dep:npm:lodash",
+      "dependency_name": "lodash",
+      "version": "4.17.4",
+      "ecosystem": "npm",
+      "vuln_id": "GHSA-p6mc-m468-83gw",
+      "cve_ids": [
+        "CVE-2020-8203"
+      ],
+      "summary": "Prototype Pollution in lodash",
+      "fixed_versions": [
+        "4.17.19"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:N/I:H/A:H",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.05213,
+      "epss_percentile": 0.92445,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:npm:lodash",
+      "dependency_name": "lodash",
+      "version": "4.17.4",
+      "ecosystem": "npm",
+      "vuln_id": "GHSA-jf85-cpcp-j695",
+      "cve_ids": [
+        "CVE-2019-10744"
+      ],
+      "summary": "Prototype Pollution in lodash",
+      "fixed_versions": [
+        "4.17.12"
+      ],
+      "severity": "CRITICAL",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:H/A:H",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.05006,
+      "epss_percentile": 0.92181,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:npm:minimist",
+      "dependency_name": "minimist",
+      "version": "1.2.0",
+      "ecosystem": "npm",
+      "vuln_id": "GHSA-xvch-5gv4-984h",
+      "cve_ids": [
+        "CVE-2021-44906"
+      ],
+      "summary": "Prototype Pollution in minimist",
+      "fixed_versions": [
+        "1.2.6",
+        "0.2.4"
+      ],
+      "severity": "CRITICAL",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.04581,
+      "epss_percentile": 0.9157,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Flask",
+      "dependency_name": "Flask",
+      "version": "0.12.2",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-562c-5r94-xh97",
+      "cve_ids": [
+        "CVE-2018-1000656"
+      ],
+      "summary": "Flask is vulnerable to Denial of Service via incorrect encoding of JSON data",
+      "fixed_versions": [
+        "0.12.3"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.03855,
+      "epss_percentile": 0.90084,
+      "reachable": true,
+      "reachable_entrypoints": [
+        "GET /health",
+        "POST /import"
+      ],
+      "example_path": [
+        "ep:GET:/health",
+        "fn:app.py:health",
+        "dep:PyPI:Flask"
+      ],
+      "verdict": "reachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Jinja2",
+      "dependency_name": "Jinja2",
+      "version": "2.10",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-g3rq-g295-4j3m",
+      "cve_ids": [
+        "CVE-2020-28493"
+      ],
+      "summary": "Regular Expression Denial of Service (ReDoS) in Jinja2",
+      "fixed_versions": [
+        "2.11.3"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:L/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.03546,
+      "epss_percentile": 0.89219,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Jinja2",
+      "dependency_name": "Jinja2",
+      "version": "2.10",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-462w-v97r-4m45",
+      "cve_ids": [
+        "CVE-2019-10906"
+      ],
+      "summary": "Jinja2 sandbox escape via string formatting",
+      "fixed_versions": [
+        "2.10.1"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:N/SC:H/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.03534,
+      "epss_percentile": 0.89183,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:Go:gopkg.in/yaml.v2",
+      "dependency_name": "gopkg.in/yaml.v2",
+      "version": "v2.2.2",
+      "ecosystem": "Go",
+      "vuln_id": "GHSA-wxc4-f4m6-wwqv",
+      "cve_ids": [
+        "CVE-2019-11254"
+      ],
+      "summary": "Excessive Platform Resource Consumption within a Loop in Kubernetes",
+      "fixed_versions": [
+        "2.2.8"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:N/I:N/A:H",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.03157,
+      "epss_percentile": 0.87885,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:npm:lodash",
+      "dependency_name": "lodash",
+      "version": "4.17.4",
+      "ecosystem": "npm",
+      "vuln_id": "GHSA-x5rq-j2xg-h7qm",
+      "cve_ids": [
+        "CVE-2019-1010266"
+      ],
+      "summary": "Regular Expression Denial of Service (ReDoS) in lodash",
+      "fixed_versions": [
+        "4.17.11"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:N/I:N/A:H",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.03038,
+      "epss_percentile": 0.87419,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:urllib3",
+      "dependency_name": "urllib3",
+      "version": "1.24.1",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-38jv-5279-wg99",
+      "cve_ids": [
+        "CVE-2026-21441"
+      ],
+      "summary": "Decompression-bomb safeguards bypassed when following HTTP redirects (streaming API)",
+      "fixed_versions": [
+        "2.6.3"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:P/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:H",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.02922,
+      "epss_percentile": 0.86947,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:urllib3",
+      "dependency_name": "urllib3",
+      "version": "1.24.1",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-mh33-7rrq-662w",
+      "cve_ids": [
+        "CVE-2019-11324"
+      ],
+      "summary": "Improper Certificate Validation in urllib3",
+      "fixed_versions": [
+        "1.24.2"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:H/VA:N/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.02915,
+      "epss_percentile": 0.86914,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:npm:lodash",
+      "dependency_name": "lodash",
+      "version": "4.17.4",
+      "ecosystem": "npm",
+      "vuln_id": "GHSA-r5fr-rjxr-66jc",
+      "cve_ids": [
+        "CVE-2026-4800"
+      ],
+      "summary": "lodash vulnerable to Code Injection via `_.template` imports key names",
+      "fixed_versions": [
+        "4.18.0"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.02759,
+      "epss_percentile": 0.86165,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:npm:lodash",
+      "dependency_name": "lodash",
+      "version": "4.17.4",
+      "ecosystem": "npm",
+      "vuln_id": "GHSA-fvqr-27wr-82fm",
+      "cve_ids": [
+        "CVE-2018-3721"
+      ],
+      "summary": "Prototype Pollution in lodash",
+      "fixed_versions": [
+        "4.17.5"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:N/I:H/A:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.02347,
+      "epss_percentile": 0.83553,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:urllib3",
+      "dependency_name": "urllib3",
+      "version": "1.24.1",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-wqvq-5m8c-6g24",
+      "cve_ids": [
+        "CVE-2020-26137"
+      ],
+      "summary": "CRLF injection in urllib3",
+      "fixed_versions": [
+        "1.25.9"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:L/VI:L/VA:N/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.02269,
+      "epss_percentile": 0.82927,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:urllib3",
+      "dependency_name": "urllib3",
+      "version": "1.24.1",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-r64q-w8jr-g9qp",
+      "cve_ids": [
+        "CVE-2019-11236"
+      ],
+      "summary": "Improper Neutralization of CRLF Sequences in urllib3 library for Python",
+      "fixed_versions": [
+        "1.24.3"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:P/VC:N/VI:N/VA:N/SC:L/SI:L/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.02073,
+      "epss_percentile": 0.81324,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:Packagist:guzzlehttp/guzzle",
+      "dependency_name": "guzzlehttp/guzzle",
+      "version": "6.3.0",
+      "ecosystem": "Packagist",
+      "vuln_id": "GHSA-f2wf-25xc-69c9",
+      "cve_ids": [
+        "CVE-2022-31042",
+        "CVE-2022-31043"
+      ],
+      "summary": "Failure to strip the Cookie header on change in host or HTTP downgrade",
+      "fixed_versions": [
+        "6.5.7",
+        "7.4.4"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.01961,
+      "epss_percentile": 0.80182,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:npm:minimist",
+      "dependency_name": "minimist",
+      "version": "1.2.0",
+      "ecosystem": "npm",
+      "vuln_id": "GHSA-vh95-rmgr-6w4m",
+      "cve_ids": [
+        "CVE-2020-7598"
+      ],
+      "summary": "Prototype Pollution in minimist",
+      "fixed_versions": [
+        "0.2.1",
+        "1.2.3"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:L/A:L",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.01931,
+      "epss_percentile": 0.79876,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:Packagist:guzzlehttp/guzzle",
+      "dependency_name": "guzzlehttp/guzzle",
+      "version": "6.3.0",
+      "ecosystem": "Packagist",
+      "vuln_id": "GHSA-25mq-v84q-4j7r",
+      "cve_ids": [
+        "CVE-2022-31090"
+      ],
+      "summary": "CURLOPT_HTTPAUTH option not cleared on change of origin",
+      "fixed_versions": [
+        "6.5.8",
+        "7.4.5"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:C/C:H/I:N/A:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.01916,
+      "epss_percentile": 0.79711,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Flask",
+      "dependency_name": "Flask",
+      "version": "0.12.2",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-5wv5-4vpf-pj6m",
+      "cve_ids": [
+        "CVE-2019-1010083"
+      ],
+      "summary": "Pallets Project Flask is vulnerable to Denial of Service via Unexpected memory usage",
+      "fixed_versions": [
+        "1.0"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.01832,
+      "epss_percentile": 0.78749,
+      "reachable": true,
+      "reachable_entrypoints": [
+        "GET /health",
+        "POST /import"
+      ],
+      "example_path": [
+        "ep:GET:/health",
+        "fn:app.py:health",
+        "dep:PyPI:Flask"
+      ],
+      "verdict": "reachable"
+    },
+    {
+      "dependency_id": "dep:npm:lodash",
+      "dependency_name": "lodash",
+      "version": "4.17.4",
+      "ecosystem": "npm",
+      "vuln_id": "GHSA-xxjr-mmjv-4gpg",
+      "cve_ids": [
+        "CVE-2025-13465"
+      ],
+      "summary": "Lodash has Prototype Pollution Vulnerability in `_.unset` and `_.omit` functions",
+      "fixed_versions": [
+        "4.17.23"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:L/VA:L/SC:H/SI:H/SA:H/E:P",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.01823,
+      "epss_percentile": 0.78632,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:Go:gopkg.in/yaml.v2",
+      "dependency_name": "gopkg.in/yaml.v2",
+      "version": "v2.2.2",
+      "ecosystem": "Go",
+      "vuln_id": "GHSA-6q6q-88xp-6f2r",
+      "cve_ids": [
+        "CVE-2022-3064"
+      ],
+      "summary": "yaml package for Go can consume excessive amounts of CPU or memory",
+      "fixed_versions": [
+        "2.2.4"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.01778,
+      "epss_percentile": 0.78084,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:Packagist:guzzlehttp/guzzle",
+      "dependency_name": "guzzlehttp/guzzle",
+      "version": "6.3.0",
+      "ecosystem": "Packagist",
+      "vuln_id": "GHSA-q559-8m2m-g699",
+      "cve_ids": [
+        "CVE-2022-31091"
+      ],
+      "summary": "Change in port should be considered a change in origin",
+      "fixed_versions": [
+        "6.5.8",
+        "7.4.5"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:C/C:H/I:N/A:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.01565,
+      "epss_percentile": 0.75125,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:npm:lodash",
+      "dependency_name": "lodash",
+      "version": "4.17.4",
+      "ecosystem": "npm",
+      "vuln_id": "GHSA-4xc9-xhrj-v574",
+      "cve_ids": [
+        "CVE-2018-16487"
+      ],
+      "summary": "Prototype Pollution in lodash",
+      "fixed_versions": [
+        "4.17.11"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": null,
+      "cvss_source": null,
+      "kev": false,
+      "epss": 0.01491,
+      "epss_percentile": 0.73944,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:Packagist:guzzlehttp/guzzle",
+      "dependency_name": "guzzlehttp/guzzle",
+      "version": "6.3.0",
+      "ecosystem": "Packagist",
+      "vuln_id": "GHSA-cwmx-hcrq-mhc3",
+      "cve_ids": [
+        "CVE-2022-29248"
+      ],
+      "summary": "Cross-domain cookie leakage in Guzzle",
+      "fixed_versions": [
+        "6.5.6",
+        "7.4.3"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:C/C:H/I:H/A:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.01362,
+      "epss_percentile": 0.71569,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:urllib3",
+      "dependency_name": "urllib3",
+      "version": "1.24.1",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-v845-jxx5-vc9f",
+      "cve_ids": [
+        "CVE-2023-43804"
+      ],
+      "summary": "`Cookie` HTTP header isn't stripped on cross-origin redirects",
+      "fixed_versions": [
+        "2.0.6",
+        "1.26.17"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:P/PR:H/UI:N/VC:H/VI:H/VA:N/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.0136,
+      "epss_percentile": 0.71542,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:Go:github.com/gin-gonic/gin",
+      "dependency_name": "github.com/gin-gonic/gin",
+      "version": "v1.6.0",
+      "ecosystem": "Go",
+      "vuln_id": "GHSA-h395-qcrw-5vmq",
+      "cve_ids": [
+        "CVE-2020-28483"
+      ],
+      "summary": "Inconsistent Interpretation of HTTP Requests in github.com/gin-gonic/gin",
+      "fixed_versions": [
+        "1.7.7"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:H/I:L/A:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.01332,
+      "epss_percentile": 0.70912,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Flask",
+      "dependency_name": "Flask",
+      "version": "0.12.2",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-m2qf-hxjv-5gpq",
+      "cve_ids": [
+        "CVE-2023-30861"
+      ],
+      "summary": "Flask vulnerable to possible disclosure of permanent session cookie due to missing Vary: Cookie header",
+      "fixed_versions": [
+        "2.3.2",
+        "2.2.5"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.01261,
+      "epss_percentile": 0.6943,
+      "reachable": true,
+      "reachable_entrypoints": [
+        "GET /health",
+        "POST /import"
+      ],
+      "example_path": [
+        "ep:GET:/health",
+        "fn:app.py:health",
+        "dep:PyPI:Flask"
+      ],
+      "verdict": "reachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:urllib3",
+      "dependency_name": "urllib3",
+      "version": "1.24.1",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-34jh-p97f-mpxf",
+      "cve_ids": [
+        "CVE-2024-37891"
+      ],
+      "summary": "urllib3's Proxy-Authorization request header isn't stripped during cross-origin redirects",
+      "fixed_versions": [
+        "1.26.19",
+        "2.2.2"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:H/PR:H/UI:N/S:U/C:H/I:N/A:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.01141,
+      "epss_percentile": 0.66428,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Jinja2",
+      "dependency_name": "Jinja2",
+      "version": "2.10",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-h75v-3vvj-5mfj",
+      "cve_ids": [
+        "CVE-2024-34064"
+      ],
+      "summary": "Jinja vulnerable to HTML attribute injection when passing user input as keys to xmlattr filter",
+      "fixed_versions": [
+        "3.1.4"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:L/I:L/A:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00979,
+      "epss_percentile": 0.61941,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:Go:github.com/gin-gonic/gin",
+      "dependency_name": "github.com/gin-gonic/gin",
+      "version": "v1.6.0",
+      "ecosystem": "Go",
+      "vuln_id": "GHSA-3vp4-m3rf-835h",
+      "cve_ids": [
+        "CVE-2023-26125"
+      ],
+      "summary": "Improper input validation in github.com/gin-gonic/gin",
+      "fixed_versions": [
+        "1.9.0"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:L/A:L",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00905,
+      "epss_percentile": 0.59576,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Jinja2",
+      "dependency_name": "Jinja2",
+      "version": "2.10",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-h5c8-rqwp-cp95",
+      "cve_ids": [
+        "CVE-2024-22195"
+      ],
+      "summary": "Jinja vulnerable to HTML attribute injection when passing user input as keys to xmlattr filter",
+      "fixed_versions": [
+        "3.1.3"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:L/I:L/A:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00892,
+      "epss_percentile": 0.59161,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:urllib3",
+      "dependency_name": "urllib3",
+      "version": "1.24.1",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-2xpw-w6gg-jr37",
+      "cve_ids": [
+        "CVE-2025-66471"
+      ],
+      "summary": "urllib3 streaming API improperly handles highly compressed data",
+      "fixed_versions": [
+        "2.6.0"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:P/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:H",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00682,
+      "epss_percentile": 0.52198,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:urllib3",
+      "dependency_name": "urllib3",
+      "version": "1.24.1",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-gm62-xv2j-4w53",
+      "cve_ids": [
+        "CVE-2025-66418"
+      ],
+      "summary": "urllib3 allows an unbounded number of links in the decompression chain",
+      "fixed_versions": [
+        "2.6.0"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:P/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:H",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00682,
+      "epss_percentile": 0.52198,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:urllib3",
+      "dependency_name": "urllib3",
+      "version": "1.24.1",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-gwvm-45gx-3cf8",
+      "cve_ids": [
+        "CVE-2018-25091"
+      ],
+      "summary": "Authorization Header forwarded on redirect",
+      "fixed_versions": [
+        "1.24.2"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:P/VC:N/VI:N/VA:N/SC:L/SI:L/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00594,
+      "epss_percentile": 0.48122,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:urllib3",
+      "dependency_name": "urllib3",
+      "version": "1.24.1",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-g4mx-q9vg-27p4",
+      "cve_ids": [
+        "CVE-2023-45803"
+      ],
+      "summary": "urllib3's request body not stripped after redirect from 303 status changes request method to GET",
+      "fixed_versions": [
+        "2.0.7",
+        "1.26.18"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:A/AC:L/AT:P/PR:H/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00593,
+      "epss_percentile": 0.48058,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Jinja2",
+      "dependency_name": "Jinja2",
+      "version": "2.10",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-q2x7-8rv6-6q7h",
+      "cve_ids": [
+        "CVE-2024-56326"
+      ],
+      "summary": "Jinja has a sandbox breakout through indirect reference to format method",
+      "fixed_versions": [
+        "3.1.5"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:L/AC:L/AT:P/PR:L/UI:P/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00522,
+      "epss_percentile": 0.44008,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Jinja2",
+      "dependency_name": "Jinja2",
+      "version": "2.10",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-cpwx-vrp4-4pq7",
+      "cve_ids": [
+        "CVE-2025-27516"
+      ],
+      "summary": "Jinja2 vulnerable to sandbox breakout through attr filter selecting format method",
+      "fixed_versions": [
+        "3.1.6"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:L/AC:L/AT:P/PR:L/UI:P/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00507,
+      "epss_percentile": 0.42984,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:Go:github.com/gin-gonic/gin",
+      "dependency_name": "github.com/gin-gonic/gin",
+      "version": "v1.6.0",
+      "ecosystem": "Go",
+      "vuln_id": "GHSA-2c4m-59x9-fr2g",
+      "cve_ids": [
+        "CVE-2023-29401"
+      ],
+      "summary": "Gin Web Framework does not properly sanitize filename parameter of Context.FileAttachment function",
+      "fixed_versions": [
+        "1.9.1"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:N/I:L/A:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00482,
+      "epss_percentile": 0.41274,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:urllib3",
+      "dependency_name": "urllib3",
+      "version": "1.24.1",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-pq67-6m6q-mj2v",
+      "cve_ids": [
+        "CVE-2025-50181"
+      ],
+      "summary": "urllib3 redirects are not disabled when retries are disabled on PoolManager instantiation",
+      "fixed_versions": [
+        "2.5.0"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:H/PR:L/UI:N/S:U/C:H/I:N/A:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00474,
+      "epss_percentile": 0.40705,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:Go:gopkg.in/yaml.v2",
+      "dependency_name": "gopkg.in/yaml.v2",
+      "version": "v2.2.2",
+      "ecosystem": "Go",
+      "vuln_id": "GHSA-r88r-gmrh-7j83",
+      "cve_ids": [
+        "CVE-2021-4235"
+      ],
+      "summary": "YAML Go package vulnerable to denial of service",
+      "fixed_versions": [
+        "2.2.3"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:L/AC:L/PR:N/UI:R/S:U/C:N/I:N/A:H",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00427,
+      "epss_percentile": 0.36723,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:Packagist:guzzlehttp/guzzle",
+      "dependency_name": "guzzlehttp/guzzle",
+      "version": "6.3.0",
+      "ecosystem": "Packagist",
+      "vuln_id": "GHSA-f283-ghqc-fg79",
+      "cve_ids": [
+        "CVE-2026-67353"
+      ],
+      "summary": "Guzzle: Unbounded response cookies risk denial of service",
+      "fixed_versions": [
+        "7.15.1"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00418,
+      "epss_percentile": 0.35855,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Flask",
+      "dependency_name": "Flask",
+      "version": "0.12.2",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-68rp-wp8r-4726",
+      "cve_ids": [
+        "CVE-2026-27205"
+      ],
+      "summary": "Flask session does not add `Vary: Cookie` header when accessed in some ways",
+      "fixed_versions": [
+        "3.1.3"
+      ],
+      "severity": "LOW",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:P/PR:N/UI:P/VC:L/VI:N/VA:N/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.004,
+      "epss_percentile": 0.34052,
+      "reachable": true,
+      "reachable_entrypoints": [
+        "GET /health",
+        "POST /import"
+      ],
+      "example_path": [
+        "ep:GET:/health",
+        "fn:app.py:health",
+        "dep:PyPI:Flask"
+      ],
+      "verdict": "reachable"
+    },
+    {
+      "dependency_id": "dep:Packagist:phpunit/phpunit",
+      "dependency_name": "phpunit/phpunit",
+      "version": "6.5.0",
+      "ecosystem": "Packagist",
+      "vuln_id": "GHSA-vvj3-c3rp-c85p",
+      "cve_ids": [
+        "CVE-2026-24765"
+      ],
+      "summary": "PHPUnit Vulnerable to Unsafe Deserialization in PHPT Code Coverage Handling",
+      "fixed_versions": [
+        "8.5.52",
+        "9.6.33",
+        "10.5.62",
+        "11.5.50",
+        "12.5.8"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00384,
+      "epss_percentile": 0.32238,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:Packagist:guzzlehttp/guzzle",
+      "dependency_name": "guzzlehttp/guzzle",
+      "version": "6.3.0",
+      "ecosystem": "Packagist",
+      "vuln_id": "GHSA-94pj-82f3-465w",
+      "cve_ids": [
+        "CVE-2026-67339"
+      ],
+      "summary": "Guzzle: Proxy-Authorization headers can be sent to origin servers",
+      "fixed_versions": [
+        "7.14.2"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00372,
+      "epss_percentile": 0.30912,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:Packagist:guzzlehttp/guzzle",
+      "dependency_name": "guzzlehttp/guzzle",
+      "version": "6.3.0",
+      "ecosystem": "Packagist",
+      "vuln_id": "GHSA-h95v-h523-3mw8",
+      "cve_ids": [
+        "CVE-2026-67354"
+      ],
+      "summary": "Guzzle: URI fragments disclosed in redirect Referer headers",
+      "fixed_versions": [
+        "7.15.1"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:N/A:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00372,
+      "epss_percentile": 0.30931,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:Packagist:guzzlehttp/guzzle",
+      "dependency_name": "guzzlehttp/guzzle",
+      "version": "6.3.0",
+      "ecosystem": "Packagist",
+      "vuln_id": "GHSA-v5mv-p594-2x33",
+      "cve_ids": [
+        "CVE-2026-69246"
+      ],
+      "summary": "Guzzle: Noncanonical host can bypass host-based checks",
+      "fixed_versions": [
+        "7.15.2",
+        "8.0.1"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:L/I:L/A:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.0037,
+      "epss_percentile": 0.30675,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:Packagist:guzzlehttp/guzzle",
+      "dependency_name": "guzzlehttp/guzzle",
+      "version": "6.3.0",
+      "ecosystem": "Packagist",
+      "vuln_id": "GHSA-wm3w-8rrp-j577",
+      "cve_ids": [
+        "CVE-2026-67355"
+      ],
+      "summary": "Guzzle: Host-only cookie scope is not preserved",
+      "fixed_versions": [
+        "7.15.1"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:N/A:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00366,
+      "epss_percentile": 0.30217,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:urllib3",
+      "dependency_name": "urllib3",
+      "version": "1.24.1",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-vxq7-64xx-v4gw",
+      "cve_ids": [
+        "CVE-2026-97689"
+      ],
+      "summary": "urllib3: HTTPResponse.stream()/read_chunked() buffers an unbounded chunk-size line into memory",
+      "fixed_versions": [
+        "2.8.0"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:P/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:H",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00335,
+      "epss_percentile": 0.26613,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:urllib3",
+      "dependency_name": "urllib3",
+      "version": "1.24.1",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-qccp-gfcp-xxvc",
+      "cve_ids": [
+        "CVE-2026-44431"
+      ],
+      "summary": "urllib3: Sensitive headers forwarded across origins in proxied low-level redirects",
+      "fixed_versions": [
+        "2.7.0"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:H/AT:P/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00331,
+      "epss_percentile": 0.26086,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:npm:lodash",
+      "dependency_name": "lodash",
+      "version": "4.17.4",
+      "ecosystem": "npm",
+      "vuln_id": "GHSA-f23m-r3pf-42rh",
+      "cve_ids": [
+        "CVE-2026-2950"
+      ],
+      "summary": "lodash vulnerable to Prototype Pollution via array path bypass in `_.unset` and `_.omit`",
+      "fixed_versions": [
+        "4.18.0"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:L/A:L",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00325,
+      "epss_percentile": 0.25378,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:Packagist:guzzlehttp/guzzle",
+      "dependency_name": "guzzlehttp/guzzle",
+      "version": "6.3.0",
+      "ecosystem": "Packagist",
+      "vuln_id": "GHSA-cwxw-98qj-8qjx",
+      "cve_ids": [
+        "CVE-2026-55767"
+      ],
+      "summary": "guzzlehttp/guzzle: Dot-Only Cookie Domains Match All Hosts",
+      "fixed_versions": [
+        "7.12.1"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:N/I:L/A:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00211,
+      "epss_percentile": 0.1132,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:Packagist:guzzlehttp/guzzle",
+      "dependency_name": "guzzlehttp/guzzle",
+      "version": "6.3.0",
+      "ecosystem": "Packagist",
+      "vuln_id": "GHSA-f7vp-7xgx-4w4r",
+      "cve_ids": [
+        "CVE-2026-69245"
+      ],
+      "summary": "Guzzle: Noncanonical cookie domain keeps subdomain scope",
+      "fixed_versions": [
+        "7.15.2",
+        "8.0.1"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00199,
+      "epss_percentile": 0.0967,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:Packagist:guzzlehttp/guzzle",
+      "dependency_name": "guzzlehttp/guzzle",
+      "version": "6.3.0",
+      "ecosystem": "Packagist",
+      "vuln_id": "GHSA-g446-98w2-8p5w",
+      "cve_ids": [
+        "CVE-2026-59883"
+      ],
+      "summary": "Guzzle: Cookie Disclosure and Injection via IP-Address Domains",
+      "fixed_versions": [
+        "7.12.3"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:C/C:L/I:L/A:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00167,
+      "epss_percentile": 0.05935,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:Packagist:guzzlehttp/guzzle",
+      "dependency_name": "guzzlehttp/guzzle",
+      "version": "6.3.0",
+      "ecosystem": "Packagist",
+      "vuln_id": "GHSA-wpwq-4j6v-78m3",
+      "cve_ids": [
+        "CVE-2026-55568"
+      ],
+      "summary": "guzzlehttp/guzzle: Silent HTTPS-Proxy Downgrade to Cleartext",
+      "fixed_versions": [
+        "7.12.1"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:N/A:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00148,
+      "epss_percentile": 0.03941,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    }
+  ],
+  "summary": {
+    "total_dependencies": 12,
+    "vulnerable_dependencies": 10,
+    "total_vulnerabilities": 57,
+    "reachable_vulnerabilities": 6,
+    "kev_vulnerabilities": 0,
+    "high_epss_vulnerabilities": 0
+  },
+  "offline": false,
+  "network_ok": true,
+  "notices": [
+    "1 dependency skipped (no exact version): requests >=2.20.0. These were not checked against OSV."
+  ]
+};

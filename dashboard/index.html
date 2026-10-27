@@ -54,6 +54,12 @@
         </div>
       </section>
 
+      <section class="panel panel--vulns" aria-labelledby="vuln-h" aria-live="polite">
+        <h2 class="panel__h" id="vuln-h">Vulnerability findings</h2>
+        <p class="panel__note" id="vuln-note">Structure only — load an audit bundle to see findings.</p>
+        <div id="vuln-body"></div>
+      </section>
+
       <section class="panel panel--filters" aria-labelledby="filter-h">
         <h2 class="panel__h" id="filter-h">Show by kind</h2>
         <div class="filters" id="filters" role="group" aria-label="Node kind filters"></div>
@@ -71,10 +77,13 @@
         <span class="legend__item"><i class="dot dot--fn"></i>function</span>
         <span class="legend__item"><i class="dot dot--mut"></i>module / file / doc</span>
         <span class="legend__item"><i class="dot dot--sig"></i>reachable trace</span>
+        <span class="legend__item legend__item--vuln"><i class="dot dot--vuln"></i>vulnerable dependency</span>
+        <span class="legend__item legend__item--vuln"><i class="dot dot--vulnhot"></i>reachable &amp; vulnerable</span>
       </div>
     </section>
   </main>
 
+  <script src="sample-bundle.js"></script>
   <script src="sample-graph.js"></script>
   <script src="app.js"></script>
 </body>

@@ -178,6 +178,31 @@ def _format_assessments(
     return "\n".join(lines)
 
 
+def _build_bundle(
+    graph: KnowledgeGraph,
+    correlation: CorrelationResult,
+    reach: ReachabilityResult,
+) -> dict:
+    """Assemble one self-contained payload the dashboard viewer can load.
+
+    Reuses the ranked audit payload -- findings carry the reachable flag, the
+    three-way verdict, cve/severity/kev/epss and an example path, plus the
+    headline summary and network status -- and adds the structural graph and
+    the full reachability result so the viewer needs no other file. Works
+    offline too: findings is then empty and ``offline``/``network_ok`` say so.
+    """
+    audit_payload = correlate_report.audit(graph, correlation, reach)
+    return {
+        "graph": graph.to_dict(),
+        "reachability": reach.to_dict(),
+        "findings": audit_payload["findings"],
+        "summary": audit_payload["summary"],
+        "offline": audit_payload["offline"],
+        "network_ok": audit_payload["network_ok"],
+        "notices": audit_payload["notices"],
+    }
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="vulnreach",
@@ -250,6 +275,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         "findings (opt-in; uses the offline heuristic when no model is "
         "configured via LLM_BASE_URL/LLM_API_KEY/LLM_MODEL).",
     )
+    audit_parser.add_argument(
+        "--bundle",
+        default=None,
+        metavar="PATH",
+        help="Also write a self-contained viewer bundle (graph + reachability + "
+        "ranked findings + summary) as one JSON file for the dashboard. Additive "
+        "and opt-in: it does not affect the -o/--json output. Works offline, in "
+        "which case the findings list is empty.",
+    )
 
     args = parser.parse_args(argv)
 
@@ -297,6 +331,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         correlation = correlate_full(
             graph, offline=args.offline, use_nvd=args.nvd
         )
+
+        if args.bundle:
+            with open(args.bundle, "w", encoding="utf-8") as handle:
+                handle.write(
+                    json.dumps(_build_bundle(graph, correlation, reach), indent=2)
+                )
 
         if args.output or args.json:
             payload = json.dumps(

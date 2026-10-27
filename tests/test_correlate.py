@@ -252,6 +252,33 @@ def test_cli_offline_prints_graceful_message(capsys):
     assert "PyYAML" in out
 
 
+def test_cli_bundle_is_self_contained(tmp_path):
+    """``--bundle`` writes one JSON the viewer can load, without changing output.
+
+    Runs offline (no network) so it stays fast and deterministic: findings are
+    empty, but the graph, reachability and summary must still be present and the
+    offline status flagged honestly.
+    """
+    import json
+
+    from scanner.cli import main
+
+    bundle_path = tmp_path / "bundle.json"
+    rc = main(["audit", SAMPLE_APP, "--offline", "--bundle", str(bundle_path)])
+    assert rc == 0
+
+    bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
+    # All four sections the viewer needs are present.
+    assert set(["graph", "reachability", "findings", "summary"]).issubset(bundle)
+    assert isinstance(bundle["graph"]["nodes"], list) and bundle["graph"]["nodes"]
+    assert "entrypoints" in bundle["reachability"]
+    assert "repo" in bundle["reachability"]
+    # Offline run: honest status, empty findings, but structure still present.
+    assert bundle["offline"] is True
+    assert bundle["findings"] == []
+    assert bundle["summary"]["total_dependencies"] >= 1
+
+
 # -- regression tests for reproduced correctness/robustness bugs --------------
 
 
