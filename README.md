@@ -313,9 +313,11 @@ advisory's named vulnerable function against the reachable call paths:
   function is unconfirmed (no resolved call to a function the advisory names). Also used when reachability is only `potentially_reachable`.
 * `no_path`: the dependency is not reachable.
 
-**`taint`** (Python only today) asks whether attacker-controlled input provably
-reaches the vulnerable call. `tainted` means web input (Flask / FastAPI / Django
-request sources) flows into that call; otherwise `not_proven`. `not_proven` is
+**`taint`** (Python, JavaScript, and Go) asks whether attacker-controlled input
+provably reaches the vulnerable call. `tainted` means web input — Python
+(Flask / FastAPI / Django `request`), JavaScript (Express / Koa `req`/`ctx`), or
+Go (net/http `*http.Request`, gin / echo) — flows into that call; otherwise
+`not_proven`. `not_proven` is
 **not** "safe": it means no flow was proven. It is a strict refinement:
 `tainted` implies `symbol_match: confirmed`, which implies `reachable`. Known
 misses (reported as `not_proven`, never guessed): flows laundered through a
@@ -409,10 +411,13 @@ recorded as `unresolved_calls`.
   those). Transitive packages are not graph nodes, so they are neither matched
   against OSV nor reported as reachable, and reachability is never inferred
   through a dependency's internals.
-* **Taint is Python-only and conservative.** JS, PHP and Go findings always get
-  `taint: not_proven`. Within Python, flows through return-value laundering,
-  `*args`, and cross-file instance methods are not followed, so
-  `not_proven` means "not proven", not "safe".
+* **Taint covers Python, JavaScript, and Go, and is conservative.** PHP findings
+  always get `taint: not_proven` (the PHP analyzer is single-file and emits no
+  dependency call edges, so there is no sink for taint to reach). In the three
+  supported languages, flows laundered through a call's return value, and other
+  grammar-specific hard cases (e.g. Python `*args`/cross-file instance methods,
+  computed/dynamic member access, callback bodies), are not followed — so
+  `not_proven` means "not proven", never "safe".
 * **The advisory tiers are advisory.** They are only as good as your docs/CVE
   text, and with the offline heuristic fall back to simple phrase/symbol
   matching. They never change a deterministic reachability verdict or call edge.

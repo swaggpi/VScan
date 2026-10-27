@@ -941,7 +941,11 @@ class PythonTaintAdapter:
         return _bind_into_next(caller_info, env, next_info)
 
     def detect_sink(
-        self, sink_info: Any, env: _Env, dep_symbols: set[str]
+        self,
+        sink_info: Any,
+        env: _Env,
+        dep_symbols: set[str],
+        dep_id: str,  # noqa: ARG002 - part of the seam; the Python gate is unchanged
     ) -> tuple[str, str] | None:
         parsed, fnode, _qual, _relpath = sink_info
         return _detect_sink(fnode, env, parsed, dep_symbols)

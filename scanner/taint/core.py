@@ -221,12 +221,15 @@ class TaintAdapter(Protocol):
         ...
 
     def detect_sink(
-        self, sink_info: Any, env: _Env, dep_symbols: set[str]
+        self, sink_info: Any, env: _Env, dep_symbols: set[str], dep_id: str
     ) -> tuple[str, str] | None:
         """Prove a tainted argument into a ``dep_symbols`` call at the sink fn.
 
-        Returns the first ``(sink_symbol, source_descriptor)`` found, else
-        ``None``.
+        ``dep_id`` is the id of the dependency this path is being proven for (the
+        last node of the example path); an adapter may use it to require that a
+        resolved ``("dep", id, symbol)`` sink attributes to THIS dependency and
+        not another sharing a symbol name. Returns the first
+        ``(sink_symbol, source_descriptor)`` found, else ``None``.
         """
         ...
 
@@ -302,7 +305,7 @@ def _analyze_path(
     for index in range(len(resolved) - 1):
         env = adapter.bind_into_next(resolved[index], env, resolved[index + 1])
 
-    flow = adapter.detect_sink(resolved[-1], env, dep_symbols)
+    flow = adapter.detect_sink(resolved[-1], env, dep_symbols, example_path[-1])
     if flow is None:
         return None
     sink_symbol, source = flow

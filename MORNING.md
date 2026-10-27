@@ -9,7 +9,7 @@ scans a repo, builds a 4-language knowledge graph, computes three-way reachabili
 (which entry point reaches which functions and dependencies), correlates the deps
 against real CVE data (OSV + CISA KEV + EPSS), reports coverage/confidence, and —
 with `--explain` — runs an agent pass over the docs to assess exposure. The
-dashboard overlays the reachable-vulnerable findings on the graph. **422 tests pass**,
+dashboard overlays the reachable-vulnerable findings on the graph. **460 tests pass**,
 across three adversarial review rounds (all findings fixed).
 
 ## Action needed from you (2 things)
@@ -74,8 +74,11 @@ Real-repo corpus to demo against: `scripts/fetch_test_corpus.sh` (gitignored
 ## Shipped since
 - `symbol_match` — deterministic 3-tier signal per finding (`confirmed` /
   `package_reachable` / `no_path`), derived from the reachability verdict.
-- Python taint pass — `tainted` when web input (Flask/FastAPI/Django) provably
+- Taint pass (Python, JavaScript, Go) — `tainted` when web input provably
   reaches the vulnerable call, else `not_proven`; gated by the advisory's sink.
+  Built on a language-agnostic core (the soundness invariants) with per-language
+  adapters: Python (Flask/FastAPI/Django), JS (Express/Koa), Go (net/http,
+  gin/echo). PHP is not covered (single-file analyzer emits no dep call edges).
 - `audit` outputs for CI: `--sarif`, `--markdown`, `--fail-on` exit codes, and
   the one-line impact funnel (deps · CVEs · reachable · confirmed · exploitable).
 - GitHub Action — composite action: SARIF upload, PR comment, `fail-on` gate.
@@ -91,7 +94,7 @@ Real-repo corpus to demo against: `scripts/fetch_test_corpus.sh` (gitignored
 - The offline exposure heuristic is crude (keyword-based); the real model is sharper.
 
 ## Where things are
-- Branch `worktree-scanner-layer1`, 422 tests passing.
+- Branch `worktree-scanner-layer1`, 460 tests passing.
 - `PLAN.md` has the full overnight plan, decisions, and remaining backlog.
 - PHP is still single-file (JS and Go have cross-file; PHP cross-file was judged
   low-value/high-risk given its dynamic autoloading, and left out rather than done

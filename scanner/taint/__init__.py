@@ -37,6 +37,7 @@ from .core import (
     _split_fn_id,
 )
 from .core import compute_taint as _compute_taint
+from .go import GoTaintAdapter
 from .javascript import JavaScriptTaintAdapter
 from .python import (
     PythonTaintAdapter,
@@ -56,6 +57,7 @@ from .python import (
 _ADAPTERS: tuple[TaintAdapter, ...] = (
     PythonTaintAdapter(),
     JavaScriptTaintAdapter(),
+    GoTaintAdapter(),
 )
 
 
@@ -79,6 +81,7 @@ __all__ = [
     "TaintResult",
     "PythonTaintAdapter",
     "JavaScriptTaintAdapter",
+    "GoTaintAdapter",
     "compute_taint",
     # Re-exported internals, kept importable from ``scanner.taint`` for the test
     # suite (unit tests exercise these grammar-specific helpers directly).

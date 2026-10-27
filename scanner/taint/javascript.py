@@ -76,6 +76,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..analyzers.javascript_analyzer import JavaScriptAnalyzer, _node_text
+from ._support import _scan_support
 from .core import (
     _Env,
     _assign_or_kill_names,
@@ -188,26 +189,6 @@ class _FileCache:
             local_functions=local_functions,
             analyzer=self._analyzer,
         )
-
-
-def _scan_support(repo_root: str) -> tuple[Any, dict[str, Any], dict[str, str]]:
-    """Return ``(graph, repo_index, source_cache)`` for ``repo_root``.
-
-    Mirrors the first three steps of :func:`scanner.scan.scan_repo` so the
-    JavaScript analyzer's symbol table can be rebuilt offline: a graph carrying
-    the manifest ``dep:npm:*`` nodes, the cross-file export index, and the
-    read-once source cache.
-    """
-    # Imported lazily to avoid any import cycle at module load.
-    from ..graph import KnowledgeGraph
-    from ..scan import _build_repo_index, _extract_dependencies
-    from ..walker import walk_repo
-
-    graph = KnowledgeGraph()
-    files = walk_repo(repo_root, graph)
-    deps = _extract_dependencies(files, graph)
-    repo_index, source_cache = _build_repo_index(files, deps, graph)
-    return graph, repo_index, source_cache
 
 
 # --------------------------------------------------------------------------
@@ -864,7 +845,11 @@ class JavaScriptTaintAdapter:
         return seed
 
     def detect_sink(
-        self, sink_info: _FnInfo, env: _Env, dep_symbols: set[str]
+        self,
+        sink_info: _FnInfo,
+        env: _Env,
+        dep_symbols: set[str],
+        dep_id: str,  # noqa: ARG002 - part of the seam; the JS gate is unchanged
     ) -> tuple[str, str] | None:
         found: list[tuple[str, str]] = []
 
