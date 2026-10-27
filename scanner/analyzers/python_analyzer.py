@@ -38,14 +38,30 @@ RESOLVED
     name (parameter, assignment target, ...) that shadows a module import never
     resolves through that import -- e.g. ``def f(y): y.load()`` is unresolved,
     not a PyYAML edge.
+  * SINGLE-HOP method dispatch whose receiver class is PROVEN, never guessed:
+    - ``self.m(...)`` inside a method of class ``C`` -> ``C.m`` when ``m`` is a
+      method defined directly on ``C`` (same file), ``self`` is the method's
+      first positional parameter, and ``self`` is not rebound in the body.
+    - ``v.m(...)`` where ``v`` is bound in the enclosing scope by an unambiguous
+      ``v = Cls(...)`` (``Cls`` a class defined in this file, or imported via
+      ``from pkg import Cls``) and never reassigned to anything else, and ``m``
+      is a method defined directly on ``Cls``.
+    - ``Cls(...).m(...)`` (construct-and-call) under the same class/method proof.
+    Resolution is sound: only a method actually defined on that exact class (no
+    MRO / base-class guessing) and only when the class and the binding are both
+    unambiguous. A missed edge is preferred to a wrong one.
   * A small import-name -> PyPI-package map for well-known mismatches
     (yaml->PyYAML, bs4->beautifulsoup4, cv2->opencv-python, PIL->Pillow,
     sklearn->scikit-learn); otherwise the import name is assumed to equal the
     package name (case-normalised).
 
 NOT RESOLVED (recorded as ``unresolved``, never guessed)
-  * Method dispatch on instances: ``self.x()``, ``obj.method()`` -- no type
-    inference / points-to analysis is performed.
+  * Method dispatch whose receiver class cannot be proven: a call on a parameter
+    or an externally-typed value, a var with more than one possible constructor,
+    or a method inherited from a base class (no MRO modelling) -- see the
+    single-hop PROVEN cases above for exactly what does resolve.
+  * MULTI-HOP attribute dispatch: ``self.x.y()``, ``obj.attr.method()`` -- no
+    instance-attribute typing is performed.
   * Calls through data structures or return values: ``handlers[key]()``,
     ``factory().run()``.
   * Dynamic dispatch: ``getattr(obj, name)()``, ``globals()[...]()``.
@@ -179,12 +195,16 @@ def _collect(tree: ast.AST) -> tuple[list[tuple[str, ast.AST]], list[tuple[str |
     return functions, calls
 
 
-def index_source(relpath: str, source: str) -> tuple[str, set[str]]:
-    """Return ``(module_path, {function_qualnames})`` for one source file.
+def index_source(
+    relpath: str, source: str
+) -> tuple[str, set[str], dict[str, set[str]]]:
+    """Return ``(module_path, {function_qualnames}, {class_qual: {methods}})``.
 
     Used by the orchestrator to build the cross-file index before per-file
-    analysis, so calls can resolve into functions defined in other files.
-    Returns an empty function set on a syntax error.
+    analysis, so calls can resolve into functions defined in other files and so
+    an instance-method call on an imported class can be matched against the
+    methods that class actually defines. Returns empty sets/maps on a syntax
+    error.
     """
     module_path = module_path_for(relpath)
     try:
@@ -193,9 +213,56 @@ def index_source(relpath: str, source: str) -> tuple[str, set[str]]:
         # ValueError covers null bytes; RecursionError covers deeply nested
         # source (both reachable on 3.11+). A single unparsable file must not
         # abort the whole scan.
-        return module_path, set()
+        return module_path, set(), {}
     functions, _ = _collect(tree)
-    return module_path, {qual for qual, _ in functions}
+    class_methods, _ = _collect_classes(tree)
+    return module_path, {qual for qual, _ in functions}, class_methods
+
+
+def _collect_classes(
+    tree: ast.AST,
+) -> tuple[dict[str, set[str]], dict[str, tuple[str, str | None]]]:
+    """Walk ``tree`` collecting class structure for method-call resolution.
+
+    Returns ``(class_methods, method_meta)`` where:
+
+    * ``class_methods`` maps a class qualified name (dotted for a nested class,
+      consistent with :func:`_collect`: ``Outer.Inner``) to the set of method
+      names defined DIRECTLY on it (no inherited methods -- there is no MRO
+      modelling, by design);
+    * ``method_meta`` maps a method's qualified name (``ClassName.method``) to
+      ``(class_qual, self_param_name)`` where ``self_param_name`` is the
+      method's first positional parameter name, or ``None`` if it has none.
+
+    Only functions defined directly in a class body are methods; a function
+    nested inside a method is an ordinary local function, not a method.
+    """
+    class_methods: dict[str, set[str]] = {}
+    method_meta: dict[str, tuple[str, str | None]] = {}
+
+    def visit(container: ast.AST, prefix: str, class_qual: str | None) -> None:
+        for child in ast.iter_child_nodes(container):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                qual = prefix + child.name
+                if class_qual is not None:
+                    class_methods.setdefault(class_qual, set()).add(child.name)
+                    args = child.args
+                    posargs = list(args.posonlyargs) + list(args.args)
+                    self_param = posargs[0].arg if posargs else None
+                    method_meta[qual] = (class_qual, self_param)
+                # The method/function body is its own (non-class) scope.
+                for stmt in child.body:
+                    visit(stmt, qual + ".", None)
+                visit(child.args, qual + ".", None)
+            elif isinstance(child, ast.ClassDef):
+                cqual = prefix + child.name
+                class_methods.setdefault(cqual, set())
+                visit(child, prefix + child.name + ".", cqual)
+            else:
+                visit(child, prefix, class_qual)
+
+    visit(tree, "", None)
+    return class_methods, method_meta
 
 
 def build_import_index(deps: list[Any]) -> dict[str, str]:
@@ -267,6 +334,9 @@ class PythonAnalyzer(LanguageAnalyzer):
         )
         functions, calls = _collect(tree)
         local_quals = {qual for qual, _ in functions}
+        # Class structure for same-file method-call resolution (direct methods
+        # only; ``method_meta`` carries each method's class + ``self`` param).
+        class_methods, method_meta = _collect_classes(tree)
 
         # Function nodes + declares edges. Each node also carries display detail
         # a UI can show on click: the function's docstring, a readable signature
@@ -290,6 +360,15 @@ class PythonAnalyzer(LanguageAnalyzer):
         # the module-level alias map. Resolution is scoped so a local name that
         # shadows a module import never produces a dependency/call edge.
         scopes = {qual: self._function_scope(fnode) for qual, fnode in functions}
+        # Per-scope ``var -> constructor class name`` from unambiguous
+        # ``var = Cls(...)`` bindings, and the names rebound in each body (so a
+        # rebound ``self`` disqualifies self-method resolution).
+        scope_instances = {
+            qual: self._collect_instances(fnode) for qual, fnode in functions
+        }
+        scope_reassigned = {
+            qual: self._body_bound_names(fnode) for qual, fnode in functions
+        }
         module_aliases = self._module_aliases(tree)
 
         # Call edges.
@@ -300,9 +379,15 @@ class PythonAnalyzer(LanguageAnalyzer):
                 src_id = mod_id
                 bound: frozenset[str] = frozenset()
                 local_aliases: dict[str, str] = module_aliases
+                self_ctx: tuple[str, str | None] | None = None
+                instances: dict[str, str] = {}
+                reassigned: set[str] = set()
             else:
                 src_id = f"fn:{relpath}:{enclosing}"
                 bound, local_aliases = scopes.get(enclosing, (frozenset(), {}))
+                self_ctx = method_meta.get(enclosing)
+                instances = scope_instances.get(enclosing, {})
+                reassigned = scope_reassigned.get(enclosing, set())
             result = self._resolve_call(
                 call.func,
                 symtab,
@@ -312,6 +397,10 @@ class PythonAnalyzer(LanguageAnalyzer):
                 relpath,
                 repo_index,
                 local_quals,
+                class_methods,
+                self_ctx,
+                instances,
+                reassigned,
             )
             kind = result[0]
             if kind == "fn":
@@ -496,6 +585,12 @@ class PythonAnalyzer(LanguageAnalyzer):
             relpath2 = target
             if relpath2 and name in repo_index["functions"].get(relpath2, set()):
                 return {"type": "func", "relpath": relpath2, "qual": name}
+            # ``from m import Cls`` where ``Cls`` is a class defined in m's file:
+            # record it as a class binding so an instance method call on it (or
+            # ``Cls(...).method()``) can be resolved against the methods that
+            # class actually defines. Only a top-level class name matches here.
+            if relpath2 and name in repo_index.get("classes", {}).get(relpath2, {}):
+                return {"type": "class", "relpath": relpath2, "qual": name}
             sub = f"{resolved_module}.{name}" if resolved_module else name
             if sub in repo_index["modules"]:
                 graph.add_edge(mod_id, f"mod:{sub}", "imports")
@@ -637,6 +732,107 @@ class PythonAnalyzer(LanguageAnalyzer):
         return bound, aliases
 
     @classmethod
+    def _body_bound_names(cls, fnode: ast.AST) -> set[str]:
+        """Names rebound in a function BODY (excluding parameters).
+
+        Used to tell whether ``self`` (a parameter) is reassigned inside the
+        method: if it is, a ``self.m()`` call can no longer be soundly resolved
+        to the enclosing class, so self-method resolution is declined.
+        """
+        bound: set[str] = set()
+        aliases: dict[str, str] = {}
+        for stmt in getattr(fnode, "body", []):
+            cls._scope_visit(stmt, bound, aliases)
+        return bound
+
+    @classmethod
+    def _collect_instances(cls, fnode: ast.AST) -> dict[str, str]:
+        """Map ``var -> constructor class name`` for unambiguous instances.
+
+        A var is mapped ONLY when every binding of it in the function body is a
+        constructor call ``var = Cls(...)`` naming the SAME bare class name, and
+        the var is neither a parameter nor bound by any other construct (a
+        different assignment, ``for``/``with`` target, augmented assignment,
+        walrus, ``except as``, comprehension target, or a nested def/class of
+        that name). Any such ambiguity drops the var -- a var that might hold a
+        different type is never mapped, so no false method edge can follow.
+        """
+        args = getattr(fnode, "args", None)
+        params = cls._arg_names(args) if isinstance(args, ast.arguments) else set()
+        ctor: dict[str, set[str]] = {}
+        disq: set[str] = set(params)  # a parameter's value is unknown on entry
+
+        def ctor_name(value: ast.AST | None) -> str | None:
+            if isinstance(value, ast.Call) and isinstance(value.func, ast.Name):
+                return value.func.id
+            return None
+
+        def walk(node: ast.AST) -> None:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                disq.add(node.name)
+                return
+            if isinstance(node, ast.Lambda):
+                disq.update(cls._arg_names(node.args))
+                return
+            if isinstance(node, ast.Assign):
+                if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+                    var = node.targets[0].id
+                    cname = ctor_name(node.value)
+                    if cname is not None:
+                        ctor.setdefault(var, set()).add(cname)
+                    else:
+                        disq.add(var)
+                else:
+                    tmp: set[str] = set()
+                    for target in node.targets:
+                        cls._bind_target(target, tmp)
+                    disq.update(tmp)
+            elif isinstance(node, ast.AnnAssign):
+                if isinstance(node.target, ast.Name):
+                    cname = ctor_name(node.value)
+                    if cname is not None:
+                        ctor.setdefault(node.target.id, set()).add(cname)
+                    else:
+                        disq.add(node.target.id)
+                else:
+                    tmp = set()
+                    cls._bind_target(node.target, tmp)
+                    disq.update(tmp)
+            elif isinstance(node, ast.AugAssign):
+                tmp = set()
+                cls._bind_target(node.target, tmp)
+                disq.update(tmp)
+            elif isinstance(node, (ast.For, ast.AsyncFor)):
+                tmp = set()
+                cls._bind_target(node.target, tmp)
+                disq.update(tmp)
+            elif isinstance(node, (ast.With, ast.AsyncWith)):
+                for item in node.items:
+                    if item.optional_vars is not None:
+                        tmp = set()
+                        cls._bind_target(item.optional_vars, tmp)
+                        disq.update(tmp)
+            elif isinstance(node, ast.NamedExpr) and isinstance(node.target, ast.Name):
+                disq.add(node.target.id)
+            elif isinstance(node, ast.ExceptHandler) and node.name:
+                disq.add(node.name)
+            elif isinstance(node, ast.comprehension):
+                tmp = set()
+                cls._bind_target(node.target, tmp)
+                disq.update(tmp)
+
+            for child in ast.iter_child_nodes(node):
+                walk(child)
+
+        for stmt in getattr(fnode, "body", []):
+            walk(stmt)
+        return {
+            var: next(iter(names))
+            for var, names in ctor.items()
+            if len(names) == 1 and var not in disq
+        }
+
+    @classmethod
     def _module_aliases(cls, tree: ast.AST) -> dict[str, str]:
         """Collect module-level ``name = other_name`` aliases only."""
         bound: set[str] = set()  # unused at module level (no shadowing there)
@@ -657,6 +853,10 @@ class PythonAnalyzer(LanguageAnalyzer):
         relpath: str,
         repo_index: dict[str, Any],
         local_quals: set[str],
+        class_methods: dict[str, set[str]],
+        self_ctx: tuple[str, str | None] | None,
+        instances: dict[str, str],
+        reassigned: set[str],
     ) -> tuple[str, ...]:
         """Resolve a call target, scoped to the enclosing function.
 
@@ -666,10 +866,17 @@ class PythonAnalyzer(LanguageAnalyzer):
         right-hand side is itself an unshadowed module import; otherwise the call
         is unresolved. Unshadowed names resolve through the module symbol table
         and module-level aliases as before.
+
+        Before the shadow branch, SINGLE-HOP method dispatch whose receiver
+        class is proven is resolved: ``self.m()`` (``self_ctx`` = the enclosing
+        method's ``(class_qual, self_param)``), ``v.m()`` for ``v`` in the
+        per-scope ``instances`` map, and ``Cls(...).m()`` construct-and-call. In
+        every case the method must be defined directly on the resolved class.
         """
         if isinstance(func, ast.Name):
             root = func.id
             attrs: list[str] = []
+            base_ctor: ast.Call | None = None
         elif isinstance(func, ast.Attribute):
             attrs = []
             cur: ast.AST = func
@@ -677,13 +884,54 @@ class PythonAnalyzer(LanguageAnalyzer):
                 attrs.append(cur.attr)
                 cur = cur.value
             attrs.reverse()
-            if not isinstance(cur, ast.Name):
+            if isinstance(cur, ast.Name):
+                root = cur.id
+                base_ctor = None
+            elif isinstance(cur, ast.Call) and len(attrs) == 1:
+                # ``Cls(...).method(...)`` -- construct and call in one expr.
+                base_ctor = cur
+                root = ""
+            else:
                 return ("unresolved", self._safe_unparse(func))
-            root = cur.id
         else:
             return ("unresolved", self._safe_unparse(func))
 
+        # ``Cls(...).method(...)``: resolve against the proven constructor class.
+        if base_ctor is not None:
+            cfunc = base_ctor.func
+            if isinstance(cfunc, ast.Name) and cfunc.id not in bound:
+                edge = self._resolve_method_edge(
+                    cfunc.id, attrs[0], relpath, class_methods, symtab, repo_index
+                )
+                if edge is not None:
+                    return edge
+            return ("unresolved", self._safe_unparse(func))
+
         unresolved_repr = root if not attrs else f"{root}." + ".".join(attrs)
+
+        # Single-hop method dispatch on a proven receiver, resolved BEFORE the
+        # shadow branch (both ``self`` and an instance var are locally bound).
+        if len(attrs) == 1:
+            attr = attrs[0]
+            # self-method: ``root`` is literally this method's first positional
+            # parameter and is not rebound in the body.
+            if self_ctx is not None:
+                class_qual, self_param = self_ctx
+                if (
+                    self_param is not None
+                    and root == self_param
+                    and root not in reassigned
+                    and attr in class_methods.get(class_qual, set())
+                ):
+                    return ("fn", f"fn:{relpath}:{class_qual}.{attr}")
+            # instance var: ``root`` is bound by an unambiguous ``root = Cls()``.
+            cname = instances.get(root)
+            if cname is not None and cname not in bound:
+                edge = self._resolve_method_edge(
+                    cname, attr, relpath, class_methods, symtab, repo_index
+                )
+                if edge is not None:
+                    return edge
 
         if root in bound:
             # Locally shadowed. Accept only a one-hop local alias to an
@@ -706,6 +954,38 @@ class PythonAnalyzer(LanguageAnalyzer):
         if name in _BUILTINS:
             return ("builtin",)
         return ("unresolved", name)
+
+    @staticmethod
+    def _resolve_method_edge(
+        class_name: str,
+        method: str,
+        relpath: str,
+        class_methods: dict[str, set[str]],
+        symtab: dict[str, dict[str, Any]],
+        repo_index: dict[str, Any],
+    ) -> tuple[str, ...] | None:
+        """Resolve ``class_name`` + ``method`` to a call edge, or ``None``.
+
+        ``class_name`` is matched first as a class defined in THIS file
+        (``class_methods``), then as a class imported via ``from pkg import
+        Cls`` (a ``"class"`` symbol-table descriptor). The edge is returned ONLY
+        when ``method`` is defined DIRECTLY on the resolved class (no inherited
+        / MRO methods), so no edge can point at a method the class lacks.
+        """
+        if class_name in class_methods:
+            if method in class_methods[class_name]:
+                return ("fn", f"fn:{relpath}:{class_name}.{method}")
+            return None
+        desc = symtab.get(class_name)
+        if desc is not None and desc.get("type") == "class":
+            target_relpath = desc["relpath"]
+            class_qual = desc["qual"]
+            methods = repo_index.get("classes", {}).get(target_relpath, {}).get(
+                class_qual, set()
+            )
+            if method in methods:
+                return ("fn", f"fn:{target_relpath}:{class_qual}.{method}")
+        return None
 
     @staticmethod
     def _follow_alias(name: str, alias_map: dict[str, str]) -> str:
@@ -743,6 +1023,11 @@ class PythonAnalyzer(LanguageAnalyzer):
                 if joined in funcs:
                     return ("fn", f"fn:{relpath2}:{joined}")
             return ("unresolved", f"{desc.get('module', '?')}{suffix}")
+        if dtype == "class":
+            # An imported class reached directly: constructing it (``Cls()``) or
+            # calling an unbound/static attribute on it is not modelled as a call
+            # edge here (instance method calls are handled in ``_resolve_call``).
+            return ("unresolved", f"{desc.get('qual', '?')}{suffix}")
         return ("unresolved", f"{desc.get('ref', '?')}{suffix}")
 
     @staticmethod
@@ -1266,6 +1551,9 @@ class PythonAnalyzer(LanguageAnalyzer):
             if desc is None:
                 # Not imported: a class defined in this same file (if at all).
                 target_relpath, cls_name = relpath, name
+            elif desc.get("type") == "class":
+                # ``from m import Cls`` recognised as a repo-local class.
+                target_relpath, cls_name = desc["relpath"], desc["qual"]
             elif desc.get("type") == "external":
                 ref = desc.get("ref", "")
                 if "." not in ref:

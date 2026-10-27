@@ -75,6 +75,10 @@ EXPECTED_FN_CALLS = {
     ("fn:services.py:ingest", "fn:services.py:load_yaml"),
     # cross-file, module-level call made from INSIDE a method body:
     ("fn:store.py:Store.save", "fn:services.py:persist"),
+    # self-method call (same file): Store.save -> self._validate(...)
+    ("fn:store.py:Store.save", "fn:store.py:Store._validate"),
+    # instance method on a cross-file imported class: bootstrap -> Store().save()
+    ("fn:offline.py:bootstrap", "fn:store.py:Store.save"),
 }
 
 EXPECTED_DEP_CALLS = {
@@ -88,9 +92,6 @@ EXPECTED_DEP_CALLS = {
 FORBIDDEN_CALLS = {
     ("fn:app.py:transform", "dep:PyPI:PyYAML"),   # parameter shadows the import
     ("fn:app.py:rebind", "dep:PyPI:PyYAML"),       # local rebinding shadows it
-    # instance / self method-call boundary (unresolved by design):
-    ("fn:offline.py:bootstrap", "fn:store.py:Store.save"),
-    ("fn:store.py:Store.save", "fn:store.py:Store._validate"),
 }
 
 EXPECTED_DEP_NODES = {

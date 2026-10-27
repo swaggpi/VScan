@@ -81,6 +81,7 @@ def _build_repo_index(
         "modules": {},  # module path -> relpath
         "module_by_file": {},  # relpath -> module path
         "functions": {},  # relpath -> {qualnames}
+        "classes": {},  # relpath -> {class_qual -> {method names}}
         "import_index": python_analyzer.build_import_index(deps),
         # JavaScript cross-file index (additive; Python keys above unchanged).
         "js_files": set(),  # set of repo-relative JS paths
@@ -99,10 +100,13 @@ def _build_repo_index(
         if source is None:
             continue
         source_cache[info.relpath] = source
-        module_path, quals = python_analyzer.index_source(info.relpath, source)
+        module_path, quals, classes = python_analyzer.index_source(
+            info.relpath, source
+        )
         repo_index["modules"][module_path] = info.relpath
         repo_index["module_by_file"][info.relpath] = module_path
         repo_index["functions"][info.relpath] = quals
+        repo_index["classes"][info.relpath] = classes
 
     # JavaScript export index: built from JS files only, stored under its own
     # keys so Python resolution is untouched. Done BEFORE analyzers run so a

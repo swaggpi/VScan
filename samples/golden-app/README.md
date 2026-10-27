@@ -28,7 +28,14 @@ Function → function:
 - `app.list_items → services.parse_dates`
 - `app.decorated → services.describe` and `app.added → services.describe`
 - `store.Store.save → services.persist` — a cross-file **module-level** call made
-  from *inside a method body* (this resolves; the method call below does not)
+  from *inside a method body*
+- `store.Store.save → store.Store._validate` — a **self-method** call
+  (`self._validate(...)`): resolved because `self` is the method's first
+  parameter and `_validate` is defined on the same class
+- `offline.bootstrap → store.Store.save` — an **instance method** call on a
+  **cross-file imported class** (`Store().save(...)` with `from store import
+  Store`): resolved because the constructor names a known class and `save` is a
+  method that class defines
 
 Function → dependency (with the symbol that proves the link):
 
@@ -52,17 +59,34 @@ must all be **absent**:
   (`importlib.import_module`), which is unknowable statically.
 - any edge to `click` — it is **imported but never called** (imported-only).
 
-### Known unresolved boundary (documented, not a bug)
+### Resolved method calls (single-hop, receiver proven)
 
-Instance / `self` **method calls** are not statically resolved — the analyzer
-declines to guess the receiver's class rather than risk a false edge, so these
-are **absent** and the test locks that in:
+Instance / `self` **method calls** resolve only when the receiver's class is
+**proven**, never guessed. The two edges above exercise this:
 
-- `offline.bootstrap → store.Store.save` (call on a constructed instance)
-- `store.Store.save → store.Store._validate` (call via `self`)
+- `store.Store.save → store.Store._validate` — `self._validate(...)`, where
+  `self` is the method's first parameter (and is not rebound) and `_validate`
+  is a method of the same class.
+- `offline.bootstrap → store.Store.save` — `Store().save(...)`, where `Store`
+  is `from store import Store` (a known cross-file class) and `save` is a method
+  that class defines.
 
-These sit in the non-routed `offline`/`store` modules so the one unresolved call
-never taints the reachable region.
+These sit in the non-routed `offline`/`store` modules, so even though they now
+resolve they stay out of the reachable region (bootstrap/Store are never routed).
+
+### Still unresolved by design (documented, not a bug)
+
+The resolver stays sound by refusing anything it cannot prove. These remain
+**absent** — the analyzer never fabricates an edge for them:
+
+- **Multi-hop** attribute dispatch (`self.x.y()`, `obj.attr.method()`): no
+  instance-attribute typing.
+- A method **inherited from a base class** (no MRO modelling): only methods
+  defined *directly* on the resolved class are matched.
+- A receiver whose class is **not proven**: a call on a parameter, on a var with
+  more than one possible constructor, or on an externally-typed value.
+- **Dynamic dispatch** (`offline.run_plugin`): a module loaded by name at
+  runtime is unknowable statically.
 
 ## Dependencies (7) and reachability verdicts
 
