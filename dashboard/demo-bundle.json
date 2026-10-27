@@ -81,7 +81,17 @@
         "attrs": {
           "relpath": "README.md",
           "kind_hint": "prose",
-          "excerpt": "# demo-app\n\nA small, mostly-secure Flask service used to showcase the `vulnreach`\nreachability engine. This is a **defensive-security demo fixture**: there is no\nexploit code anywhere in it. The only thing \"vulnerable\" about the app is that a\nfew dependency *versions* in `requirements.txt` are inten"
+          "excerpt": "# demo-app\n\nA small, mostly-secure Flask service used to showcase the `vulnreach`\nreachability engine. This is a **defensive-security demo fixture**: there is no\nexploit code anywhere in it. The only thing \"vulnerable\" about the app is that a\nfew dependency *versions* in `requirements.txt` are intentionally outdated.\n\nThe point of the fixture is to show the difference between *having* an outdated\ndependency and *being able to reach it* from a public HTTP route.\n\n## What the service does\n\nA notes/config/report API with three public HTTP routes:\n\n| Method & path            | Handler                                  | What it reaches                        |\n|--------------------------|------------------------------------------|----------------------------------------|\n| `POST /configs/import`   | `controllers.config_controller.import_config` | PyYAML (parses an uploaded YAML config) |\n| `GET  /reports/<id>`     | `controllers.report_controller.get_report`    | Jinja2 (renders a report to HTML)       |\n| `GET  /health`           | `controllers.health_controller.health`        | requests (checks an upstream service)   |\n\nAll three routes are **public** (registered as blueprints on the app in\n`app.py`); there is no auth layer in this demo.\n\n## Architecture\n\nThe code is layered so that the call chains are genuinely multi-file and\nseveral hops deep:\n\n```\napp.py                      Flask app; registers the blueprints below\ncontrollers/                HTTP blueprints (the public entry points)\n  config_controller.py        POST /configs/import\n  report_controller.py        GET  /reports/<id>\n  health_controller.py        GET  /health\nservices/                   business logic\n  config_service.py           ingest -> validation_service\n  validation_service.py       validate -> yaml_parser\n  report_service.py           build_report -> content_service\n  content_service.py          assemble -> template_service\n  template_service.py         render -> html_renderer\n  health_service.py           check_upstream -> requests.get\nparsers/                    request-body parsing\n  yaml_parser.py              parse -> loader\n  loader.py                   load_document -> yaml.load   (PyYAML)\nrenderers/\n  html_renderer.py            render_html -> jinja2.escape (Jinja2)\nmaintenance/                offline jobs (NOT wired to any route)\n  sync.py                     run_sync (cron/CLI only)\n  http.py                     fetch -> urllib3            (urllib3)\ntools/"
+        }
+      },
+      {
+        "id": "doc:openapi.yaml",
+        "kind": "doc",
+        "name": "openapi.yaml",
+        "attrs": {
+          "relpath": "openapi.yaml",
+          "kind_hint": "openapi",
+          "excerpt": "openapi: 3.0.3\ninfo:\n  title: demo-app API\n  version: \"1.0.0\"\n  description: >\n    Public HTTP API for the demo-app reachability fixture. All three routes are\n    public and unauthenticated: there is no login, API key or token layer, so\n    any client can call every endpoint. Configuration records and rendered\n    reports are persisted in PostgreSQL via SQLAlchemy, a Redis cache fronts\n    report rendering, and the health probe calls an upstream status service over\n    HTTP with the requests client.\nservers:\n  - url: http://localhost:5000\n    description: Local development server\npaths:\n  /configs/import:\n    post:\n      operationId: import_config\n      summary: Import a YAML configuration document\n      description: >\n        Accepts user-supplied YAML in the request body and ingests it. The raw\n        bytes flow through the config service (`ingest`) into the validation\n        service (`validate`) and the YAML parser (`load_document`), which parses\n        the document with PyYAML. The accepted document is stored as a config\n        record in PostgreSQL via SQLAlchemy. This endpoint is public and\n        unauthenticated.\n      requestBody:\n        required: true\n        description: The raw YAML configuration document to import.\n        content:\n          application/x-yaml:\n            schema:\n              type: string\n              example: |\n                name: example\n                retries: 3\n      responses:\n        \"200\":\n          description: Number of top-level keys imported.\n          content:\n            application/json:\n              schema:\n                type: object\n                properties:\n                  imported:\n                    type: integer\n  /reports/{report_id}:\n    get:\n      operationId: get_report\n      summary: Render a stored report as HTML\n      description: >\n        Loads the report row identified by `report_id` from PostgreSQL (through\n        SQLAlchemy, with a Redis cache in front to avoid re-rendering repeat\n        requests) and renders it to an HTML fragment. Untrusted report fields are\n        escaped through Jinja2 in the renderer before they reach the page. Public\n        and unauthenticated.\n      parameters:\n        - name: report_id\n          in: path\n          required: true\n          description: Caller-controlled identifier of the report to render.\n          schema:\n            type: string\n      responses:\n        \"200\":\n          description: An HTML fragment for the report.\n          conten"
         }
       },
       {
@@ -94,7 +104,17 @@
           "framework": "flask",
           "handler": "health",
           "handler_file": "controllers/health_controller.py",
-          "prefix_unresolved": true
+          "prefix_unresolved": true,
+          "docs": [
+            {
+              "source": "README.md",
+              "snippet": "nders a report to HTML) | | `GET /health` | `controllers.health_contro"
+            },
+            {
+              "source": "openapi.yaml",
+              "snippet": "schema: type: string /health: get: operationId: health"
+            }
+          ]
         }
       },
       {
@@ -107,7 +127,13 @@
           "framework": "flask",
           "handler": "get_report",
           "handler_file": "controllers/report_controller.py",
-          "prefix_unresolved": true
+          "prefix_unresolved": true,
+          "docs": [
+            {
+              "source": "README.md",
+              "snippet": "d document as a config record, and `GET /reports/<report_id>` loads a report row by its id before re"
+            }
+          ]
         }
       },
       {
@@ -120,7 +146,17 @@
           "framework": "flask",
           "handler": "import_config",
           "handler_file": "controllers/config_controller.py",
-          "prefix_unresolved": true
+          "prefix_unresolved": true,
+          "docs": [
+            {
+              "source": "README.md",
+              "snippet": "------------------------------| | `POST /configs/import` | `controllers.config_controller.imp"
+            },
+            {
+              "source": "openapi.yaml",
+              "snippet": "tion: Local development server paths: /configs/import: post: operationId: import_co"
+            }
+          ]
         }
       },
       {
@@ -131,7 +167,7 @@
           "relpath": "README.md",
           "language": "markdown",
           "role": "doc",
-          "size": 3434
+          "size": 5240
         }
       },
       {
@@ -220,6 +256,17 @@
           "language": "python",
           "role": "source",
           "size": 627
+        }
+      },
+      {
+        "id": "file:openapi.yaml",
+        "kind": "file",
+        "name": "openapi.yaml",
+        "attrs": {
+          "relpath": "openapi.yaml",
+          "language": "yaml",
+          "role": "doc",
+          "size": 3326
         }
       },
       {
@@ -395,7 +442,9 @@
           "relpath": "controllers/config_controller.py",
           "module": "controllers.config_controller",
           "lineno": 16,
-          "is_method": false
+          "is_method": false,
+          "signature": "import_config()",
+          "docstring": "Public route: accept a YAML config upload and ingest it."
         }
       },
       {
@@ -406,7 +455,9 @@
           "relpath": "controllers/health_controller.py",
           "module": "controllers.health_controller",
           "lineno": 16,
-          "is_method": false
+          "is_method": false,
+          "signature": "health()",
+          "docstring": "Public route: report liveness plus upstream reachability."
         }
       },
       {
@@ -417,7 +468,9 @@
           "relpath": "controllers/report_controller.py",
           "module": "controllers.report_controller",
           "lineno": 15,
-          "is_method": false
+          "is_method": false,
+          "signature": "get_report(report_id)",
+          "docstring": "Public route: render the identified report as HTML."
         }
       },
       {
@@ -429,6 +482,8 @@
           "module": "maintenance.http",
           "lineno": 11,
           "is_method": false,
+          "signature": "fetch(url)",
+          "docstring": "Fetch a URL and return its raw body (maintenance use only).",
           "unresolved_calls": [
             "pool.request"
           ],
@@ -443,7 +498,9 @@
           "relpath": "maintenance/sync.py",
           "module": "maintenance.sync",
           "lineno": 14,
-          "is_method": false
+          "is_method": false,
+          "signature": "run_sync()",
+          "docstring": "Fetch the latest config feed. Run from cron, not from a web request."
         }
       },
       {
@@ -454,7 +511,15 @@
           "relpath": "parsers/loader.py",
           "module": "parsers.loader",
           "lineno": 11,
-          "is_method": false
+          "is_method": false,
+          "signature": "load_document(raw)",
+          "docstring": "Load a YAML document into a Python object via PyYAML.",
+          "docs": [
+            {
+              "source": "openapi.yaml",
+              "snippet": "rvice (`validate`) and the YAML parser (`load_document`), which parses the document w"
+            }
+          ]
         }
       },
       {
@@ -465,7 +530,9 @@
           "relpath": "parsers/yaml_parser.py",
           "module": "parsers.yaml_parser",
           "lineno": 10,
-          "is_method": false
+          "is_method": false,
+          "signature": "parse(raw)",
+          "docstring": "Parse a single YAML configuration document."
         }
       },
       {
@@ -476,7 +543,9 @@
           "relpath": "renderers/html_renderer.py",
           "module": "renderers.html_renderer",
           "lineno": 15,
-          "is_method": false
+          "is_method": false,
+          "signature": "render_html(title, body)",
+          "docstring": "Return an HTML fragment with its untrusted fields escaped via Jinja2."
         }
       },
       {
@@ -487,7 +556,15 @@
           "relpath": "services/config_service.py",
           "module": "services.config_service",
           "lineno": 10,
-          "is_method": false
+          "is_method": false,
+          "signature": "ingest(raw)",
+          "docstring": "Validate and parse an uploaded configuration document.\n\nReturns the number of top-level keys in the parsed configuration.",
+          "docs": [
+            {
+              "source": "openapi.yaml",
+              "snippet": "bytes flow through the config service (`ingest`) into the validation service"
+            }
+          ]
         }
       },
       {
@@ -498,7 +575,9 @@
           "relpath": "services/content_service.py",
           "module": "services.content_service",
           "lineno": 10,
-          "is_method": false
+          "is_method": false,
+          "signature": "assemble(report_id)",
+          "docstring": "Assemble the title/body for a report and render it to HTML."
         }
       },
       {
@@ -509,7 +588,9 @@
           "relpath": "services/health_service.py",
           "module": "services.health_service",
           "lineno": 20,
-          "is_method": false
+          "is_method": false,
+          "signature": "_summarize(response)",
+          "docstring": "Reduce an HTTP response to a small JSON-friendly status dict."
         }
       },
       {
@@ -520,7 +601,15 @@
           "relpath": "services/health_service.py",
           "module": "services.health_service",
           "lineno": 14,
-          "is_method": false
+          "is_method": false,
+          "signature": "check_upstream()",
+          "docstring": "Probe the upstream service and summarise the result.",
+          "docs": [
+            {
+              "source": "openapi.yaml",
+              "snippet": "HTTP using the requests client (`check_upstream`). Used by load balancers and uptime m"
+            }
+          ]
         }
       },
       {
@@ -531,7 +620,9 @@
           "relpath": "services/report_service.py",
           "module": "services.report_service",
           "lineno": 10,
-          "is_method": false
+          "is_method": false,
+          "signature": "build_report(report_id)",
+          "docstring": "Build the HTML body for the report identified by ``report_id``."
         }
       },
       {
@@ -542,7 +633,9 @@
           "relpath": "services/template_service.py",
           "module": "services.template_service",
           "lineno": 11,
-          "is_method": false
+          "is_method": false,
+          "signature": "render(title, body)",
+          "docstring": "Render a report title/body pair to an HTML fragment."
         }
       },
       {
@@ -553,7 +646,15 @@
           "relpath": "services/validation_service.py",
           "module": "services.validation_service",
           "lineno": 14,
-          "is_method": false
+          "is_method": false,
+          "signature": "validate(raw)",
+          "docstring": "Reject obviously bad uploads, then parse the document.",
+          "docs": [
+            {
+              "source": "openapi.yaml",
+              "snippet": "`) into the validation service (`validate`) and the YAML parser (`load_document`"
+            }
+          ]
         }
       },
       {
@@ -565,6 +666,8 @@
           "module": "tools.thumbnail_cli",
           "lineno": 17,
           "is_method": false,
+          "signature": "make_thumbnail(source_path, dest_path)",
+          "docstring": "Create a thumbnail of ``source_path`` at ``dest_path`` using Pillow.",
           "unresolved_calls": [
             "image.resize",
             "thumbnail.save"
@@ -1226,11 +1329,74 @@
       },
       {
         "src": "doc:README.md",
+        "dst": "ep:GET:/reports/<report_id>",
+        "kind": "documents",
+        "attrs": {
+          "matched": "/reports/<report_id>",
+          "snippet": "d document as a config record, and `GET /reports/<report_id>` loads a report row by its id before re"
+        }
+      },
+      {
+        "src": "doc:README.md",
         "dst": "ep:POST:/configs/import",
         "kind": "documents",
         "attrs": {
           "matched": "/configs/import",
           "snippet": "------------------------------| | `POST /configs/import` | `controllers.config_controller.imp"
+        }
+      },
+      {
+        "src": "doc:openapi.yaml",
+        "dst": "ep:GET:/health",
+        "kind": "documents",
+        "attrs": {
+          "matched": "/health",
+          "snippet": "schema: type: string /health: get: operationId: health"
+        }
+      },
+      {
+        "src": "doc:openapi.yaml",
+        "dst": "ep:POST:/configs/import",
+        "kind": "documents",
+        "attrs": {
+          "matched": "/configs/import",
+          "snippet": "tion: Local development server paths: /configs/import: post: operationId: import_co"
+        }
+      },
+      {
+        "src": "doc:openapi.yaml",
+        "dst": "fn:parsers/loader.py:load_document",
+        "kind": "documents",
+        "attrs": {
+          "matched": "load_document",
+          "snippet": "rvice (`validate`) and the YAML parser (`load_document`), which parses the document w"
+        }
+      },
+      {
+        "src": "doc:openapi.yaml",
+        "dst": "fn:services/config_service.py:ingest",
+        "kind": "documents",
+        "attrs": {
+          "matched": "ingest",
+          "snippet": "bytes flow through the config service (`ingest`) into the validation service"
+        }
+      },
+      {
+        "src": "doc:openapi.yaml",
+        "dst": "fn:services/health_service.py:check_upstream",
+        "kind": "documents",
+        "attrs": {
+          "matched": "check_upstream",
+          "snippet": "HTTP using the requests client (`check_upstream`). Used by load balancers and uptime m"
+        }
+      },
+      {
+        "src": "doc:openapi.yaml",
+        "dst": "fn:services/validation_service.py:validate",
+        "kind": "documents",
+        "attrs": {
+          "matched": "validate",
+          "snippet": "`) into the validation service (`validate`) and the YAML parser (`load_document`"
         }
       },
       {
@@ -1453,9 +1619,9 @@
     "summary": {
       "node_counts": {
         "dependency": 6,
-        "doc": 1,
+        "doc": 2,
         "entrypoint": 3,
-        "file": 24,
+        "file": 25,
         "function": 16,
         "module": 22
       },
@@ -1463,7 +1629,7 @@
         "calls": 25,
         "contains": 22,
         "declares": 22,
-        "documents": 2,
+        "documents": 9,
         "imports": 33,
         "route_to_handler": 3
       },
@@ -1562,11 +1728,11 @@
         "fully_resolved": true,
         "verdict_by_dep": {
           "dep:PyPI:Flask": "reachable",
-          "dep:PyPI:Pillow": "unreachable",
-          "dep:PyPI:Jinja2": "unreachable",
-          "dep:PyPI:PyYAML": "unreachable",
+          "dep:PyPI:requests": "reachable",
           "dep:PyPI:urllib3": "unreachable",
-          "dep:PyPI:requests": "reachable"
+          "dep:PyPI:Jinja2": "unreachable",
+          "dep:PyPI:Pillow": "unreachable",
+          "dep:PyPI:PyYAML": "unreachable"
         }
       },
       {
@@ -1603,11 +1769,11 @@
         "fully_resolved": true,
         "verdict_by_dep": {
           "dep:PyPI:Flask": "unreachable",
-          "dep:PyPI:Pillow": "unreachable",
-          "dep:PyPI:Jinja2": "reachable",
-          "dep:PyPI:PyYAML": "unreachable",
+          "dep:PyPI:requests": "unreachable",
           "dep:PyPI:urllib3": "unreachable",
-          "dep:PyPI:requests": "unreachable"
+          "dep:PyPI:Jinja2": "reachable",
+          "dep:PyPI:Pillow": "unreachable",
+          "dep:PyPI:PyYAML": "unreachable"
         }
       },
       {
@@ -1661,11 +1827,11 @@
         "fully_resolved": true,
         "verdict_by_dep": {
           "dep:PyPI:Flask": "reachable",
-          "dep:PyPI:Pillow": "unreachable",
-          "dep:PyPI:Jinja2": "unreachable",
-          "dep:PyPI:PyYAML": "reachable",
+          "dep:PyPI:requests": "unreachable",
           "dep:PyPI:urllib3": "unreachable",
-          "dep:PyPI:requests": "unreachable"
+          "dep:PyPI:Jinja2": "unreachable",
+          "dep:PyPI:Pillow": "unreachable",
+          "dep:PyPI:PyYAML": "reachable"
         }
       }
     ],
@@ -1714,11 +1880,11 @@
       "reachable_region_fully_resolved": true,
       "verdict_by_dep": {
         "dep:PyPI:Flask": "reachable",
-        "dep:PyPI:Pillow": "unreachable",
-        "dep:PyPI:Jinja2": "reachable",
-        "dep:PyPI:PyYAML": "reachable",
+        "dep:PyPI:requests": "reachable",
         "dep:PyPI:urllib3": "unreachable",
-        "dep:PyPI:requests": "reachable"
+        "dep:PyPI:Jinja2": "reachable",
+        "dep:PyPI:Pillow": "unreachable",
+        "dep:PyPI:PyYAML": "reachable"
       },
       "verdict_counts": {
         "reachable": 4,
@@ -3981,13 +4147,14 @@
   },
   "coverage": {
     "files": {
-      "total": 24,
+      "total": 25,
       "by_language": {
         "markdown": 1,
         "python": 22,
-        "text": 1
+        "text": 1,
+        "yaml": 1
       },
-      "parsed": 24,
+      "parsed": 25,
       "parse_errors": 0,
       "parse_success_rate": 1.0
     },
@@ -4022,6 +4189,431 @@
     },
     "confidence_note": "Reachability is a lower bound: the scan traverses only resolved edges and never infers one, so a dependency marked not-reachable may still be reached via code the analysis could not resolve. Unresolved here: 7 unresolved call site(s)."
   },
+  "assessments": [
+    {
+      "dependency_id": "dep:PyPI:Jinja2",
+      "dependency_name": "Jinja2",
+      "cve": "CVE-2020-28493",
+      "vuln_id": "GHSA-g3rq-g295-4j3m",
+      "exposure": "internet-facing",
+      "authentication": "none",
+      "rationale": "README states all three routes are public with no auth layer, and OpenAPI describes GET /reports/{report_id} as public and unauthenticated.",
+      "summary": "Public unauthenticated report rendering via Jinja2 is directly exposed.",
+      "provenance": "llm",
+      "reaching_entrypoints": [
+        "GET /reports/<report_id>"
+      ],
+      "context": [
+        {
+          "category": "data_store",
+          "detail": "PostgreSQL",
+          "access": "loads the report row by report_id from PostgreSQL",
+          "source": "openapi.yaml",
+          "snippet": "from PostgreSQL (through"
+        },
+        {
+          "category": "data_store",
+          "detail": "Redis cache",
+          "access": "cache in front to avoid re-rendering repeat requests",
+          "source": "openapi.yaml",
+          "snippet": "with a Redis cache in front"
+        },
+        {
+          "category": "data_handling",
+          "detail": "Jinja2",
+          "access": "untrusted fields escaped through renderer before page",
+          "source": "openapi.yaml",
+          "snippet": "escaped through Jinja2 in the renderer"
+        },
+        {
+          "category": "authentication",
+          "detail": "no auth layer",
+          "access": "all routes public with no auth",
+          "source": "README.md",
+          "snippet": "there is no auth layer in this demo"
+        },
+        {
+          "category": "authentication",
+          "detail": "public unauthenticated access",
+          "access": "any client can call every endpoint",
+          "source": "openapi.yaml",
+          "snippet": "Public and unauthenticated"
+        }
+      ],
+      "advisory": true,
+      "note": "Advisory exposure assessment only. Does NOT change the deterministic reachability verdict, add/modify any call or route edge, or override the analyzer/reachability/correlator output."
+    },
+    {
+      "dependency_id": "dep:PyPI:Jinja2",
+      "dependency_name": "Jinja2",
+      "cve": "CVE-2024-22195",
+      "vuln_id": "GHSA-h5c8-rqwp-cp95",
+      "exposure": "internet-facing",
+      "authentication": "none",
+      "rationale": "README states all three routes are public with no auth layer, and OpenAPI states any client can call every endpoint with this route public and unauthenticated.",
+      "summary": "Unauthenticated public report rendering reaches vulnerable Jinja2 with PostgreSQL and Redis backing.",
+      "provenance": "llm",
+      "reaching_entrypoints": [
+        "GET /reports/<report_id>"
+      ],
+      "context": [
+        {
+          "category": "authentication",
+          "detail": "no auth layer",
+          "access": "public routes",
+          "source": "README.md",
+          "snippet": "there is no auth layer in this demo."
+        },
+        {
+          "category": "authentication",
+          "detail": "no login, API key or token layer",
+          "access": "any client can call every endpoint",
+          "source": "openapi.yaml",
+          "snippet": "there is no login, API key or token layer"
+        },
+        {
+          "category": "data_store",
+          "detail": "PostgreSQL via SQLAlchemy",
+          "access": "loads report row by report_id",
+          "source": "openapi.yaml",
+          "snippet": "Loads the report row identified by `report_id` from PostgreSQL"
+        },
+        {
+          "category": "data_store",
+          "detail": "Redis cache",
+          "access": "in front of report rendering",
+          "source": "openapi.yaml",
+          "snippet": "with a Redis cache in front"
+        },
+        {
+          "category": "data_handling",
+          "detail": "Jinja2 rendering",
+          "access": "escapes untrusted report fields for HTML page",
+          "source": "openapi.yaml",
+          "snippet": "escaped through Jinja2 in the renderer"
+        }
+      ],
+      "advisory": true,
+      "note": "Advisory exposure assessment only. Does NOT change the deterministic reachability verdict, add/modify any call or route edge, or override the analyzer/reachability/correlator output."
+    },
+    {
+      "dependency_id": "dep:PyPI:Jinja2",
+      "dependency_name": "Jinja2",
+      "cve": "CVE-2024-34064",
+      "vuln_id": "GHSA-h75v-3vvj-5mfj",
+      "exposure": "internet-facing",
+      "authentication": "none",
+      "rationale": "Docs state all three routes are public and there is no auth layer, with no login, API key or token layer so any client can call every endpoint.",
+      "summary": "Public unauthenticated report rendering reaches vulnerable Jinja2.",
+      "provenance": "llm",
+      "reaching_entrypoints": [
+        "GET /reports/<report_id>"
+      ],
+      "context": [
+        {
+          "category": "data_store",
+          "detail": "PostgreSQL",
+          "access": "through SQLAlchemy",
+          "source": "openapi.yaml",
+          "snippet": "persisted in PostgreSQL via SQLAlchemy"
+        },
+        {
+          "category": "data_store",
+          "detail": "Redis",
+          "access": "cache in front to avoid re-rendering repeat requests",
+          "source": "openapi.yaml",
+          "snippet": "with a Redis cache in front to avoid re-rendering repeat"
+        },
+        {
+          "category": "authentication",
+          "detail": "no auth layer",
+          "access": null,
+          "source": "README.md",
+          "snippet": "there is no auth layer in this demo."
+        },
+        {
+          "category": "data_handling",
+          "detail": "Jinja2",
+          "access": "renders it to an HTML fragment",
+          "source": "openapi.yaml",
+          "snippet": "escaped through Jinja2 in the renderer"
+        }
+      ],
+      "advisory": true,
+      "note": "Advisory exposure assessment only. Does NOT change the deterministic reachability verdict, add/modify any call or route edge, or override the analyzer/reachability/correlator output."
+    },
+    {
+      "dependency_id": "dep:PyPI:Jinja2",
+      "dependency_name": "Jinja2",
+      "cve": "CVE-2024-56326",
+      "vuln_id": "GHSA-q2x7-8rv6-6q7h",
+      "exposure": "internet-facing",
+      "authentication": "none",
+      "rationale": "The docs state all three routes are public with no auth layer and any client can call every endpoint; the report endpoint is described as Public and unauthenticated.",
+      "summary": "Public unauthenticated report rendering reaches vulnerable Jinja2, remotely exposable without credentials.",
+      "provenance": "llm",
+      "reaching_entrypoints": [
+        "GET /reports/<report_id>"
+      ],
+      "context": [
+        {
+          "category": "authentication",
+          "detail": "no auth layer",
+          "access": "all routes public with no auth",
+          "source": "README.md",
+          "snippet": "there is no auth layer in this demo."
+        },
+        {
+          "category": "data_handling",
+          "detail": "Jinja2 report rendering",
+          "access": "renders a report to HTML",
+          "source": "README.md",
+          "snippet": "Jinja2 (renders a report to HTML)"
+        },
+        {
+          "category": "data_store",
+          "detail": "PostgreSQL via SQLAlchemy",
+          "access": "reports persisted and loaded from store",
+          "source": "openapi.yaml",
+          "snippet": "persisted in PostgreSQL via SQLAlchemy"
+        },
+        {
+          "category": "data_store",
+          "detail": "Redis cache",
+          "access": "in front to avoid re-rendering repeat requests",
+          "source": "openapi.yaml",
+          "snippet": "with a Redis cache in front"
+        },
+        {
+          "category": "authentication",
+          "detail": "no login, API key or token layer",
+          "access": "any client can call every endpoint",
+          "source": "openapi.yaml",
+          "snippet": "there is no login, API key or token layer"
+        },
+        {
+          "category": "data_handling",
+          "detail": "Jinja2 escaping",
+          "access": "untrusted fields escaped before page",
+          "source": "openapi.yaml",
+          "snippet": "escaped through Jinja2 in the renderer"
+        },
+        {
+          "category": "external_service",
+          "detail": "upstream status service",
+          "access": "health probe calls over HTTP with requests client",
+          "source": "openapi.yaml",
+          "snippet": "calls an upstream status service"
+        }
+      ],
+      "advisory": true,
+      "note": "Advisory exposure assessment only. Does NOT change the deterministic reachability verdict, add/modify any call or route edge, or override the analyzer/reachability/correlator output."
+    },
+    {
+      "dependency_id": "dep:PyPI:Jinja2",
+      "dependency_name": "Jinja2",
+      "cve": "CVE-2025-27516",
+      "vuln_id": "GHSA-cpwx-vrp4-4pq7",
+      "exposure": "internet-facing",
+      "authentication": "none",
+      "rationale": "Docs state all three routes are public with no auth layer and any client can call every endpoint; GET /reports/<id> renders a report to HTML via Jinja2.",
+      "summary": "Unauthenticated public report rendering reaches vulnerable Jinja2, exposed to any remote caller.",
+      "provenance": "llm",
+      "reaching_entrypoints": [
+        "GET /reports/<report_id>"
+      ],
+      "context": [
+        {
+          "category": "authentication",
+          "detail": "no auth layer, public routes",
+          "access": "any client can call every endpoint",
+          "source": "README.md",
+          "snippet": "there is no auth layer in this demo."
+        },
+        {
+          "category": "authentication",
+          "detail": "public and unauthenticated, no login or token",
+          "access": "any client can call every endpoint",
+          "source": "openapi.yaml",
+          "snippet": "any client can call every endpoint."
+        },
+        {
+          "category": "data_store",
+          "detail": "PostgreSQL via SQLAlchemy",
+          "access": "loads report row by report_id",
+          "source": "openapi.yaml",
+          "snippet": "Loads the report row identified by `report_id` from PostgreSQL (through"
+        },
+        {
+          "category": "data_store",
+          "detail": "Redis cache",
+          "access": "in front to avoid re-rendering repeat requests",
+          "source": "openapi.yaml",
+          "snippet": "with a Redis cache in front to avoid re-rendering repeat"
+        },
+        {
+          "category": "data_handling",
+          "detail": "Jinja2 HTML rendering",
+          "access": "escaped through Jinja2 in the renderer",
+          "source": "openapi.yaml",
+          "snippet": "escaped through Jinja2 in the renderer before they reach the page."
+        }
+      ],
+      "advisory": true,
+      "note": "Advisory exposure assessment only. Does NOT change the deterministic reachability verdict, add/modify any call or route edge, or override the analyzer/reachability/correlator output."
+    },
+    {
+      "dependency_id": "dep:PyPI:PyYAML",
+      "dependency_name": "PyYAML",
+      "cve": "CVE-2020-14343",
+      "vuln_id": "GHSA-8q59-q68h-6hv4",
+      "exposure": "internet-facing",
+      "authentication": "none",
+      "rationale": "Documentation for POST /configs/import contains the phrase \"unauthenticated\", indicating exposure=internet-facing / authentication=none.",
+      "summary": "PyYAML 5.3.1 (CVE-2020-14343) is reachable from POST /configs/import; docs describe it as internet-facing and unauthenticated -- treat as externally exploitable.",
+      "provenance": "offline-heuristic",
+      "reaching_entrypoints": [
+        "POST /configs/import"
+      ],
+      "context": [
+        {
+          "category": "external_service",
+          "detail": "http",
+          "access": null,
+          "source": "README.md",
+          "snippet": "ency and *being able to reach it* from a public HTTP route. ## What the service does A notes/confi"
+        },
+        {
+          "category": "external_service",
+          "detail": "api",
+          "access": null,
+          "source": "README.md",
+          "snippet": "## What the service does A notes/config/report API with three public HTTP routes: | Method & path"
+        },
+        {
+          "category": "external_service",
+          "detail": "upstream",
+          "access": null,
+          "source": "README.md",
+          "snippet": "controller.health` | requests (checks an upstream service) | All three routes are **public** ("
+        },
+        {
+          "category": "authentication",
+          "detail": "auth",
+          "access": null,
+          "source": "README.md",
+          "snippet": "blueprints on the app in `app.py`); there is no auth layer in this demo. ## Architecture The code"
+        },
+        {
+          "category": "authentication",
+          "detail": "public",
+          "access": null,
+          "source": "README.md",
+          "snippet": "dependency and *being able to reach it* from a public HTTP route. ## What the service does A notes/"
+        },
+        {
+          "category": "data_handling",
+          "detail": "yaml",
+          "access": null,
+          "source": "README.md",
+          "snippet": "ler.import_config` | PyYAML (parses an uploaded YAML config) | | `GET /reports/<id>` | `control"
+        },
+        {
+          "category": "data_handling",
+          "detail": "file",
+          "access": null,
+          "source": "README.md",
+          "snippet": "red so that the call chains are genuinely multi-file and several hops deep: ``` app.py"
+        },
+        {
+          "category": "data_store",
+          "detail": "postgresql",
+          "access": null,
+          "source": "openapi.yaml",
+          "snippet": "cords and rendered reports are persisted in PostgreSQL via SQLAlchemy, a Redis cache fronts report"
+        },
+        {
+          "category": "data_store",
+          "detail": "redis",
+          "access": null,
+          "source": "openapi.yaml",
+          "snippet": "s are persisted in PostgreSQL via SQLAlchemy, a Redis cache fronts report rendering, and the heal"
+        },
+        {
+          "category": "data_store",
+          "detail": "sqlalchemy",
+          "access": null,
+          "source": "openapi.yaml",
+          "snippet": "red reports are persisted in PostgreSQL via SQLAlchemy, a Redis cache fronts report rendering, and"
+        },
+        {
+          "category": "external_service",
+          "detail": "http",
+          "access": null,
+          "source": "openapi.yaml",
+          "snippet": "version: \"1.0.0\" description: > Public HTTP API for the demo-app reachability fixture. All"
+        },
+        {
+          "category": "external_service",
+          "detail": "api",
+          "access": null,
+          "source": "openapi.yaml",
+          "snippet": "mport_co openapi: 3.0.3 info: title: demo-app API version: \"1.0.0\" description: > Public"
+        },
+        {
+          "category": "external_service",
+          "detail": "upstream",
+          "access": null,
+          "source": "openapi.yaml",
+          "snippet": "report rendering, and the health probe calls an upstream status service over HTTP with the requests"
+        },
+        {
+          "category": "authentication",
+          "detail": "token",
+          "access": null,
+          "source": "openapi.yaml",
+          "snippet": "unauthenticated: there is no login, API key or token layer, so any client can call every endpoin"
+        },
+        {
+          "category": "authentication",
+          "detail": "login",
+          "access": null,
+          "source": "openapi.yaml",
+          "snippet": "are public and unauthenticated: there is no login, API key or token layer, so any client can"
+        },
+        {
+          "category": "authentication",
+          "detail": "unauthenticated",
+          "access": null,
+          "source": "openapi.yaml",
+          "snippet": "ty fixture. All three routes are public and unauthenticated: there is no login, API key or token layer, so"
+        },
+        {
+          "category": "authentication",
+          "detail": "public",
+          "access": null,
+          "source": "openapi.yaml",
+          "snippet": "app API version: \"1.0.0\" description: > Public HTTP API for the demo-app reachability fixture."
+        },
+        {
+          "category": "data_handling",
+          "detail": "yaml",
+          "access": null,
+          "source": "openapi.yaml",
+          "snippet": "rationId: import_config summary: Import a YAML configuration document description: >"
+        },
+        {
+          "category": "data_handling",
+          "detail": "user-supplied",
+          "access": null,
+          "source": "openapi.yaml",
+          "snippet": "n document description: > Accepts user-supplied YAML in the request body and ingests it. The ra"
+        }
+      ],
+      "advisory": true,
+      "note": "Advisory exposure assessment only. Does NOT change the deterministic reachability verdict, add/modify any call or route edge, or override the analyzer/reachability/correlator output."
+    }
+  ],
   "offline": false,
   "network_ok": true,
   "notices": []
