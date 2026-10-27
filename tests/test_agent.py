@@ -33,9 +33,11 @@ from scanner.agent.assess import (
     _INTERNAL_PHRASES,
     _NOAUTH_PHRASES,
     _PUBLIC_PHRASES,
+    DocEvidence,
     _find_phrase,
+    _offline_context,
 )
-from scanner.cli import _oneline
+from scanner.cli import _oneline, main
 from scanner.correlate import Finding
 from scanner.reachability import compute_reachability
 from scanner.scan import scan_repo
@@ -347,6 +349,216 @@ def test_offline_dep_fallback_when_no_findings(graph, reach):
     assert pyyaml.cve is None
     assert pyyaml.exposure == "internet-facing"
     assert pyyaml.provenance == "offline-heuristic"
+
+
+# -- structured CONTEXT extraction (Part 1) -----------------------------------
+
+
+def test_llm_path_surfaces_context_and_drops_unsourced(graph, reach):
+    # The model returns a `context` array: a grounded data_store item, an item
+    # with an out-of-vocab category (normalized to "other"), and two ungrounded
+    # items (missing source / missing snippet) that MUST be dropped.
+    client = _StubClient(
+        {
+            "exposure": "internet-facing",
+            "authentication": "none",
+            "rationale": "Documented as reachable from any user.",
+            "summary": "Publicly reachable YAML deserialization RCE.",
+            "context": [
+                {
+                    "category": "data_store",
+                    "detail": "PostgreSQL",
+                    "access": "SQLAlchemy ORM",
+                    "source": "README.md",
+                    "snippet": "config is stored in PostgreSQL",
+                },
+                {
+                    "category": "nonsense-category",  # -> normalized to "other"
+                    "detail": "something odd",
+                    "access": None,
+                    "source": "README.md",
+                    "snippet": "an odd mention",
+                },
+                {
+                    "category": "external_service",  # dropped: no source
+                    "detail": "ghost service",
+                    "access": None,
+                    "snippet": "has a snippet but no source",
+                },
+                {
+                    "category": "authentication",  # dropped: no snippet
+                    "detail": "ghost auth",
+                    "access": None,
+                    "source": "README.md",
+                },
+            ],
+        }
+    )
+    assessments = assess_findings(graph, [_pyyaml_finding()], reach, client=client)
+    a = assessments[0]
+    assert a.provenance == "llm"
+
+    # Only the two grounded items survive; the unsourced/unsnippeted are dropped.
+    assert len(a.context) == 2
+    by_detail = {item["detail"]: item for item in a.context}
+
+    store = by_detail["PostgreSQL"]
+    assert store["category"] == "data_store"
+    assert store["access"] == "SQLAlchemy ORM"
+    assert store["source"] == "README.md"
+    assert store["snippet"] == "config is stored in PostgreSQL"
+
+    # Out-of-vocabulary category normalized to "other" (still grounded).
+    assert by_detail["something odd"]["category"] == "other"
+
+    # Every surviving item is grounded with a source + snippet.
+    for item in a.context:
+        assert item["source"] and item["snippet"]
+        assert set(item) == {"category", "detail", "access", "source", "snippet"}
+
+
+def test_offline_context_extracts_data_store_with_snippet_and_source():
+    # A doc excerpt mentioning a data store via an ORM must yield a grounded
+    # data_store context item citing the quoted snippet and the source doc.
+    evidence = [
+        DocEvidence(
+            doc_id="doc:docs/architecture.md",
+            entrypoint="POST /configs/import",
+            excerpt="The imported config is stored in PostgreSQL via SQLAlchemy "
+            "and served over HTTP to any user.",
+            snippet=None,
+            relpath="docs/architecture.md",
+        )
+    ]
+    items = _offline_context(evidence)
+
+    stores = [i for i in items if i["category"] == "data_store"]
+    assert stores, "expected a data_store context item"
+    pg = next(i for i in stores if i["detail"] == "postgresql")
+    assert pg["source"] == "docs/architecture.md"
+    assert "PostgreSQL" in pg["snippet"]
+    assert pg["access"] is None  # offline heuristic does not infer access
+    assert set(pg) == {"category", "detail", "access", "source", "snippet"}
+
+    # The same scan is grounded across categories (http -> external_service).
+    assert any(i["category"] == "external_service" for i in items)
+
+
+def test_offline_context_is_empty_without_keyword_mentions():
+    # Nothing stated -> no fabricated stores/services. Empty list, not a guess.
+    evidence = [
+        DocEvidence(
+            doc_id="doc:README.md",
+            entrypoint="GET /health",
+            excerpt="A simple liveness probe that returns ok.",
+            snippet=None,
+            relpath="README.md",
+        )
+    ]
+    assert _offline_context(evidence) == []
+
+
+def test_offline_assessment_carries_context_from_readme(graph, reach):
+    # End-to-end offline: PyYAML's README excerpt mentions YAML/uploads, so the
+    # assessment surfaces grounded data_handling context items.
+    assessments = assess_findings(
+        graph, [_pyyaml_finding()], reach, client=LLMClient.disabled()
+    )
+    a = assessments[0]
+    assert a.context  # grounded, non-empty
+    categories = {item["category"] for item in a.context}
+    assert "data_handling" in categories
+    for item in a.context:
+        assert item["source"] and item["snippet"]
+
+
+DEMO_APP = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "samples",
+    "demo-app",
+)
+
+
+def _normalize_ws(text: str) -> str:
+    return " ".join(text.split())
+
+
+def test_offline_context_surfaces_repo_level_data_store_on_demo_app():
+    # Repo-level broadening: the demo-app's PostgreSQL/SQLAlchemy persistence
+    # note and Redis cache sit deeper in the docs, outside any per-endpoint
+    # window. Offline context must now surface a grounded `data_store` item for
+    # them, cited to the doc it came from, with a snippet that genuinely appears
+    # in that source file (same grounding check as the node-detail tests).
+    graph = scan_repo(DEMO_APP)
+    reach = compute_reachability(graph)
+    # No advisory findings -> assessments fall back to the reachable deps.
+    assessments = assess_findings(graph, [], reach, client=LLMClient.disabled())
+    assert assessments
+
+    stores = [
+        item
+        for a in assessments
+        for item in a.context
+        if item["category"] == "data_store"
+    ]
+    assert stores, "expected repo-level data_store context items"
+    details = {item["detail"] for item in stores}
+    assert {"postgresql", "sqlalchemy"} & details, "expected PostgreSQL/SQLAlchemy"
+    assert "redis" in details, "expected the Redis cache data_store item"
+
+    for item in stores:
+        assert item["source"] and item["snippet"]
+        assert item["access"] is None  # offline heuristic does not infer access
+        source_path = os.path.join(DEMO_APP, item["source"])
+        with open(source_path, encoding="utf-8", errors="replace") as handle:
+            file_text = _normalize_ws(handle.read())
+        assert _normalize_ws(item["snippet"]) in file_text, (
+            f"snippet for {item['source']} not found in that source file"
+        )
+
+
+# -- bundle carries the assessments (Part 2) ----------------------------------
+
+
+def test_cli_bundle_includes_assessments_with_context(tmp_path, capsys):
+    # `audit --bundle` must ALWAYS carry the advisory assessments (offline here),
+    # each keyed so a UI can attach it to a finding / entry point, incl. context.
+    bundle_path = tmp_path / "bundle.json"
+    rc = main(["audit", SAMPLE_APP, "--offline", "--bundle", str(bundle_path)])
+    assert rc == 0
+
+    bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
+    assert "assessments" in bundle
+    assert isinstance(bundle["assessments"], list) and bundle["assessments"]
+
+    for a in bundle["assessments"]:
+        # Keyed for the UI: dep id/cve + the reaching entry point(s).
+        assert "dependency_id" in a
+        assert "cve" in a and "vuln_id" in a
+        assert "reaching_entrypoints" in a
+        assert isinstance(a["context"], list)
+        assert a["advisory"] is True
+        assert a["provenance"] == "offline-heuristic"
+        for item in a["context"]:
+            assert item["source"] and item["snippet"]
+
+    # The reachable PyYAML dep carries grounded data_handling context (YAML).
+    pyyaml = next(a for a in bundle["assessments"] if a["dependency_id"] == PYYAML_ID)
+    assert pyyaml["reaching_entrypoints"]
+    assert any(
+        item["category"] == "data_handling" for item in pyyaml["context"]
+    )
+
+
+def test_cli_audit_json_gains_assessments_key(tmp_path, capsys):
+    # `audit --json` gains the `assessments` key (the default TEXT output does
+    # not; that is covered by the unchanged report tests).
+    out_path = tmp_path / "audit.json"
+    rc = main(["audit", SAMPLE_APP, "--offline", "--json", "-o", str(out_path)])
+    assert rc == 0
+    payload = json.loads(out_path.read_text(encoding="utf-8"))
+    assert "assessments" in payload
+    assert isinstance(payload["assessments"], list)
 
 
 # -- hard guardrail -----------------------------------------------------------

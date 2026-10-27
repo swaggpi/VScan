@@ -170,26 +170,30 @@ def _oneline(text: str, limit: int = 300) -> str:
     return collapsed if len(collapsed) <= limit else collapsed[: limit - 1] + "…"
 
 
-def _format_assessments(
+def _assess_exposure(
     graph: KnowledgeGraph,
     correlation: CorrelationResult,
     reach: ReachabilityResult,
     *,
     offline: bool,
-) -> str:
-    """Render the advisory exposure assessments for the reachable findings.
+) -> tuple[list, bool]:
+    """Run the advisory agent pass once, returning (assessments, model_used).
 
     Uses the configured model when available; otherwise the deterministic
     offline heuristic. ``offline`` forces the heuristic (no network) regardless
-    of whether model env vars are set, matching ``audit --offline``.
+    of whether model env vars are set, matching ``audit --offline``. The result
+    is reused by the ``--explain`` text render, the ``--bundle`` payload and the
+    ``--json`` audit output so the model is called at most once per run.
     """
     client = LLMClient.disabled() if offline else LLMClient()
-    assessments = assess_findings(
-        graph, correlation.findings, reach, client=client
-    )
+    assessments = assess_findings(graph, correlation.findings, reach, client=client)
+    return assessments, client.available()
 
+
+def _format_assessments(assessments: list, *, model_configured: bool) -> str:
+    """Render the advisory exposure assessments for the reachable findings."""
     lines: list[str] = ["", "Exposure assessment (advisory tier)", "-" * 72]
-    if client.available():
+    if model_configured:
         lines.append("Model: configured via LLM_BASE_URL/LLM_API_KEY/LLM_MODEL.")
     else:
         lines.append(
@@ -213,6 +217,14 @@ def _format_assessments(
         lines.append(f"    exposure: {a.exposure}   authentication: {a.authentication}")
         lines.append(f"    rationale: {_oneline(a.rationale)}")
         lines.append(f"    summary: {_oneline(a.summary)}")
+        for item in a.context:
+            access = item.get("access")
+            access_text = f"; access: {_oneline(str(access), 120)}" if access else ""
+            lines.append(
+                f"    context [{item.get('category')}] {_oneline(str(item.get('detail')), 120)}"
+                f"{access_text}  (source: {item.get('source')})"
+            )
+            lines.append(f"      snippet: \"{_oneline(str(item.get('snippet')), 160)}\"")
         lines.append(f"    [provenance={a.provenance}; advisory={a.advisory}]")
         lines.append("")
     return "\n".join(lines)
@@ -222,6 +234,8 @@ def _build_bundle(
     graph: KnowledgeGraph,
     correlation: CorrelationResult,
     reach: ReachabilityResult,
+    *,
+    assessments: list,
 ) -> dict:
     """Assemble one self-contained payload the dashboard viewer can load.
 
@@ -230,14 +244,23 @@ def _build_bundle(
     headline summary and network status -- and adds the structural graph and
     the full reachability result so the viewer needs no other file. Works
     offline too: findings is then empty and ``offline``/``network_ok`` say so.
+
+    ``assessments`` is the advisory agent tier (already computed by the caller
+    with the real model when configured, else the offline heuristic), surfaced
+    under ``"assessments"`` so the viewer can attach each exposure/auth judgement
+    and its structured ``context`` to the matching finding / entry point. The
+    bundle therefore ALWAYS carries assessments (offline-grounded by default).
     """
-    audit_payload = correlate_report.audit(graph, correlation, reach)
+    audit_payload = correlate_report.audit(
+        graph, correlation, reach, assessments=assessments
+    )
     return {
         "graph": graph.to_dict(),
         "reachability": reach.to_dict(),
         "findings": audit_payload["findings"],
         "summary": audit_payload["summary"],
         "coverage": audit_payload["coverage"],
+        "assessments": audit_payload["assessments"],
         "offline": audit_payload["offline"],
         "network_ok": audit_payload["network_ok"],
         "notices": audit_payload["notices"],
@@ -374,15 +397,34 @@ def main(argv: Sequence[str] | None = None) -> int:
             graph, offline=args.offline, use_nvd=args.nvd
         )
 
+        # The advisory agent tier feeds --bundle (always), the --json/-o audit
+        # payload, and the --explain text render. Compute it once -- so the model
+        # is called at most once per run -- only when something needs it. The
+        # default audit TEXT output never triggers it, so defaults are unchanged.
+        assessments: list = []
+        model_configured = False
+        if args.bundle or args.json or args.output or args.explain:
+            assessments, model_configured = _assess_exposure(
+                graph, correlation, reach, offline=args.offline
+            )
+
         if args.bundle:
             with open(args.bundle, "w", encoding="utf-8") as handle:
                 handle.write(
-                    json.dumps(_build_bundle(graph, correlation, reach), indent=2)
+                    json.dumps(
+                        _build_bundle(
+                            graph, correlation, reach, assessments=assessments
+                        ),
+                        indent=2,
+                    )
                 )
 
         if args.output or args.json:
             payload = json.dumps(
-                correlate_report.audit(graph, correlation, reach), indent=2
+                correlate_report.audit(
+                    graph, correlation, reach, assessments=assessments
+                ),
+                indent=2,
             )
             if args.output:
                 with open(args.output, "w", encoding="utf-8") as handle:
@@ -397,7 +439,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         )
         if args.explain:
-            print(_format_assessments(graph, correlation, reach, offline=args.offline))
+            print(
+                _format_assessments(assessments, model_configured=model_configured)
+            )
         return 0
 
     parser.error(f"unknown command: {args.command}")  # pragma: no cover

@@ -101,8 +101,20 @@ def audit(
     graph: KnowledgeGraph,
     correlation: CorrelationResult,
     reach: ReachabilityResult,
+    *,
+    assessments: list[Any] | None = None,
 ) -> dict[str, Any]:
-    """Run the join + ranking and return a JSON-serializable audit payload."""
+    """Run the join + ranking and return a JSON-serializable audit payload.
+
+    ``assessments`` is the optional advisory agent tier (a list of
+    :class:`~scanner.agent.Assessment`). It is computed by the CLI (which owns
+    the model/offline choice) and passed in so this network-free module never
+    imports or invokes the agent itself. When provided, each assessment is
+    serialized under an ``"assessments"`` key, carrying its ``dependency_id`` /
+    ``cve`` / ``vuln_id`` and ``reaching_entrypoints`` so a UI can attach it to
+    the matching finding or entry point, plus the structured ``context``. When
+    ``None`` the key is omitted and the payload is byte-for-byte as before.
+    """
     join_reachability(graph, correlation.findings, reach)
     ranked = rank_findings(correlation.findings)
     verdicts = reach.repo.verdict_by_dep
@@ -116,7 +128,7 @@ def audit(
         )
         return payload
 
-    return {
+    payload: dict[str, Any] = {
         "offline": correlation.offline,
         "network_ok": correlation.network_ok,
         "notices": list(correlation.notices),
@@ -124,6 +136,21 @@ def audit(
         "coverage": compute_coverage(graph, reach).to_dict(),
         "findings": [_finding_dict(f) for f in ranked],
     }
+    if assessments is not None:
+        payload["assessments"] = [_assessment_dict(a) for a in assessments]
+    return payload
+
+
+def _assessment_dict(assessment: Any) -> dict[str, Any]:
+    """Serialize one advisory :class:`~scanner.agent.Assessment` for the payload.
+
+    Uses the assessment's own ``to_dict`` (dependency id, cve/vuln id, exposure,
+    authentication, rationale, summary, the structured ``context``, provenance,
+    reaching entry points and the advisory flag) so the UI has everything needed
+    to key it to a finding/entry point. Advisory only -- it never influences the
+    findings, ranking, summary or reachability above.
+    """
+    return assessment.to_dict()
 
 
 # -- text rendering -----------------------------------------------------------

@@ -108,6 +108,45 @@ _AUTH_PHRASES = (
 # way is ignored rather than fired.
 _NEGATORS = frozenset({"no", "not", "never"})
 
+# Allowed CONTEXT categories. Anything a model returns outside this set is
+# normalized to "other"; items lacking a source/snippet are dropped entirely.
+_CONTEXT_CATEGORIES = frozenset(
+    {"data_store", "external_service", "authentication", "data_handling", "other"}
+)
+
+# Offline-heuristic CONTEXT table: ``(category, canonical detail, variants)``.
+# Each variant is matched case-insensitively on a word boundary against the same
+# doc evidence the exposure heuristic scans. The first variant that hits yields
+# one context item (one per (category, detail, source)); the matched phrase is
+# quoted verbatim as the ``snippet`` and the doc relpath is the ``source``. This
+# is a grounded keyword scan -- it never invents a store/service the docs do not
+# mention; with no hits the context list is simply empty.
+_CONTEXT_PATTERNS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("data_store", "postgresql", ("postgresql", "postgres")),
+    ("data_store", "mysql", ("mysql",)),
+    ("data_store", "sqlite", ("sqlite",)),
+    ("data_store", "mongodb", ("mongodb", "mongo")),
+    ("data_store", "redis", ("redis",)),
+    ("data_store", "sqlalchemy", ("sqlalchemy",)),
+    ("data_store", "database", ("database", "databases")),
+    ("external_service", "http", ("http", "https")),
+    ("external_service", "api", ("api",)),
+    ("external_service", "s3", ("s3",)),
+    ("external_service", "webhook", ("webhook", "webhooks")),
+    ("external_service", "upstream", ("upstream",)),
+    ("authentication", "authentication", ("authentication", "authenticated")),
+    ("authentication", "auth", ("auth",)),
+    ("authentication", "token", ("token", "tokens")),
+    ("authentication", "jwt", ("jwt",)),
+    ("authentication", "login", ("login",)),
+    ("authentication", "unauthenticated", ("unauthenticated",)),
+    ("authentication", "public", ("public",)),
+    ("data_handling", "upload", ("upload", "uploads")),
+    ("data_handling", "yaml", ("yaml",)),
+    ("data_handling", "file", ("file", "files")),
+    ("data_handling", "user-supplied", ("user-supplied", "user supplied")),
+)
+
 
 @dataclass
 class DocEvidence:
@@ -117,6 +156,7 @@ class DocEvidence:
     entrypoint: str  # "METHOD /path"
     excerpt: str | None
     snippet: str | None  # surrounding text from the documents edge
+    relpath: str | None = None  # the doc's repo-relative path (context source)
 
 
 @dataclass
@@ -142,6 +182,20 @@ class Assessment:
     # Provenance / guardrail labelling.
     provenance: str  # "llm" | "offline-heuristic"
     reaching_entrypoints: list[str] = field(default_factory=list)
+
+    # Structured, source-cited CONTEXT extracted from the documentation (data
+    # stores + how they are accessed, external services, authentication, data
+    # handling). Drawn from BOTH the reaching entry points' route-window docs
+    # and the repo-level doc corpus (README/OpenAPI/docs), so a fact stated
+    # anywhere in the docs is surfaced -- always grounded, never fabricated.
+    # Each item is
+    # ``{"category", "detail", "access", "source", "snippet"}`` where category is
+    # one of data_store | external_service | authentication | data_handling |
+    # other; ``access`` may be ``None``. Every item is grounded: it carries the
+    # quoted ``snippet`` and the ``source`` doc it came from. Empty when the docs
+    # state nothing -- never fabricated.
+    context: list[dict[str, Any]] = field(default_factory=list)
+
     advisory: bool = True
     note: str = _ADVISORY_NOTE
 
@@ -186,6 +240,7 @@ def _doc_evidence(
         seen.add(key)
         doc = graph.get_node(edge.src)
         excerpt = doc.attrs.get("excerpt") if doc is not None else None
+        relpath = doc.attrs.get("relpath") if doc is not None else None
         evidence.append(
             DocEvidence(
                 doc_id=edge.src,
@@ -195,6 +250,12 @@ def _doc_evidence(
                     edge.attrs.get("snippet")
                     if isinstance(edge.attrs.get("snippet"), str)
                     else None
+                ),
+                relpath=(
+                    relpath
+                    if isinstance(relpath, str) and relpath
+                    # fall back to the id minus its "doc:" prefix
+                    else edge.src[4:] if edge.src.startswith("doc:") else edge.src
                 ),
             )
         )
@@ -211,6 +272,55 @@ def _evidence_text(evidence: list[DocEvidence]) -> str:
         if ev.excerpt:
             parts.append(ev.excerpt)
     return "\n".join(parts)
+
+
+# Total budget (chars) of repo-level doc text fed into CONTEXT extraction. The
+# whole doc corpus can be large, so the repo-level excerpts are concatenated
+# only up to this bound -- a few KB -- keeping the prompt and the offline scan
+# cheap and the output deterministic even on a docs-heavy repository.
+_REPO_DOC_BUDGET = 8000
+
+
+def _repo_doc_evidence(graph: KnowledgeGraph) -> list[DocEvidence]:
+    """Repo-level documentation corpus: every ``doc`` node's excerpt.
+
+    Unlike :func:`_doc_evidence` (which returns only the docs ``documents``-
+    linked to a specific endpoint's route window), this surfaces facts stated
+    *anywhere* in the README/OpenAPI/docs -- e.g. "configs are persisted in
+    PostgreSQL via SQLAlchemy" -- so they are available to CONTEXT extraction
+    even when they sit outside any per-endpoint snippet window.
+
+    These items carry the doc ``excerpt`` and its ``relpath`` (the ``source`` to
+    cite) but no route ``snippet`` and no real ``entrypoint`` -- they are used
+    for ``context`` only and never feed the per-endpoint exposure/auth phrase
+    scan. The concatenated excerpt text is bounded by ``_REPO_DOC_BUDGET`` and
+    iteration is sorted by node id, so the corpus is deterministic.
+    """
+    evidence: list[DocEvidence] = []
+    remaining = _REPO_DOC_BUDGET
+    for node in sorted(graph.nodes_of_kind("doc"), key=lambda n: n.id):
+        if remaining <= 0:
+            break
+        excerpt = node.attrs.get("excerpt")
+        if not isinstance(excerpt, str) or not excerpt.strip():
+            continue
+        excerpt = excerpt[:remaining]
+        remaining -= len(excerpt)
+        relpath = node.attrs.get("relpath")
+        evidence.append(
+            DocEvidence(
+                doc_id=node.id,
+                entrypoint="(repository documentation)",
+                excerpt=excerpt,
+                snippet=None,
+                relpath=(
+                    relpath
+                    if isinstance(relpath, str) and relpath
+                    else node.id[4:] if node.id.startswith("doc:") else node.id
+                ),
+            )
+        )
+    return evidence
 
 
 # -- subjects ----------------------------------------------------------------
@@ -286,16 +396,138 @@ def _find_phrase(text: str, phrases: tuple[str, ...]) -> str | None:
     return None
 
 
+def _context_source(ev: DocEvidence) -> str | None:
+    """The repo-relative doc path to cite as a context item's ``source``."""
+    if isinstance(ev.relpath, str) and ev.relpath:
+        return ev.relpath
+    if ev.doc_id.startswith("doc:"):
+        return ev.doc_id[4:]
+    return ev.doc_id or None
+
+
+def _keyword_snippet(text: str, start: int, end: int, window: int = 48) -> str:
+    """Quote a short phrase of ``text`` around ``[start, end)`` verbatim.
+
+    Returns the matched keyword plus a little surrounding context (original
+    case), whitespace-collapsed so it reads as one clean phrase. This is the
+    grounded citation for a context item -- it is lifted straight from the doc,
+    never paraphrased.
+    """
+    lo = max(0, start - window)
+    hi = min(len(text), end + window)
+    return " ".join(text[lo:hi].split()).strip()
+
+
+def _offline_context(evidence: list[DocEvidence]) -> list[dict[str, Any]]:
+    """Deterministic, source-cited context extraction over the doc evidence.
+
+    Scans each reaching entry point's documentation for the keyword table above
+    and emits one grounded item per (category, detail, source) hit, quoting the
+    matched phrase and citing the doc it came from. Purely a keyword scan: it
+    only ever surfaces stores/services/auth/data-handling the docs actually
+    mention, and returns ``[]`` when they mention none. ``access`` is left
+    ``None`` (the offline heuristic does not infer how a store is reached).
+    """
+    items: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for ev in evidence:
+        source = _context_source(ev)
+        if not source:
+            continue
+        text = "\n".join(p for p in (ev.snippet, ev.excerpt) if p)
+        if not text:
+            continue
+        lowered = text.lower()
+        for category, detail, variants in _CONTEXT_PATTERNS:
+            key = (category, detail, source)
+            if key in seen:
+                continue
+            for variant in variants:
+                match = re.search(r"\b" + re.escape(variant) + r"\b", lowered)
+                if match is None:
+                    continue
+                snippet = _keyword_snippet(text, match.start(), match.end())
+                if not snippet:  # grounded only: drop an item with no citation
+                    break
+                seen.add(key)
+                items.append(
+                    {
+                        "category": category,
+                        "detail": detail,
+                        "access": None,
+                        "source": source,
+                        "snippet": snippet,
+                    }
+                )
+                break
+    return items
+
+
+def _normalize_context(raw: Any) -> list[dict[str, Any]]:
+    """Validate/normalize the model's ``context`` array.
+
+    Keeps only grounded items: an item MUST carry a non-empty ``source`` and
+    ``snippet`` or it is dropped (no fabrication). Out-of-vocabulary categories
+    collapse to ``"other"``; ``detail`` falls back to the category and ``access``
+    to ``None`` when absent. Every surviving item has exactly the five schema
+    keys.
+    """
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        source = item.get("source")
+        snippet = item.get("snippet")
+        if not (isinstance(source, str) and source.strip()):
+            continue  # drop: no source citation
+        if not (isinstance(snippet, str) and snippet.strip()):
+            continue  # drop: no quoted snippet
+        category = item.get("category")
+        category = category.strip().lower() if isinstance(category, str) else ""
+        if category not in _CONTEXT_CATEGORIES:
+            category = "other"
+        detail = item.get("detail")
+        detail = detail.strip() if isinstance(detail, str) and detail.strip() else category
+        access = item.get("access")
+        access = access.strip() if isinstance(access, str) and access.strip() else None
+        # Dedupe by (category, detail, source): the same repo-level fact may be
+        # stated in both a per-endpoint window and the repo-level corpus.
+        key = (category, detail, source.strip())
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(
+            {
+                "category": category,
+                "detail": detail,
+                "access": access,
+                "source": source.strip(),
+                "snippet": snippet.strip(),
+            }
+        )
+    return out
+
+
 def _offline_assessment(
     subject: _Subject,
     entrypoints: list[tuple[str, str]],
     evidence: list[DocEvidence],
+    repo_docs: list[DocEvidence] | None = None,
 ) -> Assessment:
     """Deterministic heuristic over the same doc/route context.
 
     Scans the reaching entry points' documentation for exposure/auth phrases and
     emits a templated rationale citing the matched phrase. Never guesses: with
     no matching evidence the verdict is ``unknown``.
+
+    Exposure/authentication stay strictly per-endpoint (``evidence`` only). The
+    ``context`` extraction, however, also draws on the repo-level doc corpus
+    (``repo_docs``) so a store/service/auth fact stated anywhere in the docs is
+    surfaced; items are still grounded (source + verbatim snippet) and
+    ``_offline_context`` dedupes by (category, detail, source).
     """
     labels = sorted({label for _, label in entrypoints})
     ep_text = ", ".join(labels) or "a public entry point"
@@ -388,6 +620,7 @@ def _offline_assessment(
         summary=summary,
         provenance="offline-heuristic",
         reaching_entrypoints=labels,
+        context=_offline_context(evidence + (repo_docs or [])),
     )
 
 
@@ -395,6 +628,7 @@ def _build_prompt(
     subject: _Subject,
     entrypoints: list[tuple[str, str]],
     evidence: list[DocEvidence],
+    repo_docs: list[DocEvidence] | None = None,
 ) -> tuple[str, str]:
     """Build (system, user) prompts for the exposure judgement (strict JSON)."""
     system_prompt = (
@@ -407,8 +641,22 @@ def _build_prompt(
         "object and nothing else, with keys: exposure (one of "
         '"internet-facing", "internal", "unknown"), authentication (one of '
         '"required", "none", "unknown"), rationale (1-2 sentences citing the doc '
-        "evidence), summary (a short risk sentence). If the documentation does "
-        'not provide evidence, use "unknown" -- do not guess.'
+        "evidence), summary (a short risk sentence), and context (an array). "
+        "Each context item describes something the documentation states about "
+        "this endpoint and MUST be an object with keys: category (one of "
+        '"data_store", "external_service", "authentication", "data_handling", '
+        '"other"), detail (a short phrase, e.g. the store/service name), access '
+        "(how it is reached or used, or null), source (the doc path it came "
+        "from, exactly as given in the 'source:' field below), and snippet (a "
+        "short phrase quoted VERBATIM from that doc supporting the item). Extract "
+        "context ONLY from the documentation below -- BOTH the per-endpoint "
+        "documentation AND the repository documentation sections -- so a data "
+        "store, cache, external service or auth fact stated anywhere in the docs "
+        "is captured. Do NOT invent a database, service or auth scheme the docs "
+        "do not mention. Every item must quote a real snippet and name its "
+        "source; if the docs state nothing, return an empty array. Judge "
+        "EXPOSURE and AUTHENTICATION from the per-endpoint documentation; if it "
+        'does not provide evidence for them, use "unknown" -- do not guess.'
     )
 
     labels = sorted({label for _, label in entrypoints})
@@ -427,7 +675,10 @@ def _build_prompt(
     lines.append("<documentation untrusted=\"true\">")
     if evidence:
         for ev in evidence:
-            lines.append(f"- entrypoint {ev.entrypoint} (from {ev.doc_id}):")
+            source = _context_source(ev) or ev.doc_id
+            lines.append(
+                f"- entrypoint {ev.entrypoint} (source: {source}):"
+            )
             if ev.snippet:
                 lines.append(f"    route-context: {ev.snippet}")
             if ev.excerpt:
@@ -435,6 +686,19 @@ def _build_prompt(
     else:
         lines.append("(no documentation is linked to the reaching entry points)")
     lines.append("</documentation>")
+    # Repo-level documentation corpus: facts stated anywhere in the docs, for
+    # CONTEXT extraction only (exposure/auth are judged from the per-endpoint
+    # documentation above). Each entry names its source for grounded citing.
+    repo_docs = repo_docs or []
+    if repo_docs:
+        lines.append("<repository-documentation untrusted=\"true\">")
+        for ev in repo_docs:
+            if not ev.excerpt:
+                continue
+            source = _context_source(ev) or ev.doc_id
+            lines.append(f"- source: {source}")
+            lines.append(f"    doc-excerpt: {ev.excerpt}")
+        lines.append("</repository-documentation>")
     lines.append(
         "Return the JSON exposure assessment now, based solely on the above."
     )
@@ -446,9 +710,12 @@ def _llm_assessment(
     subject: _Subject,
     entrypoints: list[tuple[str, str]],
     evidence: list[DocEvidence],
+    repo_docs: list[DocEvidence] | None = None,
 ) -> Assessment | None:
     """Try the model path; return ``None`` so the caller can fall back offline."""
-    system_prompt, user_prompt = _build_prompt(subject, entrypoints, evidence)
+    system_prompt, user_prompt = _build_prompt(
+        subject, entrypoints, evidence, repo_docs
+    )
     data = client.complete_json(system_prompt, user_prompt)
     if data is None:
         return None
@@ -471,6 +738,7 @@ def _llm_assessment(
         f"Advisory exposure assessment for {subject.dependency_name}.",
         provenance="llm",
         reaching_entrypoints=labels,
+        context=_normalize_context(data.get("context")),
     )
 
 
@@ -518,6 +786,12 @@ def assess_findings(
             for dep_id in sorted(reachable_ids)
         ]
 
+    # The repo-level doc corpus (every ``doc`` node's excerpt, bounded) is the
+    # same for every subject -- gather it once. It feeds CONTEXT extraction only
+    # (both the LLM prompt and the offline scan), never the per-endpoint
+    # exposure/auth phrase scan. Read-only, no network.
+    repo_docs = _repo_doc_evidence(graph)
+
     # Gather each subject's doc/route context up front. This is deterministic,
     # read-only work (no network) and stays on the main thread.
     prepared: list[tuple[_Subject, list[tuple[str, str]], list[DocEvidence]]] = []
@@ -542,7 +816,9 @@ def assess_findings(
         ) -> Assessment | None:
             subject, entrypoints, evidence = item
             try:
-                return _llm_assessment(client, subject, entrypoints, evidence)
+                return _llm_assessment(
+                    client, subject, entrypoints, evidence, repo_docs
+                )
             except Exception:
                 # Per-subject guardrail: any worker error becomes an offline
                 # fallback for this subject; never propagate out of the pool.
@@ -557,7 +833,7 @@ def assess_findings(
         assessments.append(
             llm
             if llm is not None
-            else _offline_assessment(subject, entrypoints, evidence)
+            else _offline_assessment(subject, entrypoints, evidence, repo_docs)
         )
 
     assessments.sort(key=lambda a: (a.dependency_name, a.cve or "", a.dependency_id))
