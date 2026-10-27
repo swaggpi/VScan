@@ -85,8 +85,7 @@
     zoomFit: document.getElementById("zoom-fit"),
     viewDemo: document.getElementById("view-demo"),
     viewRedash: document.getElementById("view-redash"),
-    viewSample: document.getElementById("view-sample"),
-    viewFile: document.getElementById("view-file")
+    viewSample: document.getElementById("view-sample")
   };
 
   /* ---------------------------------------------------------------- model */
@@ -984,18 +983,6 @@
   var TRIAGE_RANK = { affected: 3, uncertain: 2, likely_unaffected: 1 };
   function triageRank(v) { return TRIAGE_RANK[v] || 0; }
 
-  // Map an entry-point LABEL ("POST /import") back to its node id, so clicking
-  // a reachable finding can light that route's path.
-  function epIdForLabel(label) {
-    var match = null;
-    model.nodes.forEach(function (n) {
-      if (n.kind !== "entrypoint") return;
-      var a = n.attrs || {};
-      var l = (a.method ? a.method + " " : "") + (a.path || "");
-      if (l.trim() === String(label).trim()) match = n.id;
-    });
-    return match;
-  }
 
   function sevTag(f) {
     var label = (f.severity || "UNKNOWN").toUpperCase();
@@ -1408,7 +1395,15 @@
         html += '<p class="vuln__path"><span class="path-steps">' + esc(steps.join(" → ")) + '</span></p>';
       }
     } else if (vs) {
-      html += '<span class="verdict verdict--maybe">Not reached from a public route</span>';
+      // Surface the three-way verdict, not a flat "not reached": a confident
+      // "unreachable" (call graph fully resolved) reads differently from a
+      // "potentially reachable" dep whose region still has unresolved calls.
+      var dv = (depFindings[0] && depFindings[0].verdict) || "";
+      var vcls = dv === "unreachable" ? "verdict verdict--safe" : "verdict verdict--maybe";
+      var vlabel = dv === "unreachable" ? "Unreachable"
+        : (dv === "potentially_reachable" ? "Potentially reachable" : "Not reached");
+      html += '<span class="' + vcls + '">' + vlabel + ' from a public route</span>' +
+        '<p class="dim-note">' + esc(verdictText({ verdict: dv })) + '</p>';
     } else {
       html += '<span class="verdict verdict--maybe">No findings matched</span>';
     }

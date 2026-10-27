@@ -844,6 +844,9 @@ body.has-vulns .legend__item--vuln { display: flex; }
 .verdict--reach::before { background: var(--signal); box-shadow: 0 0 7px var(--signal-glow); }
 .verdict--maybe { color: var(--ink-dim); }
 .verdict--maybe::before { background: var(--dep); }
+/* Confident "unreachable" — the sound, fully-resolved verdict: good news, so green. */
+.verdict--safe { color: var(--safe-ink); }
+.verdict--safe::before { background: var(--safe); box-shadow: 0 0 6px rgba(79, 178, 134, 0.5); }
 
 /* Mini CVE cards inside the dependency datasheet. */
 .cvelist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
