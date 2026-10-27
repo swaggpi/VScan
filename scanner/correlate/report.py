@@ -110,6 +110,7 @@ def audit(
     *,
     assessments: list[Any] | None = None,
     triage: list[Any] | None = None,
+    usage: list[Any] | None = None,
 ) -> dict[str, Any]:
     """Run the join + ranking and return a JSON-serializable audit payload.
 
@@ -130,6 +131,16 @@ def audit(
     attach each affected/likely_unaffected/uncertain judgement to the matching
     finding. Advisory only -- it never influences findings, ranking or summary.
     When ``None`` the key is omitted and the payload is byte-for-byte as before.
+
+    ``usage`` is the optional advisory dynamic-usage tier (a list of
+    :class:`~scanner.agent.Usage`), handled the same way: computed by the CLI and
+    passed in so this module stays network-free and agent-agnostic. It describes,
+    for each vulnerable dependency with NO statically resolved call into it, where
+    and how it is actually used (dynamic import / config-or-infra / transitive /
+    dev-or-build). When provided, each record is serialized under a ``"usage"``
+    key carrying its own ``"key"`` of ``<dependency_id>`` for UI keying. Advisory
+    only. When ``None`` the key is omitted and the payload is byte-for-byte as
+    before.
     """
     join_reachability(graph, correlation.findings, reach)
     ranked = rank_findings(correlation.findings)
@@ -161,6 +172,8 @@ def audit(
         payload["assessments"] = [_assessment_dict(a) for a in assessments]
     if triage is not None:
         payload["triage"] = [_triage_dict(t) for t in triage]
+    if usage is not None:
+        payload["usage"] = [_usage_dict(u) for u in usage]
     return payload
 
 
@@ -189,6 +202,21 @@ def _triage_dict(triage: Any) -> dict[str, Any]:
     payload = triage.to_dict()
     cve = payload.get("cve") or payload.get("vuln_id") or ""
     payload["key"] = f"{payload.get('dependency_id')}|{cve}"
+    return payload
+
+
+def _usage_dict(usage: Any) -> dict[str, Any]:
+    """Serialize one advisory :class:`~scanner.agent.Usage` for the payload.
+
+    Uses the record's own ``to_dict`` (dependency id/name/version, cve list, the
+    import names searched, the capped grounded evidence, the usage_kind/summary/
+    confidence classification, provenance and the advisory flag) and ensures a
+    ``"key"`` of ``<dependency_id>`` so a UI can attach each judgement to the
+    matching dependency/finding. Advisory only -- it never influences the
+    findings, ranking, summary or reachability above.
+    """
+    payload = usage.to_dict()
+    payload["key"] = payload.get("key") or payload.get("dependency_id")
     return payload
 
 

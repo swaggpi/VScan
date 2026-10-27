@@ -20,6 +20,7 @@ from __future__ import annotations
 from .assess import Assessment, assess_findings
 from .client import LLMClient
 from .triage import Triage, triage_findings
+from .usage import Usage, investigate_usage
 
 __all__ = [
     "Assessment",
@@ -27,4 +28,6 @@ __all__ = [
     "LLMClient",
     "Triage",
     "triage_findings",
+    "Usage",
+    "investigate_usage",
 ]

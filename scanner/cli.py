@@ -15,7 +15,7 @@ import json
 import sys
 from typing import Sequence
 
-from .agent import LLMClient, assess_findings, triage_findings
+from .agent import LLMClient, assess_findings, investigate_usage, triage_findings
 from .correlate import CorrelationResult, correlate_full
 from .correlate import report as correlate_report
 from .coverage import compute_coverage
@@ -290,6 +290,76 @@ def _format_triage(triage: list, *, model_configured: bool) -> str:
     return "\n".join(lines)
 
 
+def _investigate_usage(
+    graph: KnowledgeGraph,
+    correlation: CorrelationResult,
+    reach: ReachabilityResult,
+    repo_path: str,
+    *,
+    offline: bool,
+) -> tuple[list, bool]:
+    """Run the advisory dynamic-usage investigation once, returning (usage, model).
+
+    The third agent capability: for each VULNERABLE dependency with NO statically
+    resolved call into it -- the "no static resolving" set the triage tier cannot
+    cover -- it gathers deterministic textual evidence from the repo (``repo_path``
+    is needed to re-walk the files) and classifies where/how it is actually used
+    (dynamic import, config/infra, transitive, dev/build). Uses the configured
+    model when available; otherwise the deterministic offline heuristic.
+    ``offline`` forces the heuristic (no network) regardless of the model env
+    vars, matching ``_assess_exposure`` / ``_triage_exploitability``. The result
+    is reused by ``--explain``, ``--bundle`` and ``--json``/``-o`` so the model is
+    called at most once per target dep per run.
+    """
+    client = LLMClient.disabled() if offline else LLMClient()
+    usage = investigate_usage(repo_path, graph, correlation.findings, reach, client=client)
+    return usage, client.available()
+
+
+def _format_usage(usage: list, *, model_configured: bool) -> str:
+    """Render the advisory dynamic-usage investigation for unresolved deps."""
+    lines: list[str] = ["", "Dynamic-usage investigation (advisory tier)", "-" * 72]
+    if model_configured:
+        lines.append("Model: configured via LLM_BASE_URL/LLM_API_KEY/LLM_MODEL.")
+    else:
+        lines.append(
+            "Note: using the offline heuristic (no model configured). Enable the "
+            "model by setting LLM_BASE_URL, LLM_API_KEY and LLM_MODEL."
+        )
+    lines.append(
+        "This tier is ADVISORY ONLY: for vulnerable deps with NO resolved static "
+        "call, it describes WHERE/HOW they are used (dynamic import, config/infra, "
+        "transitive, dev/build). It never changes reachability and never claims a "
+        "dependency is unused or safe."
+    )
+    lines.append("")
+
+    if not usage:
+        lines.append("No unresolved vulnerable dependencies to investigate.")
+        return "\n".join(lines)
+
+    for index, u in enumerate(usage, start=1):
+        ref = ", ".join(u.cves) or "(no advisory id)"
+        lines.append(
+            f"{index:>2}. {u.dependency_name} {u.version or ''} [{ref}]: "
+            f"{u.usage_kind.upper()} ({u.confidence})"
+        )
+        searched = ", ".join(u.import_names) or u.dependency_name
+        lines.append(f"    searched: {_oneline(searched, 200)}")
+        if u.evidence:
+            top = u.evidence[0]
+            lines.append(
+                f"    evidence: {len(u.evidence)} hit(s), e.g. "
+                f"{top['source']}:{top['line']}"
+            )
+        else:
+            lines.append("    evidence: none found (likely transitive/indirect)")
+        lines.append(f"    summary: {_oneline(u.summary)}")
+        lines.append(f"    [provenance={u.provenance}; advisory={u.advisory}]")
+        lines.append("")
+    return "\n".join(lines)
+
+
 def _build_bundle(
     graph: KnowledgeGraph,
     correlation: CorrelationResult,
@@ -297,6 +367,7 @@ def _build_bundle(
     *,
     assessments: list,
     triage: list,
+    usage: list,
 ) -> dict:
     """Assemble one self-contained payload the dashboard viewer can load.
 
@@ -311,11 +382,13 @@ def _build_bundle(
     the real model when configured, else the offline heuristic). They are
     surfaced under ``"assessments"`` and ``"triage"`` so the viewer can attach
     each exposure/auth judgement and each affected/likely_unaffected/uncertain
-    judgement to the matching finding / entry point. The bundle therefore ALWAYS
-    carries both tiers (offline-grounded by default).
+    judgement to the matching finding / entry point. ``usage`` is the advisory
+    dynamic-usage tier -- for each vulnerable dep with NO resolved static call,
+    where/how it is actually used -- surfaced under ``"usage"``. The bundle
+    therefore ALWAYS carries all three tiers (offline-grounded by default).
     """
     audit_payload = correlate_report.audit(
-        graph, correlation, reach, assessments=assessments, triage=triage
+        graph, correlation, reach, assessments=assessments, triage=triage, usage=usage
     )
     return {
         "graph": graph.to_dict(),
@@ -325,6 +398,7 @@ def _build_bundle(
         "coverage": audit_payload["coverage"],
         "assessments": audit_payload["assessments"],
         "triage": audit_payload["triage"],
+        "usage": audit_payload["usage"],
         "offline": audit_payload["offline"],
         "network_ok": audit_payload["network_ok"],
         "notices": audit_payload["notices"],
@@ -467,6 +541,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         # default audit TEXT output never triggers it, so defaults are unchanged.
         assessments: list = []
         triage: list = []
+        usage: list = []
         model_configured = False
         if args.bundle or args.json or args.output or args.explain:
             assessments, model_configured = _assess_exposure(
@@ -474,6 +549,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             triage, _ = _triage_exploitability(
                 graph, correlation, reach, offline=args.offline
+            )
+            usage, _ = _investigate_usage(
+                graph, correlation, reach, args.repo_path, offline=args.offline
             )
 
         if args.bundle:
@@ -486,6 +564,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                             reach,
                             assessments=assessments,
                             triage=triage,
+                            usage=usage,
                         ),
                         indent=2,
                     )
@@ -494,7 +573,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.output or args.json:
             payload = json.dumps(
                 correlate_report.audit(
-                    graph, correlation, reach, assessments=assessments, triage=triage
+                    graph, correlation, reach,
+                    assessments=assessments, triage=triage, usage=usage,
                 ),
                 indent=2,
             )
@@ -515,6 +595,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 _format_assessments(assessments, model_configured=model_configured)
             )
             print(_format_triage(triage, model_configured=model_configured))
+            print(_format_usage(usage, model_configured=model_configured))
         return 0
 
     parser.error(f"unknown command: {args.command}")  # pragma: no cover
