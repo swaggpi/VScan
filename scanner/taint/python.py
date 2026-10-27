@@ -1,32 +1,27 @@
-"""Sound, lightweight, inter-procedural taint pass (layer 1, Python only).
+"""Python adapter for the taint pass (layer 1).
 
-This pass answers ONE question, and only when it can prove it:
+This is the FIRST (and, today, only) language adapter behind the grammar-free
+core in :mod:`scanner.taint.core`. It answers the core's questions for Python
+source: parsing, ``request``-object source recognition, flow-sensitive
+intra-procedural propagation, argument->parameter binding, call-site resolution,
+and dependency-symbol sink matching. All ``ast`` handling lives here; the core
+knows nothing about it.
 
-    Does attacker-controlled input at a web entry handler flow, hop by hop,
-    into a call that lands in a vulnerable dependency?
+It re-parses the Python source of the functions ON a proven reachability path
+(``entrypoint -> handler -> ... -> dependency``) and checks whether a *source*
+(an attacker-controlled read at the handler) propagates -- through
+taint-preserving operations and proven argument/parameter bindings -- all the way
+into the *sink* (the call into the dependency).
 
-It runs on top of the reachability engine: reachability has already proven a
-hop-by-hop path ``entrypoint -> handler -> ... -> dependency`` for every reached
-dependency (``ReachedDependency.example_path``). This pass re-parses the Python
-source of the functions ON that proven path and checks whether a *source* (an
-attacker-controlled read at the handler) propagates -- through taint-preserving
-operations and proven argument/parameter bindings -- all the way into the
-*sink* (the call into the dependency).
-
-THE CARDINAL RULE
------------------
+THE CARDINAL RULE (see :mod:`scanner.taint.core`)
+-------------------------------------------------
 Never assert a claim unless fully proven. A MISSED taint flow is acceptable; a
 FALSE "tainted" claim is a CRITICAL failure. The default verdict is
-``not_proven`` (NOT "safe"/"untainted"). A dependency is only ``tainted`` when
-EVERY hop from a recognised source to the sink is proven. This signal is
-strictly DERIVED and ADDITIVE: the caller must never let it change
-``finding.reachable``, the three-way ``verdict``, ``symbol_match``, ranking or
-any pre-existing summary counter.
+``not_proven``.
 
 Deliberate conservative limitations (documented, not bugs)
 ----------------------------------------------------------
-* Only Python source/sink recognition is implemented (the propagation engine is
-  kept language-agnostic where natural, but only Python is wired in).
+* Only Python source/sink recognition is implemented.
 * Return values of arbitrary function calls are NEVER treated as tainted. A flow
   that launders attacker data through an unmodelled helper's return value is
   therefore MISSED (sound: a missed flow, never a false one).
@@ -64,28 +59,31 @@ Deliberate conservative limitations (documented, not bugs)
   its module or a same-module sibling call, or a method reached through ``self``
   in the same class or a proven instance of that class). A same-named call that
   cannot be positively resolved to the callee is NOT bound (a missed flow).
-
-Public entry point: :func:`compute_taint`.
 """
 
 from __future__ import annotations
 
 import ast
 import os
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
-from .analyzers.python_analyzer import (
+from ..analyzers.python_analyzer import (
     PythonAnalyzer,
     _collect,
     _collect_classes,
     module_path_for,
 )
-from .graph import KnowledgeGraph
-from .reachability import ReachabilityResult
-
-TAINTED: str = "tainted"
-NOT_PROVEN: str = "not_proven"
+from .core import (
+    _Env,
+    _aug_bind_names,
+    _assign_or_kill_names,
+    _bind_names,
+    _copy_env,
+    _join,
+    _set_env,
+    _split_fn_id,
+)
 
 # The Flask/Django ``request`` object attributes that carry attacker-controlled
 # data. ``requests`` (the HTTP client) is deliberately excluded: it is matched
@@ -102,26 +100,6 @@ _REQUEST_SOURCE_METHODS: frozenset[str] = frozenset({"get_json", "get_data"})
 _REQUEST_NAME: str = "request"
 
 
-@dataclass
-class TaintResult:
-    """Per-dependency taint verdict with the evidence that proves it.
-
-    ``verdict`` is ``"tainted"`` only when a source->sink flow is fully proven;
-    otherwise ``"not_proven"`` (never "safe"). The evidence fields describe the
-    single proven flow (the first one found) when tainted, and are ``None`` /
-    empty otherwise.
-    """
-
-    verdict: str = NOT_PROVEN
-    source: str | None = None
-    sink_symbol: str | None = None
-    entrypoint: str | None = None
-    path: list[str] = field(default_factory=list)
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-
 # --------------------------------------------------------------------------
 # Parsed-file cache
 # --------------------------------------------------------------------------
@@ -134,21 +112,6 @@ class _ParsedFile:
     defs: dict[str, ast.AST]  # qualname -> def node
     method_meta: dict[str, tuple[str, str | None]]  # qual -> (class_qual, self)
     import_aliases: dict[str, str]  # bound name -> dotted import base
-
-
-def _split_fn_id(fn_id: str) -> tuple[str, str] | None:
-    """Split ``fn:<relpath>:<qualname>`` into ``(relpath, qualname)``.
-
-    The relpath may itself contain no colon; the qualname may contain dots but
-    no colons, so the first two colons delimit the three parts.
-    """
-    if not fn_id.startswith("fn:"):
-        return None
-    rest = fn_id[3:]
-    idx = rest.rfind(":")
-    if idx < 0:
-        return None
-    return rest[:idx], rest[idx + 1 :]
 
 
 def _import_aliases(tree: ast.AST) -> dict[str, str]:
@@ -271,11 +234,6 @@ def _source_of(node: ast.AST) -> str | None:
 # Intra-procedural propagation (flow-sensitive straight-line, union-on-branch)
 # --------------------------------------------------------------------------
 
-# A taint environment maps a tainted name -> the set of source descriptors that
-# can reach it (its provenance). A name is tainted iff present with a non-empty
-# set.
-_Env = dict[str, set[str]]
-
 
 def _taint_of_expr(node: ast.AST | None, env: _Env) -> set[str]:
     """Provenance set of ``node`` under ``env``, via taint-preserving ops only.
@@ -387,99 +345,47 @@ def _comprehension_env(generators: list[ast.comprehension], env: _Env) -> _Env:
     return local
 
 
-def _bind_target(target: ast.AST, taint: set[str], env: _Env) -> None:
-    """Mark the name(s) bound by ``target`` tainted with ``taint`` (union).
+# --------------------------------------------------------------------------
+# Target binding: walk a Python assignment target into simple names, then apply
+# the grammar-free name-level env algebra from the core.
+# --------------------------------------------------------------------------
 
-    A bare ``Name`` target takes the taint directly. A tuple/list target is a
-    SOUND over-approximation: if the right-hand side is tainted, every name in
-    the target is marked tainted (unpacking could route the tainted element to
-    any of them). Subscript/attribute targets bind no simple name (a missed
-    flow -- never a false one).
+
+def _flatten_target(target: ast.AST) -> list[str]:
+    """Simple names bound by ``target`` (over-approximating tuple/list unpack).
+
+    A bare ``Name`` yields itself. A tuple/list target yields every simple name
+    it contains -- a SOUND over-approximation, since unpacking a tainted RHS
+    could route the tainted element to any of them. A ``Starred`` recurses into
+    its value. Subscript/attribute targets bind no simple name (a missed flow --
+    never a false one) and so yield nothing; this is also what keeps an
+    ``obj.x = const`` from killing a same-named plain variable.
     """
-    if not taint:
-        return
     if isinstance(target, ast.Name):
-        env.setdefault(target.id, set()).update(taint)
-    elif isinstance(target, (ast.Tuple, ast.List)):
+        return [target.id]
+    if isinstance(target, (ast.Tuple, ast.List)):
+        out: list[str] = []
         for elt in target.elts:
-            _bind_target(elt, taint, env)
-    elif isinstance(target, ast.Starred):
-        _bind_target(target.value, taint, env)
+            out.extend(_flatten_target(elt))
+        return out
+    if isinstance(target, ast.Starred):
+        return _flatten_target(target.value)
+    return []
 
 
-def _copy_env(env: _Env) -> _Env:
-    return {name: set(provs) for name, provs in env.items()}
+def _bind_target(target: ast.AST, taint: set[str], env: _Env) -> None:
+    """Mark the name(s) bound by ``target`` tainted with ``taint`` (union, add-only)."""
+    _bind_names(_flatten_target(target), taint, env)
 
 
 def _assign_or_kill(target: ast.AST, taint: set[str], env: _Env) -> None:
-    """Last-write-wins bind of ``target``: set it tainted, or KILL it if not.
-
-    A bare ``Name`` takes ``taint`` directly when non-empty, and is removed from
-    ``env`` when ``taint`` is empty (a rebind to a constant kills the name). A
-    tuple/list target applies the same rule to every simple name it binds (sound
-    over-approximation on the add side; a full kill on the not-tainted side).
-    Subscript/attribute targets bind no bare name and must NOT kill a same-named
-    variable, so they are ignored.
-    """
-    if isinstance(target, ast.Name):
-        if taint:
-            env[target.id] = set(taint)
-        else:
-            env.pop(target.id, None)
-    elif isinstance(target, (ast.Tuple, ast.List)):
-        for elt in target.elts:
-            _assign_or_kill(elt, taint, env)
-    elif isinstance(target, ast.Starred):
-        _assign_or_kill(target.value, taint, env)
+    """Last-write-wins bind of ``target``: set it tainted, or KILL it if not."""
+    _assign_or_kill_names(_flatten_target(target), taint, env)
 
 
 def _aug_bind(target: ast.AST, rhs_taint: set[str], env: _Env) -> None:
     """``x += y``: x becomes/stays tainted if x-was-tainted OR y-tainted; never kills."""
-    if isinstance(target, ast.Name):
-        combined = set(env.get(target.id, set())) | rhs_taint
-        if combined:
-            env[target.id] = combined
-    elif isinstance(target, (ast.Tuple, ast.List)):
-        for elt in target.elts:
-            _aug_bind(elt, rhs_taint, env)
-    elif isinstance(target, ast.Starred):
-        _aug_bind(target.value, rhs_taint, env)
-
-
-def _join(*envs: _Env) -> _Env:
-    """May-dataflow JOIN of taint environments at a control-flow merge.
-
-    A name is present in the result iff it is present with non-empty provenance
-    in ANY input env; its provenance is the UNION over the inputs that carry it.
-    This is the sound merge for the existential ``tainted`` claim: taint survives
-    a merge when it survives on any incoming path, and dies only when EVERY
-    incoming path killed it. Returns a fresh env with fresh provenance sets.
-    """
-    out: _Env = {}
-    for env in envs:
-        for name, provs in env.items():
-            if provs:
-                if name in out:
-                    out[name] |= set(provs)
-                else:
-                    out[name] = set(provs)
-    return out
-
-
-def _set_env(env: _Env, new: _Env) -> None:
-    """Replace ``env``'s contents in place with (copies of) ``new``'s.
-
-    Callers hold a live reference to ``env`` across the flow walk, so a merge
-    must mutate it in place rather than rebind it.
-    """
-    env.clear()
-    for name, provs in new.items():
-        env[name] = set(provs)
-
-
-# A callback invoked for every call encountered during the ordered walk, with the
-# taint environment AT that call's position.
-_OnCall = "callable"
+    _aug_bind_names(_flatten_target(target), rhs_taint, env)
 
 
 def _eval_expr(node: ast.AST | None, env: _Env, on_call) -> None:
@@ -930,7 +836,7 @@ def _detect_sink(
 
 
 # --------------------------------------------------------------------------
-# Per-path analysis
+# Per-path analysis helpers
 # --------------------------------------------------------------------------
 
 
@@ -1003,99 +909,39 @@ def _bind_into_next(
     return seed
 
 
-def _analyze_path(
-    cache: _FileCache,
-    ep_label: str,
-    dep_symbols: set[str],
-    example_path: list[str],
-) -> TaintResult | None:
-    """Prove (or fail to prove) a flow along one reachability example path.
-
-    ``example_path`` is ``[ep_id, fn_0, ..., fn_{k-1}, dep_id]``. Returns a
-    ``tainted`` :class:`TaintResult` when a source at the handler reaches the
-    dependency sink in ``fn_{k-1}``, else ``None``.
-    """
-    fn_ids = [n for n in example_path if n.startswith("fn:")]
-    if not fn_ids:
-        return None
-
-    # Resolve every function on the path up front; bail (unproven) if any is
-    # missing or unparseable.
-    resolved: list[tuple[_ParsedFile, ast.AST, str, str]] = []
-    for fn_id in fn_ids:
-        info = _fn_node_on_path(cache, fn_id)
-        if info is None:
-            return None
-        resolved.append(info)
-
-    # Handler: seed its own route parameters. Request-object sources are picked
-    # up by the flow walk at the point they are read.
-    _handler_parsed, handler_node, _handler_qual, _handler_relpath = resolved[0]
-    env: _Env = {}
-    _handler_param_sources(handler_node, env)
-
-    # Walk each hop, binding taint that provably reaches the next function into
-    # its parameters (flow-sensitively, at each proven call site).
-    for index in range(len(resolved) - 1):
-        env = _bind_into_next(resolved[index], env, resolved[index + 1])
-
-    sink_parsed, sink_node, _sink_qual, _sink_relpath = resolved[-1]
-    flow = _detect_sink(sink_node, env, sink_parsed, dep_symbols)
-    if flow is None:
-        return None
-    sink_symbol, source = flow
-    return TaintResult(
-        verdict=TAINTED,
-        source=source,
-        sink_symbol=sink_symbol,
-        entrypoint=ep_label,
-        path=list(example_path),
-    )
-
-
 # --------------------------------------------------------------------------
-# Public entry point
+# The adapter
 # --------------------------------------------------------------------------
 
 
-def compute_taint(
-    graph: KnowledgeGraph, reach: ReachabilityResult, repo_root: str
-) -> dict[str, TaintResult]:
-    """Compute the per-dependency taint signal, keyed by dependency id.
+class PythonTaintAdapter:
+    """:class:`scanner.taint.core.TaintAdapter` implementation for Python source.
 
-    For every dependency reached from a public entry point, this asks whether
-    attacker-controlled input at the handler flows into the call(s) into that
-    dependency. A dependency is ``tainted`` if ANY of its reaching paths proves
-    a flow; otherwise ``not_proven``. Only reached dependencies appear in the
-    result -- a dependency with no reaching path can never be tainted, so the
-    caller's default (``not_proven``) already covers it.
-
-    The computation is pure and offline: it re-parses the Python source of the
-    functions on each proven reachability path. ``repo_root`` must be the
-    absolute path of the scanned repository (file node ids carry only
-    repo-relative paths).
+    ``cache`` is a :class:`_FileCache`; ``*_info`` objects are the
+    ``(parsed_file, def_node, qualname, relpath)`` tuples returned by
+    :func:`_fn_node_on_path`.
     """
-    cache = _FileCache(repo_root)
-    results: dict[str, TaintResult] = {}
 
-    for ep in reach.entrypoints:
-        ep_node = graph.get_node(ep.id)
-        if ep_node is not None and ep_node.attrs.get("unresolved_handler"):
-            # An opaque handler we cannot step into: nothing is proven here.
-            continue
-        ep_label = f"{ep.method} {ep.path}"
-        for dep in ep.reachable_dependencies:
-            dep_id = dep.id
-            results.setdefault(dep_id, TaintResult())
-            if results[dep_id].verdict == TAINTED:
-                continue  # already proven by an earlier path
-            dep_symbols = set(dep.symbols)
-            if dep.symbol:
-                dep_symbols.add(dep.symbol)
-            if not dep_symbols:
-                continue
-            proven = _analyze_path(cache, ep_label, dep_symbols, dep.example_path)
-            if proven is not None:
-                results[dep_id] = proven
+    def language_matches(self, relpath: str) -> bool:
+        return relpath.endswith(".py")
 
-    return results
+    def make_cache(self, repo_root: str) -> _FileCache:
+        return _FileCache(repo_root)
+
+    def resolve_function(self, cache: _FileCache, fn_id: str) -> Any | None:
+        return _fn_node_on_path(cache, fn_id)
+
+    def handler_seed(self, fn_info: Any) -> _Env:
+        _parsed, fnode, _qual, _relpath = fn_info
+        env: _Env = {}
+        _handler_param_sources(fnode, env)
+        return env
+
+    def bind_into_next(self, caller_info: Any, env: _Env, next_info: Any) -> _Env:
+        return _bind_into_next(caller_info, env, next_info)
+
+    def detect_sink(
+        self, sink_info: Any, env: _Env, dep_symbols: set[str]
+    ) -> tuple[str, str] | None:
+        parsed, fnode, _qual, _relpath = sink_info
+        return _detect_sink(fnode, env, parsed, dep_symbols)
