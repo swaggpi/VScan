@@ -82,6 +82,18 @@ _EPSS = {
 }
 
 
+@pytest.fixture(autouse=True)
+def _isolated_cache(tmp_path, monkeypatch):
+    """Point the on-disk cache at a fresh temp dir for every test.
+
+    OSV vuln records are now cached (``osv-vuln:<id>``, 7-day TTL). Without this
+    redirect the suite would read/write the user's real ``~/.cache/vulnreach``,
+    leaking fixtures across runs and making call-count assertions non-hermetic.
+    Tests that set ``VULNREACH_CACHE_DIR`` themselves simply override this.
+    """
+    monkeypatch.setenv("VULNREACH_CACHE_DIR", str(tmp_path / "vulnreach-cache"))
+
+
 @pytest.fixture
 def mocked_db(monkeypatch):
     """Patch every network boundary with the recorded fixtures above."""
@@ -479,3 +491,122 @@ def test_audit_json_exposes_three_way_verdict(graph, mocked_db):
 
     pyyaml = next(f for f in payload["findings"] if f["dependency_name"] == "PyYAML")
     assert pyyaml["verdict"] == "reachable"
+
+
+# #13 -- vuln records are cached on disk: a warm run makes zero network fetches.
+
+
+def test_collect_caches_vuln_records(monkeypatch):
+    # query_batch resolves two deps to two distinct vuln ids; fetch_vuln is the
+    # single network seam. The first collect() populates the cache; the second,
+    # for the same ids, must be served entirely from disk -- zero fetches.
+    def fake_query_batch(queries):
+        return [["GHSA-aaaa"], ["GHSA-bbbb"]]
+
+    calls: list[str] = []
+
+    def counting_fetch(vuln_id):
+        calls.append(vuln_id)
+        return {
+            "id": vuln_id,
+            "summary": f"advisory {vuln_id}",
+            "affected": [{"package": {"name": "pkg", "ecosystem": "npm"}}],
+        }
+
+    monkeypatch.setattr(osv, "query_batch", fake_query_batch)
+    monkeypatch.setattr(osv, "fetch_vuln", counting_fetch)
+
+    deps = [
+        osv.DepRef(id="d1", name="a", version="1.0.0", ecosystem="npm"),
+        osv.DepRef(id="d2", name="b", version="2.0.0", ecosystem="npm"),
+    ]
+
+    cold = osv.collect(deps)
+    assert cold.ok is True
+    assert sorted(calls) == ["GHSA-aaaa", "GHSA-bbbb"]  # each id fetched once
+
+    calls.clear()
+    warm = osv.collect(deps)
+    assert warm.ok is True
+    assert calls == []  # fully served from the disk cache -- zero network calls
+    # Warm result is identical in content to the cold one.
+    assert warm.by_dep.keys() == cold.by_dep.keys()
+
+
+def test_collect_maps_each_id_to_its_own_record(monkeypatch):
+    # With parallel fetches completing out of order, every id must still map to
+    # its OWN record -- no cross-assignment from the thread pool.
+    import time
+
+    n = 12
+    ids = [f"GHSA-{i:04d}" for i in range(n)]
+
+    def fake_query_batch(queries):
+        # One dep per query, each resolving to its own unique vuln id.
+        return [[ids[i]] for i in range(len(queries))]
+
+    def fake_fetch(vuln_id):
+        # Reverse-index sleep so later ids finish first -> scramble completion.
+        idx = int(vuln_id.split("-")[1])
+        time.sleep(0.002 * (n - idx))
+        return {
+            "id": vuln_id,
+            "summary": f"advisory {vuln_id}",
+            "affected": [{"package": {"name": f"pkg{idx}", "ecosystem": "npm"}}],
+        }
+
+    monkeypatch.setattr(osv, "query_batch", fake_query_batch)
+    monkeypatch.setattr(osv, "fetch_vuln", fake_fetch)
+
+    deps = [
+        osv.DepRef(id=f"dep{i}", name=f"pkg{i}", version="1.0.0", ecosystem="npm")
+        for i in range(n)
+    ]
+    result = osv.collect(deps)
+    assert result.ok is True
+    assert set(result.by_dep.keys()) == {f"dep{i}" for i in range(n)}
+    # Each dependency's advisory id must be exactly its own, never a neighbour's.
+    for i in range(n):
+        vulns = result.by_dep[f"dep{i}"]
+        assert [v.id for v in vulns] == [ids[i]]
+
+
+def test_collect_degrades_when_a_parallel_fetch_fails(monkeypatch):
+    # One fetch raising mid-pool must degrade to ok=False, never propagate.
+    def fake_query_batch(queries):
+        return [["GHSA-aaaa"], ["GHSA-bbbb"], ["GHSA-cccc"]]
+
+    def flaky_fetch(vuln_id):
+        if vuln_id == "GHSA-bbbb":
+            raise osv.OsvNetworkError("simulated vuln fetch outage")
+        return {"id": vuln_id, "summary": "ok", "affected": []}
+
+    monkeypatch.setattr(osv, "query_batch", fake_query_batch)
+    monkeypatch.setattr(osv, "fetch_vuln", flaky_fetch)
+
+    deps = [
+        osv.DepRef(id="d1", name="a", version="1.0.0", ecosystem="npm"),
+        osv.DepRef(id="d2", name="b", version="2.0.0", ecosystem="npm"),
+        osv.DepRef(id="d3", name="c", version="3.0.0", ecosystem="npm"),
+    ]
+    result = osv.collect(deps)  # must not raise
+    assert result.ok is False
+    assert result.by_dep == {}
+
+
+def test_collect_degrades_on_unexpected_worker_exception(monkeypatch):
+    # A non-network exception in a worker must also be caught and degraded,
+    # never propagated as a new exception type into the caller/CLI.
+    def fake_query_batch(queries):
+        return [["GHSA-aaaa"]]
+
+    def boom_fetch(vuln_id):
+        raise ValueError("unexpected worker crash")
+
+    monkeypatch.setattr(osv, "query_batch", fake_query_batch)
+    monkeypatch.setattr(osv, "fetch_vuln", boom_fetch)
+
+    deps = [osv.DepRef(id="d1", name="a", version="1.0.0", ecosystem="npm")]
+    result = osv.collect(deps)  # must not raise ValueError
+    assert result.ok is False
+    assert result.by_dep == {}

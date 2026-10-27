@@ -23,8 +23,11 @@ import json
 import socket
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Any
+
+from . import cache
 
 _QUERYBATCH_URL = "https://api.osv.dev/v1/querybatch"
 _VULN_URL = "https://api.osv.dev/v1/vulns/"
@@ -32,6 +35,14 @@ _USER_AGENT = "vulnreach/0.1 (defensive dependency scanner)"
 _TIMEOUT = 20.0
 # Research verified 1000 is the hard cap; 500 keeps us well under response caps.
 _BATCH_CAP = 500
+
+# Vuln records are immutable once published, so a long TTL is safe. Keyed by
+# vuln id under a namespace so entries never collide with KEV/EPSS/NVD keys.
+_VULN_CACHE_PREFIX = "osv-vuln:"
+_VULN_CACHE_TTL = 7 * 24 * 60 * 60  # 7 days, in seconds.
+# Bounded pool for the per-id GET /v1/vulns/{id} fetches. Small enough to stay a
+# polite client; capped at the number of uncached ids at call time.
+_FETCH_WORKERS = 8
 
 # Version strings carrying any of these characters are ranges/constraints, not a
 # single concrete version OSV can match -- we skip querying them.
@@ -329,6 +340,57 @@ def is_concrete_version(version: str | None) -> bool:
     return not any(ch in _RANGE_MARKERS for ch in version)
 
 
+def _fetch_records(unique_ids: list[str]) -> dict[str, dict[str, Any]]:
+    """Return ``{vuln_id: record}`` for every id, cache-first and concurrently.
+
+    Cache hits (7-day TTL, keyed ``osv-vuln:<id>``) never touch the network.
+    Remaining ids are fetched in parallel through a bounded thread pool using
+    :func:`fetch_vuln` -- the single, monkeypatchable network seam. Only the GETs
+    run in threads; cache reads and writes stay on the calling thread.
+
+    Caching is write-through for *successful, non-empty* records only; an error
+    or empty payload is never cached. Any fetch failure -- an
+    :class:`OsvNetworkError` or any unexpected worker exception -- is surfaced as
+    an :class:`OsvNetworkError` so :func:`collect` degrades to ``ok=False``
+    exactly as the old sequential path did; nothing escapes as another type.
+    """
+    records: dict[str, dict[str, Any]] = {}
+    to_fetch: list[str] = []
+    for vid in unique_ids:
+        cached = cache.get(_VULN_CACHE_PREFIX + vid)
+        if cached:
+            records[vid] = cached
+        else:
+            to_fetch.append(vid)
+
+    if not to_fetch:
+        return records
+
+    fetched: dict[str, dict[str, Any]] = {}
+    workers = min(_FETCH_WORKERS, len(to_fetch))
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {executor.submit(fetch_vuln, vid): vid for vid in to_fetch}
+        for future in as_completed(futures):
+            vid = futures[future]
+            try:
+                fetched[vid] = future.result()
+            except OsvNetworkError:
+                # Same degradation as before: let collect() catch it.
+                raise
+            except Exception as exc:  # defensive: never leak a new exception type
+                raise OsvNetworkError(
+                    f"OSV fetch of {vid} failed in worker: {exc}"
+                ) from exc
+
+    # Single-threaded assembly: fold fetched records in and write through to the
+    # cache (successful, non-empty payloads only).
+    for vid, record in fetched.items():
+        records[vid] = record
+        if record:
+            cache.set(_VULN_CACHE_PREFIX + vid, record, ttl=_VULN_CACHE_TTL)
+    return records
+
+
 def collect(deps: list[DepRef]) -> OsvResult:
     """Match ``deps`` against OSV and return advisories grouped by dependency id.
 
@@ -363,7 +425,7 @@ def collect(deps: list[DepRef]) -> OsvResult:
                 if vid not in seen:
                     seen.add(vid)
                     unique_ids.append(vid)
-        records = {vid: fetch_vuln(vid) for vid in unique_ids}
+        records = _fetch_records(unique_ids)
     except OsvNetworkError:
         return OsvResult(by_dep={}, ok=False, skipped=skipped)
 
