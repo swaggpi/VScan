@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..coverage import CoverageReport, compute_coverage
 from ..graph import KnowledgeGraph
 from ..reachability import ReachabilityResult
 from . import CorrelationResult, Finding
@@ -120,6 +121,7 @@ def audit(
         "network_ok": correlation.network_ok,
         "notices": list(correlation.notices),
         "summary": build_summary(graph, ranked),
+        "coverage": compute_coverage(graph, reach).to_dict(),
         "findings": [_finding_dict(f) for f in ranked],
     }
 
@@ -194,6 +196,9 @@ def format_report(
     lines.append(f"  high EPSS (>= 0.5):            {summary['high_epss_vulnerabilities']}")
     lines.append("")
 
+    lines.extend(_coverage_block(compute_coverage(graph, reach)))
+    lines.append("")
+
     if not correlation.network_ok:
         lines.append(
             "Vulnerability data was not available (see notice above). Showing the "
@@ -235,6 +240,49 @@ def format_report(
 
     lines.append("EPSS data courtesy of FIRST.org (https://www.first.org/epss/).")
     return "\n".join(lines)
+
+
+def _coverage_block(coverage: CoverageReport) -> list[str]:
+    """Render the coverage / confidence section of the audit report.
+
+    A quantitative summary of how much of the code the analysis actually
+    resolved, so the "reachability is a lower bound" honesty is concrete.
+    """
+    files = coverage.files
+    functions = coverage.functions
+    call_sites = coverage.call_sites
+    entrypoints = coverage.entrypoints
+    deps = coverage.dependencies
+
+    lines: list[str] = ["Coverage / confidence"]
+    lines.append(
+        f"  files parsed:                  {files.parsed}/{files.total} "
+        f"({files.parse_success_rate:.0%} parsed, {files.parse_errors} failed)"
+    )
+    lines.append(f"  functions analyzed:            {functions.total}")
+    lines.append(
+        f"  call sites resolved:           {call_sites.resolved}/"
+        f"{call_sites.resolved + call_sites.unresolved} "
+        f"({call_sites.resolution_rate:.0%} resolved, "
+        f"{call_sites.unresolved} unresolved)"
+    )
+    lines.append(
+        f"  entry points:                  {entrypoints.total} "
+        f"({entrypoints.unresolved_routes} unresolved route(s), "
+        f"{entrypoints.without_handler} without a resolved handler)"
+    )
+    lines.append(
+        f"  dependencies with a call site: {deps.with_call_site}/{deps.total}"
+    )
+    if deps.verdict_breakdown is not None:
+        lines.append(
+            f"  verdicts:                      "
+            f"{deps.verdict_breakdown['reachable']} reachable, "
+            f"{deps.verdict_breakdown['potentially_reachable']} potentially, "
+            f"{deps.verdict_breakdown['unreachable']} unreachable"
+        )
+    lines.append(f"  confidence: {coverage.confidence_note}")
+    return lines
 
 
 def _reachability_block(reach: ReachabilityResult) -> list[str]:

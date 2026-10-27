@@ -18,6 +18,7 @@ from typing import Sequence
 from .agent import LLMClient, assess_findings
 from .correlate import CorrelationResult, correlate_full
 from .correlate import report as correlate_report
+from .coverage import compute_coverage
 from .graph import KnowledgeGraph
 from .reachability import ReachabilityResult, compute_reachability
 from .scan import scan_repo
@@ -59,6 +60,21 @@ def _print_summary(graph: KnowledgeGraph, repo_path: str, output_path: str) -> N
                 f"-> {handler}",
                 file=out,
             )
+
+    cov = compute_coverage(graph)
+    print("\n  Coverage / confidence:", file=out)
+    print(
+        f"    files parsed:        {cov.files.parsed}/{cov.files.total} "
+        f"({cov.files.parse_success_rate:.0%})",
+        file=out,
+    )
+    print(
+        f"    call sites resolved: {cov.call_sites.resolved}/"
+        f"{cov.call_sites.resolved + cov.call_sites.unresolved} "
+        f"({cov.call_sites.resolution_rate:.0%})",
+        file=out,
+    )
+    print(f"    entry points:        {cov.entrypoints.total}", file=out)
 
     print(f"\n  Graph written to: {output_path}", file=out)
 
@@ -197,6 +213,7 @@ def _build_bundle(
         "reachability": reach.to_dict(),
         "findings": audit_payload["findings"],
         "summary": audit_payload["summary"],
+        "coverage": audit_payload["coverage"],
         "offline": audit_payload["offline"],
         "network_ok": audit_payload["network_ok"],
         "notices": audit_payload["notices"],
