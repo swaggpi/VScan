@@ -9,7 +9,8 @@ scans a repo, builds a 4-language knowledge graph, computes three-way reachabili
 (which entry point reaches which functions and dependencies), correlates the deps
 against real CVE data (OSV + CISA KEV + EPSS), reports coverage/confidence, and —
 with `--explain` — runs an agent pass over the docs to assess exposure. The
-dashboard overlays the reachable-vulnerable findings on the graph. **168 tests pass.**
+dashboard overlays the reachable-vulnerable findings on the graph. **187 tests pass**,
+across three adversarial review rounds (all findings fixed).
 
 ## Action needed from you (2 things)
 1. **Push the branch** — 17 commits are local-only because the overnight push was
@@ -60,6 +61,11 @@ Real-repo corpus to demo against: `scripts/fetch_test_corpus.sh` (gitignored
   a findings panel ranks the CVEs. Live sample bundle ships for instant demo.
 - Coverage / confidence report — files parsed, call-site resolution rate, verdict
   breakdown, and an honest lower-bound note (in `scan`, `audit`, and the bundle).
+- Performance — OSV vuln lookups are cached (7-day disk cache) and fetched in
+  parallel: a 61-dep repo went ~50s cold -> ~2s warm, so demo re-runs are instant.
+- Three adversarial review rounds (initial analyzers, full core, cross-file); every
+  confirmed finding fixed — notably an unsound-"unreachable" verdict, a correlator
+  wrong-dependency-attribution bug, and a JS cross-file symbol-table leak.
 - Full README rewrite; a reachability dashboard.
 - Research notes in `.research/` (gitignored). Two adversarial review rounds; all
   confirmed findings fixed (notably an unsound-"unreachable" blocker and a
@@ -74,7 +80,7 @@ Real-repo corpus to demo against: `scripts/fetch_test_corpus.sh` (gitignored
 - The offline exposure heuristic is crude (keyword-based); the real model is sharper.
 
 ## Where things are
-- Branch `worktree-scanner-layer1`, ~26 commits, 168 tests passing.
+- Branch `worktree-scanner-layer1`, ~33 commits, 187 tests passing.
 - `PLAN.md` has the full overnight plan, decisions, and remaining backlog.
 - PHP is still single-file (JS and Go have cross-file; PHP cross-file was judged
   low-value/high-risk given its dynamic autoloading, and left out rather than done
