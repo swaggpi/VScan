@@ -19,6 +19,7 @@ from .agent import LLMClient, assess_findings
 from .correlate import CorrelationResult, correlate_full
 from .correlate import report as correlate_report
 from .coverage import compute_coverage
+from .dotenv import load_dotenv
 from .graph import KnowledgeGraph
 from .reachability import ReachabilityResult, compute_reachability
 from .scan import scan_repo
@@ -244,6 +245,7 @@ def _build_bundle(
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    load_dotenv()
     parser = argparse.ArgumentParser(
         prog="vulnreach",
         description="Reachability-aware dependency scanner (layer 1: structure graph).",
