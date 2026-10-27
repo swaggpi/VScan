@@ -207,6 +207,93 @@ def test_alias_resolves_despite_directory_mismatch(tmp_path):
     assert _calls_from(graph, "fn:main.go:main") == ["fn:foo/foo.go:X"]
 
 
+def test_nested_declared_module_is_external_not_local(tmp_path):
+    # Regression (#6): a separately-published module nested UNDER the main module
+    # path -- main module `example.com/app`, a DECLARED dependency
+    # `example.com/app/v2` -- must classify as an EXTERNAL dependency, not a
+    # local package. Before the fix the "under the module path" test ran first,
+    # so `example.com/app/v2` was treated as local, found no package directory,
+    # and was dropped into unresolved_local_imports, losing its dep edges and
+    # forcing a weaker reachability verdict.
+    graph = _scan_multi(
+        tmp_path,
+        "example.com/app",
+        {
+            "main.go": (
+                "package main\n"
+                'import v2 "example.com/app/v2"\n'
+                "func main() { v2.Do() }\n"
+            ),
+        },
+        requires=(("example.com/app/v2", "v2.0.0"),),
+    )
+    v2_dep = "dep:Go:example.com/app/v2"
+    # The nested module resolves to its declared dependency node (external): an
+    # `imports` edge from the module and a dependency `calls` edge carrying the
+    # selector -- never a fabricated local function.
+    assert _has_edge(graph, "mod:main.go", v2_dep, "imports")
+    v2_calls = [
+        e
+        for e in graph.edges
+        if e.kind == "calls" and e.dst == v2_dep and e.src == "fn:main.go:main"
+    ]
+    assert len(v2_calls) == 1
+    assert v2_calls[0].attrs.get("symbol") == "v2.Do"
+    # It is NOT dropped as an unresolvable local import, and no local function
+    # node is fabricated for it.
+    mod = graph.get_node("mod:main.go")
+    assert "example.com/app/v2" not in mod.attrs.get("unresolved_local_imports", [])
+    assert not any(n.id.startswith("fn:") and "/v2" in n.id for n in graph.nodes)
+
+
+def test_genuinely_local_subpackage_still_resolves_cross_package(tmp_path):
+    # A real subpackage under the module path that is NOT a declared dependency
+    # must still resolve cross-package to its exported function (the fix must not
+    # regress genuinely-local resolution).
+    graph = _scan_multi(
+        tmp_path,
+        "example.com/app",
+        {
+            "main.go": (
+                "package main\n"
+                'import "example.com/app/internal/foo"\n'
+                "func main() { foo.Do() }\n"
+            ),
+            "internal/foo/foo.go": "package foo\nfunc Do() {}\n",
+        },
+    )
+    assert _calls_from(graph, "fn:main.go:main") == ["fn:internal/foo/foo.go:Do"]
+    mod = graph.get_node("mod:main.go")
+    assert "example.com/app/internal/foo" not in mod.attrs.get(
+        "unresolved_local_imports", []
+    )
+
+
+def test_prefix_neighbor_dep_stays_external(tmp_path):
+    # A declared dependency that merely shares a string prefix with the main
+    # module path but is NOT nested under it -- `example.com/app-utils` next to
+    # module `example.com/app` -- is external and unaffected by the nested-module
+    # reclassification (it is not under `example.com/app/`).
+    graph = _scan_multi(
+        tmp_path,
+        "example.com/app",
+        {
+            "main.go": (
+                "package main\n"
+                'import "example.com/app-utils"\n'
+                "func main() { apputils.Do() }\n"
+            ),
+        },
+        requires=(("example.com/app-utils", "v1.0.0"),),
+    )
+    utils_dep = "dep:Go:example.com/app-utils"
+    assert _has_edge(graph, "mod:main.go", utils_dep, "imports")
+    mod = graph.get_node("mod:main.go")
+    assert "example.com/app-utils" not in mod.attrs.get("unresolved_local_imports", [])
+    # Not misclassified as local: no fabricated local function node for it.
+    assert not any(n.id.startswith("fn:") and "app-utils" in n.id for n in graph.nodes)
+
+
 def test_dot_and_blank_imports_never_resolve(tmp_path):
     # Dot and blank imports bind no usable name; a bare call that could only come
     # from a dot-import target stays unresolved, and both imports are recorded.

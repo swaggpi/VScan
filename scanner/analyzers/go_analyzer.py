@@ -234,12 +234,40 @@ class GoAnalyzer(LanguageAnalyzer):
         return deps
 
     @staticmethod
-    def _match_dep(import_path: str, dep_index: list[tuple[str, str]]) -> str | None:
-        """Longest-prefix match of ``import_path`` against the Go dep modules."""
+    def _match_dep_entry(
+        import_path: str, dep_index: list[tuple[str, str]]
+    ) -> tuple[str, str] | None:
+        """Longest-prefix match of ``import_path`` against the Go dep modules.
+
+        Returns the matched ``(module, dep_id)`` pair, or ``None``. The module
+        path is returned (not just the id) so a caller can tell whether the
+        matched dependency is a separately-declared module nested UNDER the main
+        module path (``module`` strictly deeper than ``go_module``) rather than a
+        genuinely-local package.
+        """
         for module, dep_id in dep_index:  # already longest-first
             if import_path == module or import_path.startswith(module + "/"):
-                return dep_id
+                return module, dep_id
         return None
+
+    @staticmethod
+    def _bind_dep(
+        graph: Any,
+        mod_id: str,
+        dep_id: str,
+        import_path: str,
+        alias: str | None,
+        pkg_map: dict[str, tuple[str, str]],
+    ) -> None:
+        """Emit the external-dependency ``imports`` edge and bind its name.
+
+        The local binding name is the explicit alias, or the default package
+        name derived from the import path. ``.``/``_`` never bind.
+        """
+        graph.add_edge(mod_id, dep_id, "imports")
+        local = alias or GoAnalyzer._default_package_name(import_path)
+        if local not in (".", "_"):
+            pkg_map[local] = (dep_id, import_path)
 
     @staticmethod
     def _default_package_name(import_path: str) -> str:
@@ -298,7 +326,11 @@ class GoAnalyzer(LanguageAnalyzer):
           could not be resolved soundly (recorded, never guessed).
 
         An import is LOCAL when ``go_module`` is known and the path equals or is
-        under it. A local import resolves only when the repo package exists in
+        under it, EXCEPT when it matches a declared dependency whose module path
+        is nested strictly under ``go_module`` (a separately-versioned module
+        such as ``example.com/app/v2`` published under ``example.com/app``): that
+        is an external dependency and gets its edge, not a local package. A local
+        import resolves only when the repo package exists in
         ``go_packages`` with an unambiguous declared ``package`` name, and either
         an explicit alias is given or that declared name matches the import's
         last path segment (the cardinal rule: a package-name/directory-name
@@ -335,11 +367,31 @@ class GoAnalyzer(LanguageAnalyzer):
                 stdlib.add(import_path)
                 continue
 
-            # LOCAL package import (same module): resolve to a repo package, or
-            # record unresolved. Never an external-dep edge.
+            # Resolve against DECLARED dependencies FIRST (longest-prefix). A
+            # module published UNDER the main module path -- e.g. main module
+            # ``example.com/app`` with a declared, separately-versioned
+            # ``example.com/app/v2`` -- is a SEPARATE module, not a local
+            # package. Its longest-prefix dep match is strictly deeper than
+            # ``go_module``, so it is an external dependency and must get its
+            # edge, not be dropped as an unresolvable "local" import. This only
+            # RECLASSIFIES such a nested-module import; a non-dependency import
+            # never becomes a dep edge (the cardinal rule).
+            dep_match = self._match_dep_entry(import_path, dep_index)
+
+            # A LOCAL import is one under the main module path.
             if go_module is not None and (
                 import_path == go_module or import_path.startswith(go_module + "/")
             ):
+                if dep_match is not None and dep_match[0].startswith(go_module + "/"):
+                    # Separately-declared module nested strictly under the main
+                    # module path: external dependency, not a local package.
+                    self._bind_dep(
+                        graph, mod_id, dep_match[1], import_path, alias, pkg_map
+                    )
+                    continue
+                # Genuinely-local import (under the module and NOT a declared
+                # dependency strictly beneath it): resolve to a repo package, or
+                # record unresolved. Never an external-dep edge.
                 self._resolve_local_import(
                     import_path,
                     alias,
@@ -350,12 +402,8 @@ class GoAnalyzer(LanguageAnalyzer):
                 )
                 continue
 
-            dep_id = self._match_dep(import_path, dep_index)
-            if dep_id is not None:
-                graph.add_edge(mod_id, dep_id, "imports")
-                local = alias or self._default_package_name(import_path)
-                if local not in (".", "_"):
-                    pkg_map[local] = (dep_id, import_path)
+            if dep_match is not None:
+                self._bind_dep(graph, mod_id, dep_match[1], import_path, alias, pkg_map)
             # Non-stdlib, non-local import with no matching declared dependency:
             # not a dependency we know about -> no edge, no call resolution
             # (calls through it stay unresolved). Nothing to record soundly.
