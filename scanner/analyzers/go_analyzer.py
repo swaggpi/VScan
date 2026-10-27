@@ -89,9 +89,7 @@ from typing import Any
 from tree_sitter_language_pack import get_parser
 
 from . import LanguageAnalyzer, register
-
-# Longest docstring stored on a node (keeps the graph JSON compact).
-_DOCSTRING_LIMIT = 500
+from ._treesitter import _DOCSTRING_LIMIT, _leading_doc_comment, _node_signature
 
 
 def _clean_comment(raw: str) -> str | None:
@@ -118,35 +116,6 @@ def _clean_comment(raw: str) -> str | None:
         cleaned = cleaned[:_DOCSTRING_LIMIT].rstrip() + "..."
     return cleaned or None
 
-
-def _leading_doc_comment(fnode: Any) -> str | None:
-    """Best-effort docstring: the comment block directly above a declaration."""
-    lines: list[str] = []
-    node = fnode.prev_sibling
-    expected_row = fnode.start_point[0]
-    while node is not None and node.type == "comment":
-        if expected_row - node.end_point[0] > 1:
-            break
-        lines.append(node.text.decode("utf-8", "replace"))
-        expected_row = node.start_point[0]
-        node = node.prev_sibling
-    if not lines:
-        return None
-    lines.reverse()
-    return _clean_comment("\n".join(lines))
-
-
-def _node_signature(qual: str, fnode: Any) -> str | None:
-    """Best-effort ``name(params)`` signature from a tree-sitter declaration."""
-    params = fnode.child_by_field_name("parameters")
-    if params is None:
-        return None
-    name = qual.split(".")[-1]
-    param_text = " ".join(params.text.decode("utf-8", "replace").split())
-    sig = f"{name}{param_text}"
-    if len(sig) > _DOCSTRING_LIMIT:
-        return None
-    return sig
 
 # HTTP verb methods used by Gin / Echo / Chi routers, matched case-insensitively
 # (Gin uses ``GET``; Chi uses ``Get``). ``HandleFunc`` (net/http) is handled
@@ -241,7 +210,7 @@ class GoAnalyzer(LanguageAnalyzer):
                 is_method=is_method,
                 pointer_receiver=pointer or None,
                 signature=_node_signature(qual, fnode),
-                docstring=_leading_doc_comment(fnode),
+                docstring=_leading_doc_comment(fnode, _clean_comment),
             )
             graph.add_edge(mod_id, fn_id, "declares")
 
@@ -846,7 +815,8 @@ class GoAnalyzer(LanguageAnalyzer):
                 if left is not None and right is not None:
                     names = [c for c in left.children if c.type == "identifier"]
                     values = [c for c in right.children if c.is_named]
-                    for name, value in zip(names, values):
+                    # strict=False: multi-return (x, y := f()) pairs unevenly
+                    for name, value in zip(names, values, strict=False):
                         fw = self._router_framework(value, pkg_map, stdlib)
                         if fw is not None:
                             routers[name.text.decode("utf-8")] = fw
@@ -855,7 +825,8 @@ class GoAnalyzer(LanguageAnalyzer):
                 if value is not None:
                     names = [c for c in node.children if c.type == "identifier"]
                     values = [c for c in value.children if c.is_named]
-                    for name, val in zip(names, values):
+                    # strict=False: multi-return (var x, y = f()) pairs unevenly
+                    for name, val in zip(names, values, strict=False):
                         fw = self._router_framework(val, pkg_map, stdlib)
                         if fw is not None:
                             routers[name.text.decode("utf-8")] = fw
