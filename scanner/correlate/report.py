@@ -263,7 +263,7 @@ def _coverage_block(coverage: CoverageReport) -> list[str]:
     lines.append(
         f"  call sites resolved:           {call_sites.resolved}/"
         f"{call_sites.resolved + call_sites.unresolved} "
-        f"({call_sites.resolution_rate:.0%} resolved, "
+        f"(~{call_sites.resolution_rate:.0%} resolved, "
         f"{call_sites.unresolved} unresolved)"
     )
     lines.append(

@@ -71,7 +71,7 @@ def _print_summary(graph: KnowledgeGraph, repo_path: str, output_path: str) -> N
     print(
         f"    call sites resolved: {cov.call_sites.resolved}/"
         f"{cov.call_sites.resolved + cov.call_sites.unresolved} "
-        f"({cov.call_sites.resolution_rate:.0%})",
+        f"(~{cov.call_sites.resolution_rate:.0%})",
         file=out,
     )
     print(f"    entry points:        {cov.entrypoints.total}", file=out)
