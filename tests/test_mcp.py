@@ -342,5 +342,169 @@ def test_wrong_node_kind_is_graceful():
     assert out.startswith("Error:") and "expects a function" in out
 
 
-def test_server_exposes_ten_tools():
-    assert len(S.mcp._tool_manager.list_tools()) == 10
+def test_server_exposes_twelve_tools():
+    assert len(S.mcp._tool_manager.list_tools()) == 12
+
+
+# -- Capability 4: PROVE (the fix-and-prove loop) -----------------------------
+
+
+def test_verify_fix_proves_pyyaml_and_leaves_tree_untouched(mocked_db):
+    # Prove non-mutation: capture the real GOLDEN manifest before and after.
+    req = os.path.join(GOLDEN, "requirements.txt")
+    before = open(req, encoding="utf-8").read()
+
+    vf = _call(S.vulnreach_verify_fix, S.VerifyFixInput,
+               repo_path=GOLDEN, dep_id="dep:PyPI:PyYAML", version="5.4")
+
+    assert vf["cve_cleared"] is True
+    assert vf["from_version"] == "5.3.1"
+    assert vf["to_version"] == "5.4"
+    assert PYYAML_CVE in vf["target_cves"][0]["cve_or_vuln"]
+    assert vf["target_cves"][0]["cleared"] is True
+    assert vf["reanalysis"]["available"] is True
+    assert vf["reanalysis"]["introduced"] == []
+    assert vf["verdict"] == "fix_verified"
+    # the upgrade diff touched the manifest in the scratch copy only
+    assert "-PyYAML==5.3.1" in vf["manifest_diff"]
+    assert "+PyYAML==5.4" in vf["manifest_diff"]
+    # the ORIGINAL GOLDEN tree is byte-for-byte unchanged
+    assert open(req, encoding="utf-8").read() == before
+    assert "PyYAML==5.3.1" in open(req, encoding="utf-8").read()
+
+
+def test_verify_fix_below_fix_not_cleared(mocked_db):
+    vf = _call(S.vulnreach_verify_fix, S.VerifyFixInput,
+               repo_path=GOLDEN, dep_id="dep:PyPI:PyYAML", version="5.3.2")
+    assert vf["cve_cleared"] is False
+    assert vf["target_cves"][0]["cleared"] is False
+    assert vf["verdict"] == "cve_not_cleared"
+
+
+def test_verify_fix_offline_has_no_baseline():
+    # Offline the baseline scan sees NO findings, so verify_fix cannot know which
+    # advisories apply -- it must NOT claim "cleared". (Regression: ``all([])``
+    # used to make cve_cleared vacuously True.)
+    vf = _call(S.vulnreach_verify_fix, S.VerifyFixInput,
+               repo_path=GOLDEN, dep_id="dep:PyPI:PyYAML", version="5.4", offline=True)
+    assert vf["cve_cleared"] is False
+    assert vf["target_cves"] == []
+    assert vf["verdict"] == "unverified_no_baseline"
+    assert vf["reanalysis"]["available"] is False
+    assert vf["verdict"] not in {"fix_verified", "cve_cleared_regressions_unknown"}
+
+
+def test_verify_fix_baseline_outage_has_no_baseline(mocked_db, monkeypatch):
+    # OSV is down for the FIRST (baseline) correlate only. The baseline then has
+    # no findings, so nothing can be proven even though the after-scan succeeds.
+    from scanner.correlate.osv import OsvNetworkError
+
+    calls = {"n": 0}
+
+    def _flaky(queries):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise OsvNetworkError("simulated OSV outage during baseline")
+        return [_IDS_BY_NAME.get(q["package"]["name"], []) for q in queries]
+
+    monkeypatch.setattr(osv, "query_batch", _flaky)
+
+    vf = _call(S.vulnreach_verify_fix, S.VerifyFixInput,
+               repo_path=GOLDEN, dep_id="dep:PyPI:urllib3", version="1.25.9")
+    assert vf["cve_cleared"] is False
+    assert vf["verdict"] == "unverified_no_baseline"
+
+
+def test_verify_fix_no_advisory_dep(mocked_db):
+    # Flask has no mocked advisory, so the baseline finds no CVE on it: there is
+    # nothing to clear, and we must not report it as cleared/verified.
+    vf = _call(S.vulnreach_verify_fix, S.VerifyFixInput,
+               repo_path=GOLDEN, dep_id="dep:PyPI:Flask", version="2.0.2")
+    assert vf["cve_cleared"] is False
+    assert vf["target_cves"] == []
+    assert vf["verdict"] == "no_known_cves"
+
+
+def test_verify_fix_prerelease_of_fixed_line_not_cleared(mocked_db):
+    # Fix is 5.4; a pre-release of that same line (5.4b1) is NOT yet the fix.
+    vf = _call(S.vulnreach_verify_fix, S.VerifyFixInput,
+               repo_path=GOLDEN, dep_id="dep:PyPI:PyYAML", version="5.4b1")
+    assert vf["target_cves"][0]["cleared"] is False
+    assert vf["cve_cleared"] is False
+    assert vf["verdict"] == "cve_not_cleared"
+
+
+def test_verify_fix_prerelease_above_fixed_line_cleared(mocked_db):
+    # A pre-release that is strictly above the fixed line (5.5b1 > 5.4) clears it.
+    vf = _call(S.vulnreach_verify_fix, S.VerifyFixInput,
+               repo_path=GOLDEN, dep_id="dep:PyPI:PyYAML", version="5.5b1")
+    assert vf["target_cves"][0]["cleared"] is True
+    assert vf["cve_cleared"] is True
+
+
+def test_verify_fix_escalation_blocks_verified(mocked_db, monkeypatch):
+    # An existing finding that goes reachable -> reachable+tainted (an exposure
+    # escalation) must downgrade the verdict even though the target CVE clears.
+    real = S._run_audit_pipeline
+    calls = {"n": 0}
+
+    def _escalating(repo_path, *, offline, use_nvd=False, refresh=False):
+        calls["n"] += 1
+        key, graph, corr, reach = real(
+            repo_path, offline=offline, use_nvd=use_nvd, refresh=refresh
+        )
+        if calls["n"] == 2:  # the AFTER re-scan: escalate PyYAML to tainted
+            for f in corr.findings:
+                if f.dependency_id == "dep:PyPI:PyYAML":
+                    f.taint = "tainted"
+        return key, graph, corr, reach
+
+    monkeypatch.setattr(S, "_run_audit_pipeline", _escalating)
+
+    vf = _call(S.vulnreach_verify_fix, S.VerifyFixInput,
+               repo_path=GOLDEN, dep_id="dep:PyPI:PyYAML", version="5.4")
+    assert vf["cve_cleared"] is True          # version-math still clears the CVE
+    assert vf["reanalysis"]["introduced"] == []  # escalation, not a new finding
+    assert vf["reanalysis"]["changed"]           # the escalation is recorded
+    assert vf["verdict"] == "fix_introduces_new_exposure"
+
+
+def test_diff_pyyaml_upgrade_resolves_cve(mocked_db, monkeypatch, tmp_path):
+    head = tmp_path / "golden-head"
+    shutil.copytree(GOLDEN, head)
+    req = head / "requirements.txt"
+    req.write_text(req.read_text().replace("PyYAML==5.3.1", "PyYAML==5.4"))
+
+    # OSV matches versions server-side; make the batch mock version-aware so the
+    # upgraded head (PyYAML 5.4) no longer matches the advisory (fixed in 5.4),
+    # while urllib3 (1.25.8) still does in both trees.
+    _FIXED = {"PyYAML": "5.4", "urllib3": "1.26.5"}
+
+    def _versioned_query(queries):
+        out = []
+        for q in queries:
+            name = q["package"]["name"]
+            ids = _IDS_BY_NAME.get(name, [])
+            fixed = _FIXED.get(name)
+            if ids and fixed and S.upgrade.version_key(q.get("version", "")) >= S.upgrade.version_key(fixed):
+                ids = []
+            out.append(ids)
+        return out
+
+    monkeypatch.setattr(osv, "query_batch", _versioned_query)
+
+    df = _call(S.vulnreach_diff, S.DiffInput,
+               repo_path_base=GOLDEN, repo_path_head=str(head))
+    resolved_cves = {c for row in df["resolved"] for c in row["cve_ids"]}
+    assert PYYAML_CVE in resolved_cves
+    assert df["counts"]["resolved"] == 1
+    assert df["counts"]["introduced"] == 0
+    assert df["network_ok"] is True
+
+
+def test_prompt_registered():
+    names = {p.name for p in S.mcp._prompt_manager.list_prompts()}
+    assert "audit_and_fix" in names
+    text = S.audit_and_fix()
+    assert isinstance(text, str) and text.strip()
+    assert "vulnreach_verify_fix" in text

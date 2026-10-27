@@ -60,6 +60,18 @@ def _bust_derived(key: str) -> None:
         _CORR_CACHE.pop(ckey, None)
 
 
+def forget(key: str) -> None:
+    """Drop the graph AND every derived cache entry for one repo abspath.
+
+    Mirrors :func:`_bust_derived` but also evicts the graph itself, so a
+    throwaway scratch tree (e.g. verify_fix's upgraded copy) leaves nothing
+    behind in the process caches once it is removed. ``key`` is the absolute
+    path used as the cache key (``resolve_repo``/``os.path.abspath`` form).
+    """
+    _GRAPH_CACHE.pop(key, None)
+    _bust_derived(key)
+
+
 def get_graph(repo_path: str, *, refresh: bool = False) -> tuple[str, KnowledgeGraph]:
     """Scan ``repo_path`` once and reuse; ``refresh=True`` forces a re-scan.
 
