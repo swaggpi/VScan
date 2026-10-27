@@ -52,9 +52,9 @@
   var focusedMeta = null;     // { epTotal, promEp, clustered, vulnDeps, reachablePaths, fullNodes, fullEdges }
   var repoCounts = {};        // kind -> count across the FULL repo (header "Repository totals")
 
-  // The fetched redash bundle, cached so the header switcher re-renders without
-  // re-fetching 6+ MB.
-  var redashBundle = null;
+  // Bundles fetched for the header switcher, cached by view key so switching
+  // re-renders instantly without re-fetching (redash is 6+ MB).
+  var bundleCache = {};
 
   var el = {
     counts: document.getElementById("counts"),
@@ -70,6 +70,7 @@
     scanname: document.getElementById("scanname"),
     file: document.getElementById("file"),
     banner: document.getElementById("banner"),
+    viewDemo: document.getElementById("view-demo"),
     viewRedash: document.getElementById("view-redash"),
     viewSample: document.getElementById("view-sample"),
     viewFile: document.getElementById("view-file")
@@ -891,7 +892,7 @@
     reader.onload = function () {
       try {
         loadAuto(JSON.parse(reader.result), f.name);
-        setActiveView(null); // a loaded file is neither the redash nor sample view
+        setActiveView(null); // a loaded file is none of the switcher views
       } catch (err) {
         el.scanname.textContent = "Could not read " + f.name +
           " — expected a scan graph (nodes array) or an audit bundle.";
@@ -905,6 +906,7 @@
 
   /* ---------------------------------------------------------------- views */
   function setActiveView(which) {
+    el.viewDemo.setAttribute("aria-pressed", which === "demo" ? "true" : "false");
     el.viewRedash.setAttribute("aria-pressed", which === "redash" ? "true" : "false");
     el.viewSample.setAttribute("aria-pressed", which === "sample" ? "true" : "false");
   }
@@ -922,32 +924,46 @@
     setActiveView("sample");
   }
 
-  // The large real repo — rendered from the already-fetched bundle.
-  function showRedash() {
-    if (!redashBundle) return;
-    loadBundle(redashBundle, "redash · big repo · audit");
-    setActiveView("redash");
+  // Served bundles, fetched lazily on first use and cached. Each is rendered
+  // through the normal path; focused mode for big graphs is decided by the
+  // existing node-count threshold, not by which bundle this is.
+  var BUNDLES = {
+    demo:   { file: "demo-bundle.json",   label: "demo-app · audit",       btn: el.viewDemo,
+              hint: "Open the dashboard from a local web server to load the demo bundle." },
+    redash: { file: "redash-bundle.json", label: "redash · big repo · audit", btn: el.viewRedash,
+              hint: "Open the dashboard from a local web server to load the redash bundle." }
+  };
+  var viewToken = 0; // latest requested view wins if fetches resolve out of order
+
+  // Resolves true if the view was shown, false if its bundle could not load.
+  function showBundle(key) {
+    var spec = BUNDLES[key];
+    var token = ++viewToken;
+    setActiveView(key);
+    var ready = bundleCache[key]
+      ? Promise.resolve(bundleCache[key])
+      : (el.scanname.textContent = "loading " + key + "…",
+         fetch(spec.file)
+           .then(function (r) { if (!r.ok) throw new Error("http " + r.status); return r.json(); })
+           .then(function (b) { bundleCache[key] = b; return b; }));
+    return ready.then(function (b) {
+      if (token === viewToken) loadBundle(b, spec.label);
+      return true;
+    }, function () {
+      spec.btn.disabled = true;
+      spec.btn.title = spec.hint;
+      if (token === viewToken) showSample();
+      return false;
+    });
   }
 
   el.viewSample.addEventListener("click", showSample);
-  el.viewRedash.addEventListener("click", showRedash);
+  el.viewDemo.addEventListener("click", function () { showBundle("demo"); });
+  el.viewRedash.addEventListener("click", function () { showBundle("redash"); });
 
   /* ---------------------------------------------------------------- boot */
-  // Default to the served redash bundle so a real, large repo shows on open.
-  // If the fetch fails (e.g. opened via file://), fall back to the inline
-  // sample exactly as before.
-  el.scanname.textContent = "loading redash…";
-  fetch("redash-bundle.json")
-    .then(function (r) { if (!r.ok) throw new Error("http " + r.status); return r.json(); })
-    .then(function (b) {
-      redashBundle = b;
-      el.viewRedash.disabled = false;
-      el.viewRedash.removeAttribute("title");
-      showRedash();
-    })
-    .catch(function () {
-      el.viewRedash.disabled = true;
-      el.viewRedash.title = "Open the dashboard from a local web server to load the redash bundle.";
-      showSample();
-    });
+  // Default to the served demo bundle (a small, clean showcase app whose deep
+  // reachable paths render in full). If the fetch fails (e.g. opened via
+  // file://), fall back to the inline sample exactly as before.
+  showBundle("demo");
 })();
