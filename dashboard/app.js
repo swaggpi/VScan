@@ -66,6 +66,7 @@
 
   var el = {
     counts: document.getElementById("counts"),
+    funnel: document.getElementById("funnel"),
     eplist: document.getElementById("eplist"),
     epNote: document.getElementById("ep-note"),
     reachBody: document.getElementById("reach-body"),
@@ -229,6 +230,18 @@
       }},
       /* actively exploited (KEV) — strongest ring */
       { selector: 'node[kev = 1]', style: { "border-width": 4, "overlay-opacity": 0.26 } },
+      /* the vulnerable FUNCTION was reached (symbol_match=confirmed) — amber ring
+         layered over the red vuln ring: the call graph resolves into the flaw. */
+      { selector: 'node[confirmed = 1]', style: {
+        "border-color": "#F2B134", "border-width": 4, "width": 40, "height": 40,
+        "overlay-color": "#F2B134", "overlay-opacity": 0.26, "overlay-padding": 9
+      }},
+      /* EXPLOITABLE (taint=tainted) — the top problem on the canvas: attacker
+         input reaches the call. Strongest emphasis: a thick red ring, largest. */
+      { selector: 'node[tainted = 1]', style: {
+        "border-color": ALERT, "border-width": 5, "width": 44, "height": 44,
+        "color": "#F79885", "overlay-color": ALERT, "overlay-opacity": 0.34, "overlay-padding": 12
+      }},
 
       // Connections are thin, straight lines between layers — like the synapses
       // of a feed-forward network. No arrowheads by default (direction is the
@@ -311,7 +324,11 @@
         // Overlay flags (0 unless an audit bundle marked this dependency).
         vuln: vs ? 1 : 0,
         vreach: vs && vs.reachable ? 1 : 0,
-        kev: vs && vs.kev ? 1 : 0
+        kev: vs && vs.kev ? 1 : 0,
+        // Deterministic escalation flags: the vulnerable function was reached
+        // (symbol_match=confirmed), and attacker input reaches it (taint=tainted).
+        confirmed: vs && vs.symbolConfirmed ? 1 : 0,
+        tainted: vs && vs.tainted ? 1 : 0
       }});
     });
     model.edges.forEach(function (e) {
@@ -724,6 +741,42 @@
       groupNum(m.fullEdges) + ' edges — not rendered.</span>';
   }
 
+  // The Impact funnel strip: the headline, shown only in bundle mode. Five stages
+  // narrowing left -> right from every dependency down to the proven-exploitable
+  // few, so the eye lands on the dangerous end. Renders correctly when any count
+  // is 0 (a zero stage reads neutral, never a false red alarm). Labels mirror
+  // scanner/correlate/report.py funnel_line.
+  function renderFunnel() {
+    if (!el.funnel) return;
+    if (!bundleMeta || !bundleMeta.summary) {
+      el.funnel.hidden = true;
+      el.funnel.innerHTML = "";
+      return;
+    }
+    var s = bundleMeta.summary;
+    var stages = [
+      { n: s.total_dependencies,               label: "dependencies",               tone: "neutral" },
+      { n: s.total_vulnerabilities,            label: "known CVEs",                 tone: "neutral" },
+      { n: s.reachable_vulnerabilities,        label: "reachable",                  tone: "neutral" },
+      { n: s.symbol_confirmed_vulnerabilities, label: "vulnerable-function confirmed", tone: "confirmed" },
+      { n: s.taint_confirmed_vulnerabilities,  label: "exploitable",                tone: "exploit",
+        sub: "attacker input reaches the call" }
+    ];
+    var html = "";
+    stages.forEach(function (st, i) {
+      if (i) html += '<span class="funnel__arrow" aria-hidden="true">&rarr;</span>';
+      var n = (st.n == null ? 0 : st.n);
+      html += '<div class="funnel__stage funnel__stage--' + st.tone +
+        ' funnel__stage--i' + i + (n === 0 ? " is-zero" : "") + '">' +
+        '<span class="funnel__num">' + groupNum(n) + '</span>' +
+        '<span class="funnel__label">' + esc(st.label) + '</span>' +
+        (st.sub ? '<span class="funnel__sub">' + esc(st.sub) + '</span>' : '') +
+        '</div>';
+    });
+    el.funnel.innerHTML = html;
+    el.funnel.hidden = false;
+  }
+
   // Above this many routes the flat list is a wall, so routes collapse into
   // path-prefix groups. Small repos (the demo's 3) stay flat — no empty ritual.
   var EP_GROUP_THRESHOLD = 12;
@@ -894,6 +947,17 @@
   /* ---------------------------------------------------------------- vulnerabilities */
   var SEV_RANK = { CRITICAL: 4, HIGH: 3, MODERATE: 2, MEDIUM: 2, LOW: 1 };
 
+  // Deterministic escalation ladder (NOT advisory): taint beats symbol_match
+  // beats bare reachability. Picks the finding highest on the ladder as the
+  // representative for a dependency's escalation panel.
+  var SYMBOL_RANK = { confirmed: 3, package_reachable: 2, no_path: 1 };
+  var TAINT_RANK = { tainted: 1, not_proven: 0 };
+  function escalationRank(f) {
+    return (TAINT_RANK[f.taint] || 0) * 100 +
+      (SYMBOL_RANK[f.symbol_match] || 0) * 10 +
+      (f.reachable ? 1 : 0);
+  }
+
   // Build a per-dependency roll-up from the ranked findings so the graph and
   // the panel agree on what is vulnerable, reachable and actively exploited.
   function computeVulnState() {
@@ -902,11 +966,18 @@
       var id = f.dependency_id;
       if (!id) return;
       var vs = vulnByDep[id] || (vulnByDep[id] = {
-        findings: [], kev: false, reachable: false, worst: 0, entrypoints: []
+        findings: [], kev: false, reachable: false, worst: 0, entrypoints: [],
+        symbolConfirmed: false, tainted: false, escFinding: null, escRank: -1
       });
       vs.findings.push(f);
       if (f.kev) vs.kev = true;
       if (f.reachable) vs.reachable = true;
+      // Deterministic signals: did a resolved path reach the vulnerable function
+      // (symbol_match), and does attacker input prove to reach the call (taint)?
+      if (f.symbol_match === "confirmed") vs.symbolConfirmed = true;
+      if (f.taint === "tainted") vs.tainted = true;
+      var escR = escalationRank(f);
+      if (escR > vs.escRank) { vs.escFinding = f; vs.escRank = escR; }
       var rank = SEV_RANK[(f.severity || "").toUpperCase()] || 0;
       if (rank > vs.worst) vs.worst = rank;
       (f.reachable_entrypoints || []).forEach(function (ep) {
@@ -983,6 +1054,67 @@
   var TRIAGE_RANK = { affected: 3, uncertain: 2, likely_unaffected: 1 };
   function triageRank(v) { return TRIAGE_RANK[v] || 0; }
 
+  // Symbol-level reachability -> { label, cls }. DETERMINISTIC (derived from the
+  // resolved call graph vs. the advisory's vulnerable symbols), NOT advisory — so
+  // it carries no "Advisory" flag, unlike triage/usage. Mirrors usageBadge.
+  var SYMBOL_MATCH_META = {
+    confirmed:         { label: "vulnerable function reached",             cls: "sym sym--confirmed" },
+    package_reachable: { label: "package reachable, function unconfirmed",  cls: "sym sym--package" },
+    no_path:           { label: "not reachable",                           cls: "sym sym--none" }
+  };
+  function symbolBadge(f) {
+    if (!f || !f.symbol_match) return "";
+    var m = SYMBOL_MATCH_META[f.symbol_match];
+    if (!m) return "";
+    return '<span class="' + m.cls + '" title="Symbol-level reachability (deterministic)">' +
+      esc(m.label) + '</span>';
+  }
+
+  // Taint -> { label, cls }. DETERMINISTIC (a proven data-flow from an attacker
+  // source to the vulnerable call), NOT advisory. "tainted" is the strongest
+  // escalation; "not_proven" is a dim note. Mirrors triageBadge.
+  var TAINT_META = {
+    tainted:    { label: "exploitable — attacker input reaches the call", cls: "taint taint--tainted" },
+    not_proven: { label: "no proven attacker-input flow",                 cls: "taint taint--none" }
+  };
+  function taintBadge(f) {
+    if (!f || !f.taint) return "";
+    var m = TAINT_META[f.taint];
+    if (!m) return "";
+    return '<span class="' + m.cls + '" title="Taint analysis (deterministic)">' +
+      esc(m.label) + '</span>';
+  }
+
+  // One rung of the deterministic escalation ladder: a status dot (lit in its
+  // tone when reached, dim otherwise) + the stage name + a detail badge.
+  function escalStep(label, on, tone, detail) {
+    return '<li class="escal__step' + (on ? " is-on escal__step--" + tone : "") + '">' +
+      '<span class="escal__dot" aria-hidden="true"></span>' +
+      '<div class="escal__text"><span class="escal__label">' + esc(label) + '</span>' +
+      (detail ? '<span class="escal__detail">' + detail + '</span>' : '') +
+      '</div></li>';
+  }
+
+  // The taint evidence trail: attacker source -> the resolved node path -> the
+  // vulnerable sink symbol. Mirrors the example-path rendering (path-steps).
+  function taintEvidenceHtml(ev) {
+    if (!ev) return "";
+    var chain = (ev.path || []).map(function (id) {
+      var m = model.index[id]; return m ? (m.name || m.id) : id;
+    });
+    var flow = '<span class="taint-ev__src">' + esc(ev.source || "source") + '</span>' +
+      (chain.length
+        ? ' <span class="taint-ev__arrow">→</span> <span class="path-steps">' + esc(chain.join(" → ")) + '</span>'
+        : '') +
+      ' <span class="taint-ev__arrow">→</span> ' +
+      '<span class="taint-ev__sink">' + esc(ev.sink_symbol || "sink") + '</span>';
+    return '<div class="taint-ev">' +
+      '<div class="taint-ev__h">Attacker-input flow</div>' +
+      '<div class="taint-ev__flow">' + flow + '</div>' +
+      (ev.entrypoint ? '<p class="dim-note">Via entry point ' + esc(ev.entrypoint) + '.</p>' : '') +
+      '</div>';
+  }
+
 
   function sevTag(f) {
     var label = (f.severity || "UNKNOWN").toUpperCase();
@@ -1053,11 +1185,14 @@
         id: id, name: f0.dependency_name || id, version: f0.version || "",
         ecosystem: f0.ecosystem || "", findings: vs.findings,
         reachable: vs.reachable, kev: vs.kev, worst: vs.worst, maxEpss: maxEpss,
-        triageAffected: !!vs.triageAffected
+        triageAffected: !!vs.triageAffected,
+        taintTainted: !!vs.tainted, symbolConfirmed: !!vs.symbolConfirmed
       });
     });
     groups.sort(function (a, b) {
-      return ((b.triageAffected ? 1 : 0) - (a.triageAffected ? 1 : 0)) ||
+      return ((b.taintTainted ? 1 : 0) - (a.taintTainted ? 1 : 0)) ||
+        ((b.symbolConfirmed ? 1 : 0) - (a.symbolConfirmed ? 1 : 0)) ||
+        ((b.triageAffected ? 1 : 0) - (a.triageAffected ? 1 : 0)) ||
         (b.reachable - a.reachable) || (b.kev - a.kev) ||
         (b.worst - a.worst) || (b.maxEpss - a.maxEpss) ||
         a.name.localeCompare(b.name);
@@ -1090,6 +1225,8 @@
         '<span class="depgroup__count">' + n + ' CVE' + (n === 1 ? "" : "s") + '</span>' +
         '<span class="' + sevCls + '">' + esc(sev) + '</span>' +
         (g.reachable ? '<span class="tag tag--reach">reachable</span>' : '') +
+        (g.symbolConfirmed ? '<span class="sym sym--confirmed">function confirmed</span>' : '') +
+        (g.taintTainted ? '<span class="taint taint--tainted">tainted</span>' : '') +
         (g.kev ? '<span class="tag tag--kev">KEV</span>' : '') +
         (g.triageAffected ? '<span class="tri tri--affected">exploitable</span>' : '') +
       '</span></summary>';
@@ -1108,6 +1245,8 @@
         (f.kev ? '<span class="tag tag--kev">KEV</span>' : "") +
         (f.epss != null ? '<span class="tag tag--epss">EPSS ' + Number(f.epss).toFixed(3) + '</span>' : "") +
         (f.reachable ? '<span class="tag tag--reach">reachable</span>' : "") +
+        (f.symbol_match === "confirmed" ? '<span class="sym sym--confirmed">confirmed</span>' : "") +
+        (f.taint === "tainted" ? '<span class="taint taint--tainted">tainted</span>' : "") +
         triageBadge(t) +
         '</div>' +
         (t && t.rationale ? '<div class="cve__triage"><span class="cve__triage-h">Exploitability</span> ' + esc(t.rationale) + '</div>' : "") +
@@ -1412,6 +1551,25 @@
       : '<button type="button" class="btn-trace" disabled>Nothing reaches this</button>';
     html += '</section>';
 
+    // Deterministic escalation (NOT advisory, so no Advisory flag): reachable ->
+    // vulnerable function reached (symbol_match) -> exploitable (taint). Each rung
+    // lights in its tone when proven, dim otherwise; the tainted rung shows the
+    // attacker-input evidence trail.
+    if (vs) {
+      var ef = vs.escFinding || depFindings[0] || {};
+      var symOk = ef.symbol_match === "confirmed";
+      var taintOk = ef.taint === "tainted";
+      html += '<section class="dsec"><h2 class="dsec__h">Escalation</h2>' +
+        '<ol class="escal">' +
+          escalStep("Reachable from a public route", !!vs.reachable, "reach",
+            vs.reachable ? '' : '<span class="escal__none">not reached</span>') +
+          escalStep("Vulnerable function reached", symOk, "sym", symbolBadge(ef)) +
+          escalStep("Exploitable", taintOk, "taint", taintBadge(ef)) +
+        '</ol>';
+      if (taintOk && ef.taint_evidence) html += taintEvidenceHtml(ef.taint_evidence);
+      html += '</section>';
+    }
+
     // Advisory exploitability triage: does the code actually call the vulnerable
     // surface? Leads with the strongest verdict; per-CVE rationale sits below.
     var trows = triageByDep[n.id] || [];
@@ -1486,6 +1644,8 @@
           (f.kev ? '<span class="tag tag--kev">KEV</span>' : "") +
           (f.epss != null ? '<span class="tag tag--epss">EPSS ' + Number(f.epss).toFixed(3) + '</span>' : "") +
           (f.reachable ? '<span class="tag tag--reach">reachable</span>' : "") +
+          (f.symbol_match === "confirmed" ? '<span class="sym sym--confirmed">confirmed</span>' : "") +
+          (f.taint === "tainted" ? '<span class="taint taint--tainted">tainted</span>' : "") +
           triageBadge(triageForFinding(f)) +
           '</div>' +
           (f.fixed_versions && f.fixed_versions.length ? '<div class="cve__fix">Fixed in <b>' + esc(f.fixed_versions.join(", ")) + '</b></div>' : "") +
@@ -1666,6 +1826,7 @@
     visibleKinds = {};
     el.stage.classList.remove("is-traced"); // drop any trace hint from a prior view
     renderCounts();
+    renderFunnel();
     renderBanner();
     renderEntryPoints();
     renderFilters();
@@ -1856,9 +2017,9 @@
   // through the normal path; focused mode for big graphs is decided by the
   // existing node-count threshold, not by which bundle this is.
   var BUNDLES = {
-    demo:   { file: "demo-bundle.json",   label: "demo-app · audit",       btn: el.viewDemo,
-              hint: "Open the dashboard from a local web server to load the demo bundle." },
-    redash: { file: "redash-bundle.json", label: "redash · big repo · audit", btn: el.viewRedash,
+    demo:   { file: "demo-bundle.json",   label: "vulnerable-app · Flask demo · audit", btn: el.viewDemo,
+              hint: "Open the dashboard from a local web server to load the vulnerable-app demo bundle." },
+    redash: { file: "redash-bundle.json", label: "redash · real-world repo (200 deps) · audit", btn: el.viewRedash,
               hint: "Open the dashboard from a local web server to load the redash bundle." }
   };
   var viewToken = 0; // latest requested view wins if fetches resolve out of order

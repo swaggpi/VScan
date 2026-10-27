@@ -31,10 +31,10 @@
     <div class="titleblock__load">
       <div class="viewswitch" id="viewswitch" role="group" aria-label="Choose a scan to view">
         <button class="seg" id="view-demo" type="button" aria-pressed="true">
-          <span class="seg__name">Demo app</span>
+          <span class="seg__name">Vulnerable app</span><span class="seg__sub">Flask demo</span>
         </button>
         <button class="seg" id="view-redash" type="button" aria-pressed="false">
-          <span class="seg__name">redash</span><span class="seg__sub">big repo</span>
+          <span class="seg__name">redash</span><span class="seg__sub">real repo · 200 deps</span>
         </button>
         <button class="seg" id="view-sample" type="button" aria-pressed="false">
           <span class="seg__name">Sample app</span>
@@ -47,6 +47,9 @@
       <span class="scanname" id="scanname">starting…</span>
     </div>
   </header>
+
+  <!-- Impact funnel: the headline strip, filled by app.js in bundle mode -->
+  <div class="funnel" id="funnel" role="group" aria-label="Impact funnel" hidden></div>
 
   <main class="layout">
     <aside class="rail" aria-label="Controls and findings">
@@ -97,6 +100,8 @@
         <span class="legend__item"><i class="dot dot--sig"></i>reachable trace</span>
         <span class="legend__item legend__item--vuln"><i class="dot dot--vuln"></i>vulnerable dependency</span>
         <span class="legend__item legend__item--vuln"><i class="dot dot--vulnhot"></i>reachable &amp; vulnerable</span>
+        <span class="legend__item legend__item--vuln"><i class="dot dot--confirmed"></i>vulnerable function reached</span>
+        <span class="legend__item legend__item--vuln"><i class="dot dot--tainted"></i>exploitable (tainted)</span>
       </div>
       </div>
     </section>

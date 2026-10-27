@@ -210,6 +210,79 @@ body {
   white-space: nowrap;
 }
 
+/* ---------------------------------------------------------------- impact funnel */
+/* The headline strip under the header, shown only in bundle mode: five stages
+   narrowing left -> right, from every dependency down to the proven-exploitable
+   few. Neutral chips for the broad early stages; amber for "confirmed", a red
+   glow for "exploitable" — so the eye lands on the narrow, dangerous end. */
+.funnel {
+  display: flex;
+  align-items: stretch;
+  gap: 0.5rem;
+  padding: 0.7rem 1.4rem;
+  border-bottom: 1px solid var(--panel-edge);
+  background: linear-gradient(180deg, rgba(14,42,69,0.55), rgba(11,34,57,0.55));
+}
+.funnel[hidden] { display: none; }
+.funnel__stage {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 0.15rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--hair);
+  border-radius: var(--radius);
+  background: var(--ground-sink);
+}
+/* Narrowing ramp: each stage a little slimmer than the last. */
+.funnel__stage--i0 { flex-grow: 1.9; }
+.funnel__stage--i1 { flex-grow: 1.5; }
+.funnel__stage--i2 { flex-grow: 1.2; }
+.funnel__stage--i3 { flex-grow: 0.95; }
+.funnel__stage--i4 { flex-grow: 0.78; }
+.funnel__num {
+  font: 500 1.7rem/1 var(--f-display);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+.funnel__label {
+  font: 500 0.6rem/1.25 var(--f-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+.funnel__sub {
+  font: 400 0.56rem/1.2 var(--f-mono);
+  color: var(--ink-mut);
+  max-width: 18ch;
+}
+.funnel__arrow {
+  flex: none;
+  align-self: center;
+  font: 400 1rem/1 var(--f-mono);
+  color: var(--ink-mut);
+}
+/* Tone: the two confirmed/exploitable stages carry the risk signal. */
+.funnel__stage--confirmed { border-color: var(--signal); }
+.funnel__stage--confirmed .funnel__num { color: var(--signal); }
+.funnel__stage--exploit {
+  border-color: var(--alert);
+  background: var(--alert-soft);
+  box-shadow: 0 0 12px var(--alert-glow);
+}
+.funnel__stage--exploit .funnel__num { color: var(--alert-ink); }
+/* A zero count still renders — neutral, never a false alarm (redash: 0 exploitable). */
+.funnel__stage.is-zero .funnel__num { color: var(--ink-mut); }
+.funnel__stage--confirmed.is-zero { border-color: var(--hair); }
+.funnel__stage--exploit.is-zero {
+  border-color: var(--hair);
+  background: var(--ground-sink);
+  box-shadow: none;
+}
+
 /* ---------------------------------------------------------------- layout */
 .layout {
   flex: 1;
@@ -438,6 +511,110 @@ body {
 .use--none       { border-color: var(--ink-mut); color: var(--ink-mut); }
 .use--uncertain  { border-color: var(--ink-mut); color: var(--ink-mut); }
 
+/* Symbol-level reachability badges — DETERMINISTIC (not advisory). "confirmed"
+   means a resolved call reaches the vulnerable function (amber signal); a
+   package-only reach is dim; no path is the green all-clear. Parallels .use/.tri. */
+.sym {
+  font: 600 0.58rem/1 var(--f-mono);
+  letter-spacing: 0.05em;
+  padding: 0.22rem 0.42rem;
+  border-radius: 2px;
+  border: 1px solid var(--hair);
+  color: var(--ink-dim);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.sym--confirmed { border-color: var(--signal); color: var(--signal); }
+.sym--package   { border-color: var(--ink-mut); color: var(--ink-mut); }
+.sym--none      { border-color: var(--safe); color: var(--safe-ink); }
+
+/* Taint badges — DETERMINISTIC. "tainted" is the strongest signal on the page:
+   attacker input provably reaches the call, so it wears the filled alert glow
+   (parallels .tri--affected). "not_proven" is a quiet, dim note. */
+.taint {
+  font: 600 0.58rem/1 var(--f-mono);
+  letter-spacing: 0.05em;
+  padding: 0.22rem 0.42rem;
+  border-radius: 2px;
+  border: 1px solid var(--hair);
+  color: var(--ink-dim);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.taint--tainted {
+  background: var(--alert);
+  color: var(--ground);
+  border-color: var(--alert);
+  box-shadow: 0 0 8px var(--alert-glow);
+}
+.taint--none { border-color: var(--ink-mut); color: var(--ink-mut); }
+
+/* Deterministic escalation ladder (dependency datasheet): reachable -> vulnerable
+   function reached -> exploitable. Each rung is a status dot + the stage name +
+   a detail badge; a reached rung lights in its tone, the rest stay dim. */
+.escal { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.1rem; }
+.escal__step {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding: 0.35rem 0 0.35rem 0.1rem;
+}
+/* A connecting spine between the dots, so the three rungs read as one ladder. */
+.escal__step::before {
+  content: "";
+  position: absolute;
+  left: 4px; top: 1.1rem; bottom: -0.35rem;
+  width: 1px;
+  background: var(--hair);
+}
+.escal__step:last-child::before { display: none; }
+.escal__dot {
+  flex: none;
+  width: 9px; height: 9px;
+  margin-top: 0.3rem;
+  border-radius: 50%;
+  border: 1.5px solid var(--muted);
+  background: var(--ground-sink);
+  z-index: 1;
+}
+.escal__text { display: flex; flex-direction: column; gap: 0.25rem; }
+.escal__label {
+  font: 500 0.78rem/1.2 var(--f-mono);
+  color: var(--ink-mut);
+}
+.escal__detail { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; }
+.escal__none { font: 500 0.66rem/1 var(--f-mono); color: var(--ink-mut); text-transform: uppercase; letter-spacing: 0.05em; }
+/* A proven rung lights up, strongest at the dangerous end. */
+.escal__step.is-on .escal__label { color: var(--ink); }
+.escal__step--reach .escal__dot { border-color: var(--signal); background: var(--signal); box-shadow: 0 0 6px var(--signal-glow); }
+.escal__step--sym .escal__dot   { border-color: var(--signal); background: var(--signal); box-shadow: 0 0 7px var(--signal-glow); }
+.escal__step--taint .escal__dot { border-color: var(--alert); background: var(--alert); box-shadow: 0 0 9px var(--alert-glow); }
+.escal__step--taint.is-on .escal__label { color: var(--alert-ink); }
+
+/* The taint evidence trail: attacker source -> node path -> vulnerable sink. */
+.taint-ev {
+  margin-top: 0.1rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--hair);
+  border-left: 2px solid var(--alert);
+  border-radius: var(--radius);
+  background: linear-gradient(90deg, var(--alert-soft), var(--ground-sink) 72%);
+}
+.taint-ev__h {
+  font: 600 0.58rem/1 var(--f-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--alert-ink);
+  margin-bottom: 0.35rem;
+}
+.taint-ev__flow { font: 400 0.68rem/1.5 var(--f-mono); color: var(--ink-dim); word-break: break-word; }
+.taint-ev__src  { color: var(--alert-ink); font-weight: 600; }
+.taint-ev__sink { color: var(--alert-ink); font-weight: 600; }
+.taint-ev__arrow { color: var(--ink-mut); }
+.taint-ev .path-steps { color: var(--ink-mut); }
+.taint-ev .dim-note { margin-top: 0.3rem; }
+
 /* Evidence list under the usage section: file:line + a trimmed snippet. */
 .evlist { list-style: none; margin: 0.4rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 0.45rem; }
 .ev__loc { font: 500 0.68rem/1.3 var(--f-mono); color: var(--ink-dim); word-break: break-all; }
@@ -567,6 +744,8 @@ body {
 .dot--sig { background: var(--signal); box-shadow: 0 0 7px var(--signal-glow); }
 .dot--vuln { background: var(--dep); border: 2px solid var(--alert); }
 .dot--vulnhot { background: var(--signal); border: 2px solid var(--alert); box-shadow: 0 0 7px var(--alert-glow); }
+.dot--confirmed { background: var(--dep); border: 2px solid var(--signal); box-shadow: 0 0 7px var(--signal-glow); }
+.dot--tainted { background: var(--alert); border: 2px solid var(--alert); box-shadow: 0 0 9px var(--alert-glow); }
 
 /* Vulnerability legend rows appear only once an audit bundle is loaded. */
 .legend__item--vuln { display: none; }
@@ -1035,6 +1214,12 @@ details[open] > summary .disc__chev { transform: rotate(90deg); }
   .counts { gap: 1rem; flex-wrap: wrap; }
   .titleblock__load { align-items: flex-end; }
 
+  /* Funnel wraps to two rows rather than squashing; arrows drop out when wrapped. */
+  .funnel { flex-wrap: wrap; gap: 0.4rem; padding: 0.6rem 1rem; }
+  .funnel__stage { flex: 1 1 8rem; }
+  .funnel__arrow { display: none; }
+  .funnel__num { font-size: 1.4rem; }
+
   .layout { grid-template-columns: 1fr; }
   .rail {
     border-right: none;
@@ -1058,6 +1243,8 @@ details[open] > summary .disc__chev { transform: rotate(90deg); }
   .counts dd { font-size: 1.15rem; }
   .titleblock { grid-template-columns: 1fr; }
   .titleblock__load { align-items: flex-start; }
+  .funnel__stage { flex: 1 1 6rem; }
+  .funnel__num { font-size: 1.2rem; }
 }
 
 /* ---------------------------------------------------------------- motion */
