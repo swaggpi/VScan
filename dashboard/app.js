@@ -89,13 +89,14 @@
   function buildModel(graph) {
     var nodes = graph.nodes || [];
     var edges = graph.edges || [];
-    var index = {}, outByKind = {};
+    var index = {}, outByKind = {}, inByDst = {};
     nodes.forEach(function (n) { index[n.id] = n; });
     edges.forEach(function (e) {
       if (!index[e.src] || !index[e.dst]) return; // drop dangling edges
       (outByKind[e.src] || (outByKind[e.src] = [])).push(e);
+      (inByDst[e.dst] || (inByDst[e.dst] = [])).push(e); // reverse adjacency
     });
-    model = { nodes: nodes, edges: edges, index: index, outByKind: outByKind };
+    model = { nodes: nodes, edges: edges, index: index, outByKind: outByKind, inByDst: inByDst };
   }
 
   function kindsPresent() {
@@ -131,6 +132,36 @@
       .filter(function (n) { return n && n.kind === "dependency"; })
       .sort(function (a, b) { return (a.name || a.id).localeCompare(b.name || b.id); });
     return { nodes: nodeSet, edges: edgeKey, depth: depth, deps: deps };
+  }
+
+  // Reverse reachability: BFS BACKWARD from a dependency over the SAME trace
+  // edges (calls, route_to_handler), following each edge from its dst to its
+  // src. This lights every node and edge on any path that REACHES the dep — the
+  // full reaching subgraph up to the entry points — not just one incident edge.
+  // Depth is hops away from the dependency (the dep is 0), so the energize
+  // animation ripples outward from the dep toward the routes that call it.
+  function traceReverse(depId) {
+    var depth = {}, nodeSet = {}, edgeKey = {}, queue = [depId], head = 0;
+    depth[depId] = 0; nodeSet[depId] = true;
+    while (head < queue.length) {
+      var cur = queue[head++];
+      var ins = model.inByDst[cur] || [];
+      for (var i = 0; i < ins.length; i++) {
+        var e = ins[i];
+        if (!TRACE_EDGES[e.kind]) continue;
+        edgeKey[e.src + "\u0000" + e.dst + "\u0000" + e.kind] = true;
+        if (!(e.src in nodeSet)) {
+          nodeSet[e.src] = true;
+          depth[e.src] = depth[cur] + 1;
+          queue.push(e.src);
+        }
+      }
+    }
+    var eps = Object.keys(nodeSet)
+      .map(function (id) { return model.index[id]; })
+      .filter(function (n) { return n && n.kind === "entrypoint"; })
+      .sort(function (a, b) { return labelFor(a).localeCompare(labelFor(b)); });
+    return { nodes: nodeSet, edges: edgeKey, depth: depth, entrypoints: eps };
   }
 
   /* ---------------------------------------------------------------- cytoscape */
@@ -477,12 +508,13 @@
     el.stage.classList.remove("is-traced");
   }
 
-  function lightTrace(epId, instant) {
-    selectedEp = epId;
-    var res = trace(epId);
+  // Light a precomputed reachability set, rippling by BFS depth. `edgeEnd` says
+  // which endpoint's depth beats an edge: "target" for a forward trace (signal
+  // climbs from entry toward dep), "source" for a reverse trace (signal ripples
+  // from the dep outward toward the routes that reach it).
+  function energize(res, instant, edgeEnd) {
     clearHighlight();
     el.stage.classList.add("is-traced");
-
     cy.elements().addClass("dim");
 
     var litNodes = cy.nodes().filter(function (n) { return res.nodes[n.id()]; });
@@ -491,28 +523,46 @@
     if (REDUCED || instant) {
       litNodes.removeClass("dim").addClass("lit");
       litEdges.removeClass("dim").addClass("lit");
-    } else {
-      // Energize the circuit by BFS depth: entry first, each hop a beat later.
-      var byDepth = {};
-      litNodes.forEach(function (n) {
-        var d = res.depth[n.id()] || 0;
-        (byDepth[d] || (byDepth[d] = [])).push(n);
-      });
-      var step = 150;
-      Object.keys(byDepth).sort(function (a, b) { return a - b; }).forEach(function (d) {
-        setTimeout(function () {
-          byDepth[d].forEach(function (n) { n.removeClass("dim").addClass("lit"); });
-          litEdges.forEach(function (e) {
-            if ((res.depth[e.target().id()] || 0) === Number(d)) e.removeClass("dim").addClass("lit");
-          });
-        }, Number(d) * step);
-      });
+      return;
     }
+    var byDepth = {};
+    litNodes.forEach(function (n) {
+      var d = res.depth[n.id()] || 0;
+      (byDepth[d] || (byDepth[d] = [])).push(n);
+    });
+    var step = 150;
+    Object.keys(byDepth).sort(function (a, b) { return a - b; }).forEach(function (d) {
+      setTimeout(function () {
+        byDepth[d].forEach(function (n) { n.removeClass("dim").addClass("lit"); });
+        litEdges.forEach(function (e) {
+          var endNode = edgeEnd === "source" ? e.source() : e.target();
+          if ((res.depth[endNode.id()] || 0) === Number(d)) e.removeClass("dim").addClass("lit");
+        });
+      }, Number(d) * step);
+    });
+  }
 
+  function lightTrace(epId, instant) {
+    selectedEp = epId;
+    var res = trace(epId);
+    energize(res, instant, "target");
     renderReach(epId, res);
     updateEpButtons(epId);
     // Selecting an entry point lights its path AND opens its datasheet.
     if (model.index[epId]) showDetail(model.index[epId]);
+  }
+
+  // Selecting a dependency lights its FULL reaching subgraph (reverse BFS), then
+  // opens its datasheet. This is the fix for the old behaviour that lit only one
+  // incident edge/node. Works identically in the focused big-graph view, where
+  // the reverse BFS simply runs over the curated subgraph's nodes and edges.
+  function lightReverseTrace(depId, instant) {
+    selectedEp = null;
+    updateEpButtons(null);
+    var res = traceReverse(depId);
+    energize(res, instant, "source");
+    renderReachReverse(depId, res);
+    if (model.index[depId]) showDetail(model.index[depId]);
   }
 
   function focusNeighborhood(node) {
@@ -597,10 +647,48 @@
       groupNum(m.fullEdges) + ' edges — not rendered.</span>';
   }
 
+  // Above this many routes the flat list is a wall, so routes collapse into
+  // path-prefix groups. Small repos (the demo's 3) stay flat — no empty ritual.
+  var EP_GROUP_THRESHOLD = 12;
+
+  // The segment a route is grouped under: its second meaningful path segment
+  // (skipping parameter placeholders like <id>, :id, {id}), or the first if
+  // that's all there is. So /api/dashboards, /api/dashboards/<id> and
+  // /api/dashboards/favorites all group under "dashboards".
+  function epGroupKey(ep) {
+    var path = (ep.attrs && ep.attrs.path) || ep.name || ep.id || "";
+    var segs = String(path).split("/").filter(Boolean);
+    var meaningful = segs.filter(function (s) { return !/^[<:{]/.test(s); });
+    return meaningful[1] || meaningful[0] || segs[0] || "/";
+  }
+
+  // A route button that selects + traces, exactly as before. Reused flat and
+  // inside groups; carries data-id so updateEpButtons can track the active one.
+  function makeEpButton(n) {
+    var a = n.attrs || {};
+    var btn = document.createElement("button");
+    btn.className = "ep";
+    btn.type = "button";
+    btn.setAttribute("aria-pressed", "false");
+    btn.dataset.id = n.id;
+    var method = document.createElement("span");
+    method.className = "ep__method";
+    method.textContent = a.method || "ANY";
+    var path = document.createElement("span");
+    path.className = "ep__path";
+    path.textContent = a.path || n.name || n.id;
+    btn.appendChild(method); btn.appendChild(path);
+    btn.addEventListener("click", function () {
+      if (selectedEp === n.id) { resetView(); } else { lightTrace(n.id, false); }
+    });
+    return btn;
+  }
+
   function renderEntryPoints() {
     var eps = model.nodes.filter(function (n) { return n.kind === "entrypoint"; })
       .sort(function (a, b) { return labelFor(a).localeCompare(labelFor(b)); });
     el.eplist.innerHTML = "";
+    el.eplist.classList.remove("eplist--grouped");
     if (!eps.length) {
       el.epNote.textContent = "No public entry points were detected in this scan.";
       return;
@@ -611,32 +699,59 @@
     } else {
       el.epNote.textContent = "Public routes the outside world can call.";
     }
-    eps.forEach(function (n) {
-      var a = n.attrs || {};
-      var li = document.createElement("li");
-      var btn = document.createElement("button");
-      btn.className = "ep";
-      btn.type = "button";
-      btn.setAttribute("aria-pressed", "false");
-      btn.dataset.id = n.id;
-      var method = document.createElement("span");
-      method.className = "ep__method";
-      method.textContent = a.method || "ANY";
-      var path = document.createElement("span");
-      path.className = "ep__path";
-      path.textContent = a.path || n.name || n.id;
-      btn.appendChild(method); btn.appendChild(path);
-      btn.addEventListener("click", function () {
-        if (selectedEp === n.id) { resetView(); } else { lightTrace(n.id, false); }
+
+    // Flat list for a handful of routes.
+    if (eps.length <= EP_GROUP_THRESHOLD) {
+      eps.forEach(function (n) {
+        var li = document.createElement("li");
+        li.appendChild(makeEpButton(n));
+        el.eplist.appendChild(li);
       });
-      li.appendChild(btn);
+      return;
+    }
+
+    // Many routes: collapse into path-prefix groups, each a disclosure.
+    el.eplist.classList.add("eplist--grouped");
+    var groups = {}, order = [];
+    eps.forEach(function (n) {
+      var key = epGroupKey(n);
+      if (!groups[key]) { groups[key] = []; order.push(key); }
+      groups[key].push(n);
+    });
+    order.sort(function (a, b) { return a.localeCompare(b); });
+    order.forEach(function (key) {
+      var items = groups[key];
+      var li = document.createElement("li");
+      var det = document.createElement("details");
+      det.className = "epgroup";
+      var sum = document.createElement("summary");
+      sum.className = "epgroup__sum";
+      sum.innerHTML = '<span class="disc__chev" aria-hidden="true"></span>' +
+        '<span class="epgroup__name">' + esc(key) + '</span>' +
+        '<span class="epgroup__count">' + items.length + '</span>';
+      det.appendChild(sum);
+      var inner = document.createElement("ul");
+      inner.className = "eplist eplist--inner";
+      items.forEach(function (n) {
+        var ili = document.createElement("li");
+        ili.appendChild(makeEpButton(n));
+        inner.appendChild(ili);
+      });
+      det.appendChild(inner);
+      li.appendChild(det);
       el.eplist.appendChild(li);
     });
   }
 
   function updateEpButtons(epId) {
     Array.prototype.forEach.call(el.eplist.querySelectorAll(".ep"), function (b) {
-      b.setAttribute("aria-pressed", b.dataset.id === epId ? "true" : "false");
+      var on = b.dataset.id === epId;
+      b.setAttribute("aria-pressed", on ? "true" : "false");
+      // Open the enclosing prefix group so the active route is visible.
+      if (on) {
+        var grp = b.closest("details.epgroup");
+        if (grp) grp.open = true;
+      }
     });
   }
 
@@ -668,6 +783,31 @@
           (a.ecosystem ? '<span class="dep__eco">' + esc(a.ecosystem) + '</span>' : '') +
           (a.version ? '<span class="dep__ver">' + esc(a.version) + '</span>' : '') +
           '</div></li>';
+      });
+      html += '</ul>';
+    }
+    el.reachBody.innerHTML = html;
+  }
+
+  // The reach panel when a dependency is selected: it reports the reverse set —
+  // how many entry points and nodes reach this dependency — and lists the routes.
+  function renderReachReverse(depId, res) {
+    var dep = model.index[depId];
+    var name = esc(dep ? (dep.name || dep.id) : depId);
+    var eps = res.entrypoints || [];
+    var nodeCount = Object.keys(res.nodes).length - 1; // minus the dep itself
+    var html = '<p class="reach-head">Dependency <b>' + name + '</b> is reached by ' +
+      eps.length + ' entry point' + (eps.length === 1 ? "" : "s") +
+      ' across ' + nodeCount + ' node' + (nodeCount === 1 ? "" : "s") + '.</p>';
+    if (!eps.length) {
+      html += '<p class="reach-none">No public route reaches this dependency through resolved calls. ' +
+        'Its reaching subgraph (if any) is internal code only.</p>';
+    } else {
+      html += '<ul class="deplist">';
+      eps.forEach(function (ep) {
+        var a = ep.attrs || {};
+        html += '<li class="dep"><div class="dep__name">' +
+          esc((a.method ? a.method + " " : "") + (a.path || ep.name || ep.id)) + '</div></li>';
       });
       html += '</ul>';
     }
@@ -750,56 +890,97 @@
     }
 
     var reachN = findings.filter(function (f) { return f.reachable; }).length;
-    el.vulnNote.innerHTML = reachN
-      ? '<b>' + reachN + '</b> of ' + findings.length + ' findings reach a public route.'
-      : 'None of the ' + findings.length + ' findings reach a public route.';
+    var depGroups = groupFindingsByDep();
+    el.vulnNote.innerHTML = (reachN
+      ? '<b>' + reachN + '</b> of ' + findings.length + ' findings reach a public route'
+      : 'None of the ' + findings.length + ' findings reach a public route') +
+      ' · ' + depGroups.length + ' affected ' + (depGroups.length === 1 ? "package" : "packages") + '.';
 
-    var html = '<ul class="vulnlist">';
-    findings.forEach(function (f, i) {
-      var cve = (f.cve_ids && f.cve_ids.length) ? f.cve_ids.join(", ") : (f.vuln_id || "");
-      var epLabel = (f.reachable_entrypoints && f.reachable_entrypoints[0]) || "";
-      var epId = f.reachable ? epIdForLabel(epLabel) : null;
-      var cls = "vuln" + (f.reachable ? " vuln--reachable" : "");
-      var attrs = f.reachable && epId
-        ? ' tabindex="0" role="button" data-ep="' + esc(epId) + '"'
-          + ' aria-label="Light the path from ' + esc(epLabel) + ' to ' + esc(f.dependency_name) + '"'
-        : "";
-
-      html += '<li class="' + cls + '" data-idx="' + i + '"' + attrs + '>';
-      html += '<div class="vuln__top"><span class="vuln__name">' + esc(f.dependency_name) +
-        (f.version ? ' <span class="vuln__ver">' + esc(f.version) + '</span>' : '') +
-        '</span></div>';
-      html += '<div class="vuln__cve">' + esc(cve) + '</div>';
-
-      html += '<div class="vuln__tags">';
-      html += sevTag(f);
-      if (f.kev) html += '<span class="tag tag--kev">KEV</span>';
-      if (f.epss != null) html += '<span class="tag tag--epss">EPSS ' + Number(f.epss).toFixed(3) + '</span>';
-      if (f.reachable) html += '<span class="tag tag--reach">reachable</span>';
-      html += '</div>';
-
-      if (f.reachable) {
-        var via = (f.reachable_entrypoints && f.reachable_entrypoints.length)
-          ? f.reachable_entrypoints.join(", ") : "a public entry point";
-        var path = (f.example_path && f.example_path.length) ? f.example_path.join(" → ") : "";
-        html += '<div class="vuln__path">Reachable via <b>' + esc(via) + '</b>' +
-          (path ? '<br><span class="path-steps">' + esc(path) + '</span>' : '') + '</div>';
-      } else {
-        html += '<div class="vuln__verdict">' + esc(verdictText(f)) + '</div>';
-      }
-      html += '</li>';
+    // One collapsed row per vulnerable DEPENDENCY, risk-sorted. Expanding a row
+    // reveals its individual CVEs in place — so the default is a handful of
+    // packages, not one row per CVE.
+    var html = '<ul class="deplist deplist--vuln">';
+    depGroups.forEach(function (g) {
+      html += '<li>' + depGroupRowHtml(g) + '</li>';
     });
     html += '</ul>';
     el.vulnBody.innerHTML = html;
+  }
 
-    // Clicking (or Enter/Space on) a reachable finding lights its route.
-    Array.prototype.forEach.call(el.vulnBody.querySelectorAll(".vuln--reachable[data-ep]"), function (row) {
-      var epId = row.getAttribute("data-ep");
-      row.addEventListener("click", function () { lightTrace(epId, false); });
-      row.addEventListener("keydown", function (ev) {
-        if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); lightTrace(epId, false); }
+  // Roll findings up to one entry per dependency, ranked by risk:
+  // reachable first, then actively exploited (KEV), then severity, then EPSS.
+  function groupFindingsByDep() {
+    var groups = [];
+    Object.keys(vulnByDep).forEach(function (id) {
+      var vs = vulnByDep[id];
+      var f0 = vs.findings[0] || {};
+      var maxEpss = 0;
+      vs.findings.forEach(function (f) { if (f.epss != null && f.epss > maxEpss) maxEpss = f.epss; });
+      groups.push({
+        id: id, name: f0.dependency_name || id, version: f0.version || "",
+        ecosystem: f0.ecosystem || "", findings: vs.findings,
+        reachable: vs.reachable, kev: vs.kev, worst: vs.worst, maxEpss: maxEpss
       });
     });
+    groups.sort(function (a, b) {
+      return (b.reachable - a.reachable) || (b.kev - a.kev) ||
+        (b.worst - a.worst) || (b.maxEpss - a.maxEpss) ||
+        a.name.localeCompare(b.name);
+    });
+    return groups;
+  }
+
+  // The worst-severity label across a group's findings, for the summary row tag.
+  function worstSevLabel(g) {
+    var best = "", bestRank = -1;
+    g.findings.forEach(function (f) {
+      var r = SEV_RANK[(f.severity || "").toUpperCase()] || 0;
+      if (r > bestRank) { bestRank = r; best = (f.severity || "").toUpperCase(); }
+    });
+    return best || "UNKNOWN";
+  }
+
+  // A dependency summary row (a <details>): name + version, CVE count, top
+  // severity, and REACHABLE / KEV badges. The body lists its individual CVEs.
+  function depGroupRowHtml(g) {
+    var n = g.findings.length;
+    var sev = worstSevLabel(g);
+    var sevCls = "tag tag--sev" + (sev === "CRITICAL" ? " tag--sev-critical" : "");
+
+    var sum = '<summary class="depgroup__sum">' +
+      '<span class="disc__chev" aria-hidden="true"></span>' +
+      '<span class="depgroup__name">' + esc(g.name) +
+        (g.version ? ' <span class="depgroup__ver">' + esc(g.version) + '</span>' : '') + '</span>' +
+      '<span class="depgroup__tags">' +
+        '<span class="depgroup__count">' + n + ' CVE' + (n === 1 ? "" : "s") + '</span>' +
+        '<span class="' + sevCls + '">' + esc(sev) + '</span>' +
+        (g.reachable ? '<span class="tag tag--reach">reachable</span>' : '') +
+        (g.kev ? '<span class="tag tag--kev">KEV</span>' : '') +
+      '</span></summary>';
+
+    var body = '<ul class="cvelist">';
+    g.findings.slice().sort(function (a, b) {
+      return (b.reachable - a.reachable) ||
+        ((SEV_RANK[(b.severity || "").toUpperCase()] || 0) - (SEV_RANK[(a.severity || "").toUpperCase()] || 0)) ||
+        ((b.epss || 0) - (a.epss || 0));
+    }).forEach(function (f) {
+      var cve = (f.cve_ids && f.cve_ids.length) ? f.cve_ids.join(", ") : (f.vuln_id || "");
+      body += '<li class="cve' + (f.reachable ? " cve--reachable" : "") + '"><div class="cve__id">' + esc(cve) + '</div>' +
+        (f.summary ? '<div class="cve__sum">' + esc(f.summary) + '</div>' : "") +
+        '<div class="vuln__tags">' + sevTag(f) +
+        (f.kev ? '<span class="tag tag--kev">KEV</span>' : "") +
+        (f.epss != null ? '<span class="tag tag--epss">EPSS ' + Number(f.epss).toFixed(3) + '</span>' : "") +
+        (f.reachable ? '<span class="tag tag--reach">reachable</span>' : "") +
+        '</div>' +
+        (f.fixed_versions && f.fixed_versions.length ? '<div class="cve__fix">Fixed in <b>' + esc(f.fixed_versions.join(", ")) + '</b></div>' : "") +
+        (f.reachable && f.example_path && f.example_path.length
+          ? '<div class="vuln__path"><span class="path-steps">' + esc(f.example_path.join(" → ")) + '</span></div>' : "") +
+        '</li>';
+    });
+    body += '</ul>';
+
+    return '<details class="depgroup' + (g.reachable ? " depgroup--reachable" : "") + '">' +
+      sum + '<div class="depgroup__body">' + body + '</div></details>';
   }
 
   function verdictText(f) {
@@ -863,13 +1044,56 @@
       '<h1 class="detail__title">' + esc(title) + '</h1></div>';
   }
 
-  // The advisory assessment block for an endpoint. Several assessments can match
-  // one endpoint (one per CVE on the same route); dedupe exposure/auth/rationale,
-  // list the CVEs covered, and merge the cited context items by category.
-  function assessmentBlockHtml(ms) {
+  // A consistent disclosure: a real <details>/<summary> (keyboard-accessible,
+  // its own aria-expanded) styled as a compact row with a rotating chevron.
+  function disclosure(label, bodyHtml, open) {
+    return '<details class="disc"' + (open ? " open" : "") + '>' +
+      '<summary class="disc__sum"><span class="disc__chev" aria-hidden="true"></span>' +
+      '<span class="disc__label">' + esc(label) + '</span></summary>' +
+      '<div class="disc__body">' + bodyHtml + '</div></details>';
+  }
+
+  // The docs this endpoint/function was cited in — rendered as text snippets.
+  function docsHtml(docs) { return docs.map(docRefHtml).join(""); }
+
+  // Every source the assessment cites: an explicit `sources` list if present,
+  // otherwise the distinct sources of its context items (README.md, openapi…).
+  function sourcesFor(ms) {
+    var out = [];
+    ms.forEach(function (a) {
+      (a.sources || []).forEach(function (s) { if (s && out.indexOf(s) < 0) out.push(s); });
+      (a.context || []).forEach(function (c) { if (c.source && out.indexOf(c.source) < 0) out.push(c.source); });
+    });
+    return out;
+  }
+
+  // PRIMARY block: the integrated advisory summary paragraph + a compact Sources
+  // line + the advisory/provenance marking. This is all that shows by default.
+  function assessmentSummaryHtml(ms) {
+    var summaries = uniq(ms.map(function (a) { return a.summary; }).filter(Boolean))
+      .sort(function (a, b) { return b.length - a.length; });
+    var lead = summaries[0] || "";
+    var provs = uniq(ms.map(function (a) { return a.provenance; }).filter(Boolean));
+    var srcs = sourcesFor(ms);
+
+    var html = '<section class="dsec"><h2 class="dsec__h">Assessment <span class="advisory-flag">Advisory' +
+      provs.map(function (p) { return ' · ' + esc(p); }).join("") + '</span></h2>';
+    html += '<div class="summary-card">';
+    html += '<p class="summary-lead">' + esc(lead) + '</p>';
+    if (srcs.length) {
+      html += '<p class="sources-line"><span class="sources-line__k">Sources</span>' +
+        srcs.map(esc).join(", ") + '</p>';
+    }
+    html += '<p class="advisory-foot">An exposure assessment, not the deterministic reachability verdict — it adds context, never changes whether a path exists.</p>';
+    html += '</div></section>';
+    return html;
+  }
+
+  // The depth, for the "Details & sources" disclosure: exposure/auth badges, the
+  // rationale, the CVEs covered, the cited context groups and the doc excerpts.
+  function assessmentDetailsHtml(ms, docs) {
     var exposures = uniq(ms.map(function (a) { return a.exposure; }).filter(Boolean));
     var auths = uniq(ms.map(function (a) { return a.authentication; }).filter(Boolean));
-    var provs = uniq(ms.map(function (a) { return a.provenance; }).filter(Boolean));
     var rationales = uniq(ms.map(function (a) { return a.rationale; }).filter(Boolean));
     var cves = uniq(ms.map(function (a) { return a.cve || a.vuln_id; }).filter(Boolean));
 
@@ -884,20 +1108,15 @@
       });
     });
 
-    var html = '<section class="dsec"><h2 class="dsec__h">Agent assessment</h2>';
-    html += '<div class="advisory"><div class="advisory__lead">Advisory' +
-      provs.map(function (p) { return '<span class="advisory__prov">' + esc(p) + '</span>'; }).join("") +
-      '</div><p class="advisory__note">An exposure assessment, not the deterministic reachability verdict. It adds context; it never changes whether a path exists.</p></div>';
-
-    html += '<div class="badges">';
-    exposures.forEach(function (e) { html += badge("Exposure", e, isRiskExposure(e)); });
-    auths.forEach(function (a) { html += badge("Auth", a, isRiskAuth(a)); });
-    html += '</div>';
-
-    if (rationales.length) {
-      html += '<div>';
-      rationales.forEach(function (r) { html += '<p class="prose prose--quote clamp">' + esc(r) + '</p>' + moreBtn(); });
+    var html = "";
+    if (exposures.length || auths.length) {
+      html += '<div class="badges">';
+      exposures.forEach(function (e) { html += badge("Exposure", e, isRiskExposure(e)); });
+      auths.forEach(function (a) { html += badge("Auth", a, isRiskAuth(a)); });
       html += '</div>';
+    }
+    if (rationales.length) {
+      rationales.forEach(function (r) { html += '<p class="prose prose--quote clamp">' + esc(r) + '</p>' + moreBtn(); });
     }
     if (cves.length) html += '<p class="dim-note">Covers ' + cves.map(esc).join(", ") + '</p>';
 
@@ -917,7 +1136,11 @@
       });
       html += '</ul></div>';
     });
-    html += '</section>';
+
+    if (docs && docs.length) {
+      html += '<div class="ctxgroup"><div class="ctxgroup__h">Mentioned in docs ' +
+        '<span class="dsec__count">' + docs.length + '</span></div>' + docsHtml(docs) + '</div>';
+    }
     return html;
   }
 
@@ -951,15 +1174,19 @@
     }
     html += '<button type="button" class="btn-trace" data-ep="' + esc(n.id) + '">Light this trace</button></section>';
 
+    // One primary block — the integrated agent summary + Sources line — with all
+    // the depth (badges, rationale, context groups, doc excerpts) tucked one
+    // click away under "Details & sources". No assessment → route + reaches only,
+    // plus a collapsed docs disclosure when the route is cited in docs.
     var docs = a.docs || [];
-    if (docs.length) {
-      html += '<section class="dsec"><h2 class="dsec__h">Mentioned in docs <span class="dsec__count">' + docs.length + '</span></h2>';
-      docs.forEach(function (dref) { html += docRefHtml(dref); });
-      html += '</section>';
-    }
-
     var ms = assessmentsForEpLabel(label);
-    if (ms.length) html += assessmentBlockHtml(ms);
+    if (ms.length) {
+      html += assessmentSummaryHtml(ms);
+      var detail = assessmentDetailsHtml(ms, docs);
+      if (detail) html += '<section class="dsec">' + disclosure("Details & sources", detail, false) + '</section>';
+    } else if (docs.length) {
+      html += '<section class="dsec">' + disclosure("Mentioned in docs", docsHtml(docs), false) + '</section>';
+    }
 
     return html + '</div>';
   }
@@ -970,36 +1197,35 @@
     var loc = (a.relpath || "") + (a.lineno != null ? ":" + a.lineno : "");
     var html = detailHead("function", n.name || n.id) + '<div class="detail__body">';
 
-    html += '<section class="dsec"><h2 class="dsec__h">Function</h2><dl class="kv">' +
-      '<dt>Qualified</dt><dd>' + esc(qn) + '</dd>' +
-      (loc ? '<dt>Source</dt><dd>' + esc(loc) + '</dd>' : "") +
-      (a.is_method ? '<dt>Kind</dt><dd>method</dd>' : "") +
-      '</dl></section>';
-
+    // Lead with the key line: signature, then source location, then docstring.
     html += '<section class="dsec"><h2 class="dsec__h">Signature</h2>' +
       (a.signature ? '<pre class="codeblock">' + esc(a.signature) + '</pre>' : '<p class="dim-note">Not recorded.</p>') +
+      (loc ? '<p class="src-line">' + esc(qn) + ' · <span class="src-line__loc">' + esc(loc) + '</span>' +
+        (a.is_method ? ' · method' : "") + '</p>'
+        : (a.is_method ? '<p class="src-line">' + esc(qn) + ' · method</p>' : '<p class="src-line">' + esc(qn) + '</p>')) +
       '</section>';
 
     html += '<section class="dsec"><h2 class="dsec__h">Docstring</h2>' +
       (a.docstring ? '<p class="prose clamp">' + esc(a.docstring) + '</p>' + moreBtn() : '<p class="dim-note">No docstring.</p>') +
       '</section>';
 
+    // Secondary detail — docs the function is cited in, and its place in a lit
+    // trace — collapsed under one disclosure so the default stays short.
+    var extra = "";
     var docs = a.docs || [];
     if (docs.length) {
-      html += '<section class="dsec"><h2 class="dsec__h">Mentioned in docs <span class="dsec__count">' + docs.length + '</span></h2>';
-      docs.forEach(function (dref) { html += docRefHtml(dref); });
-      html += '</section>';
+      extra += '<div class="ctxgroup"><div class="ctxgroup__h">Mentioned in docs ' +
+        '<span class="dsec__count">' + docs.length + '</span></div>' + docsHtml(docs) + '</div>';
     }
-
     if (selectedEp) {
       var res = trace(selectedEp);
       if (res.nodes[n.id]) {
         var ep = model.index[selectedEp];
-        html += '<section class="dsec"><h2 class="dsec__h">In the lit trace</h2>' +
-          '<p class="dim-note">On the path from <b>' + esc(ep ? labelFor(ep) : selectedEp) +
-          '</b>, call depth ' + (res.depth[n.id] != null ? res.depth[n.id] : "?") + '.</p></section>';
+        extra += '<p class="dim-note">On the lit path from <b>' + esc(ep ? labelFor(ep) : selectedEp) +
+          '</b>, call depth ' + (res.depth[n.id] != null ? res.depth[n.id] : "?") + '.</p>';
       }
     }
+    if (extra) html += '<section class="dsec">' + disclosure("More context", extra, false) + '</section>';
 
     return html + '</div>';
   }
@@ -1017,10 +1243,11 @@
       (a.source_file ? '<dt>Declared in</dt><dd>' + esc(a.source_file) + '</dd>' : "") +
       '</dl></section>';
 
+    // Lead key fact: is it reached, and by what path. The button lights the FULL
+    // reaching subgraph (reverse BFS), enabled whenever anything reaches this dep.
+    var canReverse = (model.inByDst[n.id] || []).some(function (e) { return TRACE_EDGES[e.kind]; });
     html += '<section class="dsec"><h2 class="dsec__h">Reachability</h2>';
-    var traceEp = null;
     if (vs && vs.reachable && vs.entrypoints.length) {
-      traceEp = epIdForLabel(vs.entrypoints[0]);
       html += '<span class="verdict verdict--reach">Reachable from a public route</span>' +
         '<p class="dim-note">Via ' + vs.entrypoints.map(esc).join(", ") + '.</p>';
       var withPath = depFindings.filter(function (f) { return f.example_path && f.example_path.length; })[0];
@@ -1033,19 +1260,21 @@
     } else {
       html += '<span class="verdict verdict--maybe">No findings matched</span>';
     }
-    html += traceEp
-      ? '<button type="button" class="btn-trace" data-ep="' + esc(traceEp) + '">Light the reaching trace</button>'
-      : '<button type="button" class="btn-trace" disabled>No reachable trace</button>';
+    html += canReverse
+      ? '<button type="button" class="btn-trace" data-dep="' + esc(n.id) + '">Light the reaching subgraph</button>'
+      : '<button type="button" class="btn-trace" disabled>Nothing reaches this</button>';
     html += '</section>';
 
-    html += '<section class="dsec"><h2 class="dsec__h">Advisories <span class="dsec__count">' + depFindings.length + '</span></h2>';
+    // Its CVEs — the dependency's reason to care. Inline when few; one click away
+    // when there are many, so a 7-CVE package doesn't flood the panel.
     if (!depFindings.length) {
-      html += '<p class="dim-note">No known vulnerabilities matched this version.</p>';
+      html += '<section class="dsec"><h2 class="dsec__h">Advisories</h2>' +
+        '<p class="dim-note">No known vulnerabilities matched this version.</p></section>';
     } else {
-      html += '<ul class="cvelist">';
+      var cveHtml = '<ul class="cvelist">';
       depFindings.forEach(function (f) {
         var cve = (f.cve_ids && f.cve_ids.length) ? f.cve_ids.join(", ") : (f.vuln_id || "");
-        html += '<li class="cve"><div class="cve__id">' + esc(cve) + '</div>' +
+        cveHtml += '<li class="cve"><div class="cve__id">' + esc(cve) + '</div>' +
           (f.summary ? '<div class="cve__sum">' + esc(f.summary) + '</div>' : "") +
           '<div class="vuln__tags">' + sevTag(f) +
           (f.kev ? '<span class="tag tag--kev">KEV</span>' : "") +
@@ -1055,9 +1284,15 @@
           (f.fixed_versions && f.fixed_versions.length ? '<div class="cve__fix">Fixed in <b>' + esc(f.fixed_versions.join(", ")) + '</b></div>' : "") +
           '</li>';
       });
-      html += '</ul>';
+      cveHtml += '</ul>';
+      if (depFindings.length > 4) {
+        html += '<section class="dsec">' +
+          disclosure(depFindings.length + " advisories", cveHtml, false) + '</section>';
+      } else {
+        html += '<section class="dsec"><h2 class="dsec__h">Advisories ' +
+          '<span class="dsec__count">' + depFindings.length + '</span></h2>' + cveHtml + '</section>';
+      }
     }
-    html += '</section>';
     return html + '</div>';
   }
 
@@ -1109,6 +1344,11 @@
       lightTrace(tr.getAttribute("data-ep"), false);
       if (keepId && model.index[keepId]) showDetail(model.index[keepId]);
     });
+    // A dependency's trace button lights its full reverse-reachability subgraph.
+    var rtr = root.querySelector(".btn-trace[data-dep]");
+    if (rtr) rtr.addEventListener("click", function () {
+      lightReverseTrace(rtr.getAttribute("data-dep"), false);
+    });
     // Expand/collapse clamped snippets and docstrings (only when truly overflowing).
     Array.prototype.forEach.call(root.querySelectorAll(".more[data-clamp]"), function (btn) {
       var target = btn.previousElementSibling;
@@ -1153,12 +1393,12 @@
         return;
       }
       var mNode = model.index[node.id()];
-      // A reachable vulnerable dep is the demo payoff: clicking it lights the
-      // path from the public route that reaches it, then shows the dep datasheet.
-      var vs = vulnByDep[node.id()];
-      if (vs && vs.reachable && vs.entrypoints.length) {
-        var epId = epIdForLabel(vs.entrypoints[0]);
-        if (epId) { lightTrace(epId, false); showDetail(mNode); return; }
+      // Clicking a dependency lights its FULL reaching subgraph — every node and
+      // edge on any path that reaches it, back to the entry points — then opens
+      // its datasheet. (Was: a single incident edge, or one route's forward path.)
+      if (node.data("kind") === "dependency") {
+        lightReverseTrace(node.id(), false);
+        return;
       }
       focusNeighborhood(node);
       showDetail(mNode);
