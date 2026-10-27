@@ -34,7 +34,11 @@ from scanner.agent.assess import (
     _NOAUTH_PHRASES,
     _PUBLIC_PHRASES,
     DocEvidence,
+    _Subject,
+    _collect_sources,
+    _compose_summary,
     _find_phrase,
+    _offline_assessment,
     _offline_context,
 )
 from scanner.cli import _oneline, main
@@ -472,6 +476,124 @@ def test_offline_assessment_carries_context_from_readme(graph, reach):
         assert item["source"] and item["snippet"]
 
 
+# -- integrated summary + sources (Part 3) ------------------------------------
+
+# Store names that must NEVER appear in a summary unless the docs mention them
+# (used to prove the grounded-with-no-context case invents nothing).
+_STORE_NAMES = ("postgresql", "postgres", "redis", "sqlalchemy", "mongodb", "mysql", "sqlite")
+
+
+def test_summary_integrates_exposure_context_and_dep_name(graph, reach):
+    # The single "key thing": one paragraph weaving exposure/auth + a concrete
+    # context fact + the reachable advisory (dep name + CVE). Offline path.
+    assessments = assess_findings(
+        graph, [_pyyaml_finding()], reach, client=LLMClient.disabled()
+    )
+    a = assessments[0]
+    s = a.summary
+    low = s.lower()
+    # exposure/authentication woven in
+    assert "internet-facing" in low
+    assert "unauthenticated" in low
+    # a grounded context fact from the extracted context appears in the paragraph
+    assert a.context, "precondition: PyYAML has grounded context"
+    assert any(item["detail"] in low for item in a.context)
+    # the reachable vulnerability: dependency name + CVE
+    assert "PyYAML" in s
+    assert PYYAML_CVE in s
+    # it is a cohesive multi-sentence paragraph, not a single clause
+    assert s.count(". ") >= 2  # >= 3 sentences: exposure + context + vuln
+
+
+def test_summary_stays_grounded_with_no_context():
+    # Empty context -> the summary must invent no store/service; it still names
+    # the exposure verdict and the reachable advisory from the finding data.
+    subject = _Subject(
+        dependency_id="dep:PyPI:Foo",
+        dependency_name="Foo",
+        cve="CVE-9999-0001",
+        vuln_id=None,
+        version="1.2.3",
+        ecosystem="PyPI",
+        severity="HIGH",
+    )
+    # No doc evidence -> _offline_context yields [] -> no context sentence.
+    a = _offline_assessment(subject, [("ep:1", "POST /x")], [], [])
+    assert a.context == []
+    low = a.summary.lower()
+    for store in _STORE_NAMES:
+        assert store not in low, f"invented store {store!r} with no context"
+    # The paragraph still conveys the reachable advisory, grounded in the finding.
+    assert "Foo" in a.summary
+    assert "CVE-9999-0001" in a.summary
+    assert a.sources == []  # no context + no doc evidence -> no sources
+
+
+def test_summary_unknown_exposure_asserts_no_placement():
+    # With no exposure/auth language in the docs, the summary must not claim a
+    # network placement (grounding), but still reports the reachable advisory.
+    subject = _Subject(
+        dependency_id="dep:PyPI:Bar",
+        dependency_name="Bar",
+        cve=None,
+        vuln_id="GHSA-bar-0001",
+        version=None,
+        ecosystem="PyPI",
+        severity=None,
+    )
+    s = _compose_summary(subject, ["GET /y"], "unknown", "unknown", [])
+    low = s.lower()
+    assert "internet-facing" not in low and "internal" not in low
+    assert "does not establish" in low
+    assert "GHSA-bar-0001" in s
+
+
+def test_sources_is_deduped_sorted_union_of_context_and_doc_evidence():
+    # sources = unique, sorted union of context[].source and the reaching entry
+    # points' doc-evidence sources. Duplicates collapse; order is deterministic.
+    context = [
+        {"category": "data_store", "detail": "postgresql", "access": None,
+         "source": "openapi.yaml", "snippet": "stored in PostgreSQL"},
+        {"category": "data_handling", "detail": "yaml", "access": None,
+         "source": "README.md", "snippet": "accepts YAML"},
+        {"category": "data_store", "detail": "redis", "access": None,
+         "source": "README.md", "snippet": "redis cache"},  # dup source
+    ]
+    evidence = [
+        DocEvidence(
+            doc_id="doc:docs/api.md",
+            entrypoint="POST /x",
+            excerpt="x",
+            snippet=None,
+            relpath="docs/api.md",
+        ),
+        DocEvidence(  # same source already cited by context -> collapses
+            doc_id="doc:README.md",
+            entrypoint="POST /x",
+            excerpt="y",
+            snippet=None,
+            relpath="README.md",
+        ),
+    ]
+    assert _collect_sources(context, evidence) == [
+        "README.md",
+        "docs/api.md",
+        "openapi.yaml",
+    ]
+
+
+def test_sources_end_to_end_offline_is_grounded(graph, reach):
+    # On a real offline assessment, sources is non-empty, unique and sorted, and
+    # every entry is a real doc path drawn from context or the doc evidence.
+    a = assess_findings(
+        graph, [_pyyaml_finding()], reach, client=LLMClient.disabled()
+    )[0]
+    assert a.sources
+    assert a.sources == sorted(set(a.sources))
+    context_sources = {item["source"] for item in a.context}
+    assert context_sources <= set(a.sources)
+
+
 DEMO_APP = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     "samples",
@@ -646,7 +768,10 @@ def test_offline_dep_fallback_does_not_label_cleandep_vulnerable(graph, reach):
         blob = f"{a.summary} {a.rationale}".lower()
         assert "vulnerable" not in blob
         assert "externally exploitable" not in blob
-        assert "no advisory matched" in a.summary.lower()
+        # The integrated summary still labels the no-advisory case clearly as
+        # exposure-context-only (new wording: "No advisory is associated ...").
+        assert "no advisory" in a.summary.lower()
+        assert "exposure context only" in a.summary.lower()
 
 
 def test_model_output_cannot_forge_report_lines():

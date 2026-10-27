@@ -177,6 +177,15 @@ class Assessment:
     exposure: str  # internet-facing | internal | unknown
     authentication: str  # required | none | unknown
     rationale: str
+    # The single integrated "key thing": one cohesive, grounded, 2-4 sentence
+    # paragraph weaving what the endpoint is + its exposure/authentication + the
+    # concrete context it touches (data stores, services, auth model, data
+    # handling) + the reachable vulnerability it leads to (dep + CVE/severity).
+    # The structured fields below (``exposure``/``authentication``/``rationale``/
+    # ``context``) remain as the expandable backing detail. Stays grounded: it
+    # states only facts present in the per-endpoint docs, the extracted
+    # ``context`` and the finding/reachability data -- it never invents a
+    # store/service, and never asserts network placement the docs do not state.
     summary: str
 
     # Provenance / guardrail labelling.
@@ -195,6 +204,12 @@ class Assessment:
     # quoted ``snippet`` and the ``source`` doc it came from. Empty when the docs
     # state nothing -- never fabricated.
     context: list[dict[str, Any]] = field(default_factory=list)
+
+    # The unique, sorted documentation sources this assessment draws on: the
+    # union of every ``context`` item's ``source`` and the reaching entry
+    # points' doc-evidence sources. Lets a UI render "Sources: README.md,
+    # openapi.yaml". Grounded -- only docs that actually contributed appear.
+    sources: list[str] = field(default_factory=list)
 
     advisory: bool = True
     note: str = _ADVISORY_NOTE
@@ -511,6 +526,157 @@ def _normalize_context(raw: Any) -> list[dict[str, Any]]:
     return out
 
 
+# -- integrated summary + source collection ----------------------------------
+
+# How each exposure/authentication verdict reads inside the integrated summary.
+# ``None`` means "undetermined" -- the summary never asserts a placement the
+# docs do not state (grounding), so an unknown verdict adds no descriptor.
+_EXPOSURE_WORD = {"internet-facing": "internet-facing", "internal": "internal", "unknown": None}
+_AUTH_WORD = {"none": "unauthenticated", "required": "authenticated", "unknown": None}
+
+# Per-category clause templates for the context sentence, in priority order
+# (highest-signal first). ``{d}`` is the humanized list of that category's
+# grounded detail phrases. The context sentence is capped at a small budget of
+# details (``_SUMMARY_CONTEXT_BUDGET``) across these categories so the paragraph
+# stays cohesive rather than enumerating every doc keyword.
+_SUMMARY_CONTEXT_CLAUSES: tuple[tuple[str, str], ...] = (
+    ("data_store", "persists or reads data via {d}"),
+    ("data_handling", "handles {d}"),
+    ("external_service", "communicates with {d}"),
+    ("authentication", "notes {d} in its access model"),
+    ("other", "involves {d}"),
+)
+
+# Max number of distinct context detail phrases woven into the summary's context
+# sentence. Keeps the single "key thing" readable; the full set stays in the
+# structured ``context`` field as backing detail.
+_SUMMARY_CONTEXT_BUDGET = 5
+
+
+def _humanize_list(parts: list[str]) -> str:
+    """Join ``parts`` as ``"a"`` / ``"a and b"`` / ``"a, b and c"``."""
+    parts = [p for p in parts if p]
+    if not parts:
+        return ""
+    if len(parts) == 1:
+        return parts[0]
+    return f"{', '.join(parts[:-1])} and {parts[-1]}"
+
+
+def _detail_phrase(item: dict[str, Any]) -> str:
+    """A grounded detail phrase for one context item: ``detail`` (+ access)."""
+    detail = item.get("detail") or item.get("category") or ""
+    access = item.get("access")
+    if isinstance(access, str) and access.strip():
+        return f"{detail} ({access.strip()})"
+    return str(detail)
+
+
+def _dedup_detail_phrases(items: list[dict[str, Any]]) -> list[str]:
+    """De-duplicated, order-preserving detail phrases for a category's items."""
+    phrases: list[str] = []
+    for item in items:
+        phrase = _detail_phrase(item)
+        if phrase and phrase not in phrases:
+            phrases.append(phrase)
+    return phrases
+
+
+def _compose_summary(
+    subject: _Subject,
+    labels: list[str],
+    exposure: str,
+    authentication: str,
+    context: list[dict[str, Any]],
+) -> str:
+    """Deterministically weave the structured fields into one grounded paragraph.
+
+    Produces 2-4 sentences: (1) the reaching route(s) + their documented
+    exposure/authentication, (2) -- only when ``context`` is non-empty -- the
+    concrete stores/services/data-handling the docs state it touches, and (3)
+    the reachable vulnerability (dep + CVE/advisory + severity) or, when no
+    advisory matched, an exposure-context-only note. Strictly grounded: an
+    ``unknown`` verdict asserts no placement, and with empty ``context`` no
+    store/service is ever named (sentence 2 is omitted entirely).
+    """
+    ep_text = ", ".join(labels) or "a public entry point"
+    sentences: list[str] = []
+
+    descriptors = [w for w in (_EXPOSURE_WORD.get(exposure), _AUTH_WORD.get(authentication)) if w]
+    if descriptors:
+        sentences.append(
+            f"The route {ep_text} reaching this dependency is documented as "
+            f"{_humanize_list(descriptors)}."
+        )
+    else:
+        sentences.append(
+            f"The route {ep_text} reaches this dependency, but the documentation "
+            "does not establish its network exposure or authentication."
+        )
+
+    by_cat: dict[str, list[dict[str, Any]]] = {}
+    for item in context:
+        by_cat.setdefault(str(item.get("category") or "other"), []).append(item)
+    clauses: list[str] = []
+    budget = _SUMMARY_CONTEXT_BUDGET
+    for category, template in _SUMMARY_CONTEXT_CLAUSES:
+        if budget <= 0:
+            break
+        items = by_cat.get(category)
+        if not items:
+            continue
+        phrases = _dedup_detail_phrases(items)[:budget]
+        if phrases:
+            budget -= len(phrases)
+            clauses.append(template.format(d=_humanize_list(phrases)))
+    if clauses:
+        sentences.append(
+            "According to the documentation it " + _humanize_list(clauses) + "."
+        )
+
+    dep_label = f"{subject.dependency_name} {subject.version or ''}".strip()
+    if subject.cve is not None or subject.vuln_id is not None:
+        ref = subject.cve or subject.vuln_id
+        severity = (
+            f", severity {subject.severity}"
+            if isinstance(subject.severity, str) and subject.severity
+            else ""
+        )
+        vuln = f"This reachable path exposes {ref}{severity} in {dep_label}"
+        if exposure == "internet-facing" and authentication == "none":
+            vuln += " -- treat as externally exploitable."
+        else:
+            vuln += "."
+        sentences.append(vuln)
+    else:
+        sentences.append(
+            f"No advisory is associated with the reachable dependency "
+            f"{dep_label}; this is exposure context only."
+        )
+
+    return " ".join(sentences)
+
+
+def _collect_sources(
+    context: list[dict[str, Any]], evidence: list[DocEvidence]
+) -> list[str]:
+    """Unique, sorted doc sources: context citations + per-endpoint doc evidence.
+
+    Grounded: only docs that actually contributed a context citation or a
+    reaching entry point's doc evidence are listed -- never the whole corpus.
+    """
+    sources: set[str] = set()
+    for item in context:
+        src = item.get("source")
+        if isinstance(src, str) and src.strip():
+            sources.add(src.strip())
+    for ev in evidence:
+        src = _context_source(ev)
+        if src:
+            sources.add(src)
+    return sorted(sources)
+
+
 def _offline_assessment(
     subject: _Subject,
     entrypoints: list[tuple[str, str]],
@@ -569,45 +735,12 @@ def _offline_assessment(
             "determined from the docs and is left unknown."
         )
 
-    dep_label = f"{subject.dependency_name} {subject.version or ''}".strip()
-    if subject.cve is not None or subject.vuln_id is not None:
-        # A real advisory finding: name it and keep the exploitability wording.
-        ref = subject.cve or subject.vuln_id
-        summary = (
-            f"{dep_label} ({ref}) is reachable from {ep_text}; "
-            + {
-                "internet-facing": "docs describe it as internet-facing",
-                "internal": "docs describe it as internal",
-                "unknown": "real-world exposure is undetermined from the docs",
-            }[exposure]
-            + (
-                " and unauthenticated -- treat as externally exploitable."
-                if authentication == "none"
-                else " and authenticated."
-                if authentication == "required"
-                else "."
-            )
-        )
-    else:
-        # No advisory matched this reachable dependency (e.g. an offline run
-        # with no findings). Report exposure context only -- do NOT call the
-        # dependency vulnerable or externally exploitable.
-        exposure_clause = {
-            "internet-facing": "docs suggest it is internet-facing",
-            "internal": "docs suggest it is internal",
-            "unknown": "docs do not indicate its exposure",
-        }[exposure]
-        auth_clause = (
-            " with no authentication noted"
-            if authentication == "none"
-            else " behind authentication"
-            if authentication == "required"
-            else ""
-        )
-        summary = (
-            f"No advisory matched; exposure context only: {dep_label} is "
-            f"reachable from {ep_text}; {exposure_clause}{auth_clause}."
-        )
+    # The integrated key paragraph is composed deterministically from the
+    # structured fields + the grounded context (which also draws on the
+    # repo-level corpus). It never introduces a fact not already in those
+    # fields, so it stays grounded and advisory.
+    context = _offline_context(evidence + (repo_docs or []))
+    summary = _compose_summary(subject, labels, exposure, authentication, context)
 
     return Assessment(
         dependency_id=subject.dependency_id,
@@ -620,7 +753,8 @@ def _offline_assessment(
         summary=summary,
         provenance="offline-heuristic",
         reaching_entrypoints=labels,
-        context=_offline_context(evidence + (repo_docs or [])),
+        context=context,
+        sources=_collect_sources(context, evidence),
     )
 
 
@@ -641,7 +775,19 @@ def _build_prompt(
         "object and nothing else, with keys: exposure (one of "
         '"internet-facing", "internal", "unknown"), authentication (one of '
         '"required", "none", "unknown"), rationale (1-2 sentences citing the doc '
-        "evidence), summary (a short risk sentence), and context (an array). "
+        "evidence), summary (see below), and context (an array). "
+        "The summary is the single integrated key paragraph (2-4 sentences): "
+        "weave together what the endpoint is and its exposure/authentication "
+        "(e.g. internet-facing, unauthenticated), the concrete context it "
+        "touches drawn from the documentation (e.g. the data stores, caches, "
+        "external services, auth model and data handling you also report in "
+        "context -- such as 'persists data in PostgreSQL via SQLAlchemy with a "
+        "Redis cache' or 'accepts user-supplied YAML'), and the reachable "
+        "vulnerability it leads to (the dependency plus its CVE/advisory and "
+        "severity). The summary MUST stay grounded: state ONLY facts present in "
+        "the documentation below and the finding data above -- never invent a "
+        "store, service or auth scheme, and do not assert a network placement "
+        "the docs do not state (if exposure/auth is unknown, say so). "
         "Each context item describes something the documentation states about "
         "this endpoint and MUST be an object with keys: category (one of "
         '"data_store", "external_service", "authentication", "data_handling", '
@@ -725,6 +871,15 @@ def _llm_assessment(
     authentication = _normalize(data.get("authentication"), _AUTH_VALUES)
     rationale = data.get("rationale")
     summary = data.get("summary")
+    context = _normalize_context(data.get("context"))
+    # Prefer the model's integrated paragraph; if it returned none, fall back to
+    # the deterministic grounded composition over the normalized fields (so the
+    # single "key thing" is always present and still grounded).
+    integrated_summary = (
+        summary
+        if isinstance(summary, str) and summary.strip()
+        else _compose_summary(subject, labels, exposure, authentication, context)
+    )
     return Assessment(
         dependency_id=subject.dependency_id,
         dependency_name=subject.dependency_name,
@@ -734,11 +889,11 @@ def _llm_assessment(
         authentication=authentication,
         rationale=rationale if isinstance(rationale, str) and rationale else
         "No rationale was returned by the model.",
-        summary=summary if isinstance(summary, str) and summary else
-        f"Advisory exposure assessment for {subject.dependency_name}.",
+        summary=integrated_summary,
         provenance="llm",
         reaching_entrypoints=labels,
-        context=_normalize_context(data.get("context")),
+        context=context,
+        sources=_collect_sources(context, evidence),
     )
 
 
