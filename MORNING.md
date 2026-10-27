@@ -9,7 +9,7 @@ scans a repo, builds a 4-language knowledge graph, computes three-way reachabili
 (which entry point reaches which functions and dependencies), correlates the deps
 against real CVE data (OSV + CISA KEV + EPSS), reports coverage/confidence, and —
 with `--explain` — runs an agent pass over the docs to assess exposure. The
-dashboard overlays the reachable-vulnerable findings on the graph. **301+ tests pass**,
+dashboard overlays the reachable-vulnerable findings on the graph. **422 tests pass**,
 across three adversarial review rounds (all findings fixed).
 
 ## Action needed from you (2 things)
@@ -71,6 +71,17 @@ Real-repo corpus to demo against: `scripts/fetch_test_corpus.sh` (gitignored
   confirmed findings fixed (notably an unsound-"unreachable" blocker and a
   correlator wrong-dependency-attribution bug).
 
+## Shipped since
+- `symbol_match` — deterministic 3-tier signal per finding (`confirmed` /
+  `package_reachable` / `no_path`), derived from the reachability verdict.
+- Python taint pass — `tainted` when web input (Flask/FastAPI/Django) provably
+  reaches the vulnerable call, else `not_proven`; gated by the advisory's sink.
+- `audit` outputs for CI: `--sarif`, `--markdown`, `--fail-on` exit codes, and
+  the one-line impact funnel (deps · CVEs · reachable · confirmed · exploitable).
+- GitHub Action — composite action: SARIF upload, PR comment, `fail-on` gate.
+- Dashboard — impact funnel plus `symbol_match` / taint escalation view; bundles
+  refreshed.
+
 ## Honest limitations (documented, not hidden)
 - The cardinal rule holds throughout: an edge/verdict is asserted only when soundly
   resolved; unknowns are recorded, never guessed. Reachability is a lower bound.
@@ -80,7 +91,7 @@ Real-repo corpus to demo against: `scripts/fetch_test_corpus.sh` (gitignored
 - The offline exposure heuristic is crude (keyword-based); the real model is sharper.
 
 ## Where things are
-- Branch `worktree-scanner-layer1`, 301+ tests passing.
+- Branch `worktree-scanner-layer1`, 422 tests passing.
 - `PLAN.md` has the full overnight plan, decisions, and remaining backlog.
 - PHP is still single-file (JS and Go have cross-file; PHP cross-file was judged
   low-value/high-risk given its dynamic autoloading, and left out rather than done

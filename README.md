@@ -96,6 +96,7 @@ vulnreach reachability <repo> [-o result.json] [--json]
 
 # 3. Full scan: correlate against vuln databases, join with reachability, rank.
 vulnreach audit <repo> [-o audit.json] [--json] [--offline] [--nvd] [--explain] [--bundle bundle.json]
+                                  [--sarif out.sarif] [--markdown comment.md] [--fail-on LEVEL]
 ```
 
 | Flag | Applies to | Meaning |
@@ -106,6 +107,9 @@ vulnreach audit <repo> [-o audit.json] [--json] [--offline] [--nvd] [--explain] 
 | `--nvd` | `audit` | Best-effort NVD numeric CVSS lookups (rate-limited). |
 | `--explain` (alias `--assess`) | `audit` | Run the three advisory tiers over the reachable findings and print them: exposure assessment, symbol-level exploitability triage, and dynamic-usage investigation (LLM if configured via the env vars below, otherwise the offline heuristic). |
 | `--bundle PATH` | `audit` | Also write a self-contained viewer bundle (graph + reachability + ranked findings + the advisory tiers) as one JSON for the dashboard. Additive; works offline (findings then empty). |
+| `--sarif PATH` | `audit` | Also write a SARIF 2.1.0 log of the findings (for GitHub code scanning). Deterministic and offline-friendly; additive, does not affect stdout. |
+| `--markdown PATH` | `audit` | Also write a PR-comment-ready markdown summary (impact funnel line plus a table of the top reachable/exploitable findings). Additive. |
+| `--fail-on {never,reachable,confirmed,tainted,any}` | `audit` | CI exit code: exit 1 when a finding meets the bar (reachable; `symbol_match` confirmed; tainted/exploitable; or any finding at all). Default `never` (always exit 0). |
 
 ### Environment variables
 
@@ -294,6 +298,39 @@ unresolved-call counts over every function reachable from any entry point is
 zero. Otherwise it is `potentially_reachable`. The per-entry-point verdict
 applies the same rule to that entry point's reachable set.
 
+## Finding signals: symbol_match, taint, and the impact funnel
+
+Reachability answers "can an entry point reach this *package*?". Two further
+deterministic, offline signals (no API key, no network) narrow that down per
+finding. Both are derived from the reachability result and can only refine it,
+never override it.
+
+**`symbol_match`** (always on) is a 3-tier signal on every finding, comparing the
+advisory's named vulnerable function against the reachable call paths:
+
+* `confirmed`: the advisory's vulnerable function is on a reachable path.
+* `package_reachable`: the package is reachable, but the specific vulnerable
+  function is unconfirmed (no resolved call to a function the advisory names). Also used when reachability is only `potentially_reachable`.
+* `no_path`: the dependency is not reachable.
+
+**`taint`** (Python only today) asks whether attacker-controlled input provably
+reaches the vulnerable call. `tainted` means web input (Flask / FastAPI / Django
+request sources) flows into that call; otherwise `not_proven`. `not_proven` is
+**not** "safe": it means no flow was proven. It is a strict refinement:
+`tainted` implies `symbol_match: confirmed`, which implies `reachable`. Known
+misses (reported as `not_proven`, never guessed): flows laundered through a
+return value, `*args` forwarding, and instance methods called across files.
+
+**Impact funnel**: `audit` prints one summary line, and the dashboard shows it
+as a funnel, narrowing from everything declared to what is actually exploitable:
+
+```
+Funnel: N deps · M known CVEs · R reachable · C vulnerable-function confirmed · T exploitable (attacker input reaches the call)
+```
+
+`--sarif`, `--markdown` and `--fail-on` (see the flag table above) export these
+signals for CI; the GitHub Action below wires them together.
+
 ## Design principle
 
 **An edge or verdict is only asserted when it is soundly resolved. Unknowns are
@@ -372,13 +409,18 @@ recorded as `unresolved_calls`.
   those). Transitive packages are not graph nodes, so they are neither matched
   against OSV nor reported as reachable, and reachability is never inferred
   through a dependency's internals.
+* **Taint is Python-only and conservative.** JS, PHP and Go findings always get
+  `taint: not_proven`. Within Python, flows through return-value laundering,
+  `*args`, and cross-file instance methods are not followed, so
+  `not_proven` means "not proven", not "safe".
 * **The advisory tiers are advisory.** They are only as good as your docs/CVE
   text, and with the offline heuristic fall back to simple phrase/symbol
   matching. They never change a deterministic reachability verdict or call edge.
 * The dashboard shows the structural graph, reachability traces, **and** — when
   fed an `audit --bundle` JSON — the ranked vulnerability findings overlaid on
   the graph (reachable-and-vulnerable dependencies are the top signal), with the
-  advisory exploitability-triage and dynamic-usage context per dependency.
+  advisory exploitability-triage and dynamic-usage context per dependency, the
+  impact funnel, and each finding's `symbol_match` / `taint` escalation.
 
 ## Dashboard
 
