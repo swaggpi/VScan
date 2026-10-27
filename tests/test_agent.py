@@ -16,6 +16,9 @@ issued. These exercise:
 from __future__ import annotations
 
 import os
+import re
+import threading
+import time
 from typing import Any
 
 import pytest
@@ -151,6 +154,152 @@ def test_llm_error_falls_back_to_offline(graph, reach):
     a = assessments[0]
     assert a.provenance == "offline-heuristic"
     assert a.advisory is True
+
+
+# -- bounded-concurrency LLM path (mocked, no network) ------------------------
+
+
+def _pyyaml_findings(n: int) -> list[Finding]:
+    """`n` findings for the (reachable) PyYAML dep, with ascending CVE ids.
+
+    All share PyYAML's dependency id, so each is a distinct reachable subject
+    assessed by its own ``complete_json`` call. The ids are ascending so the
+    deterministic output sort (by dependency_name, cve, dependency_id) leaves
+    them in input order -- letting the test assert order is preserved.
+    """
+    return [
+        Finding(
+            dependency_id=PYYAML_ID,
+            dependency_name="PyYAML",
+            version="3.13",
+            ecosystem="PyPI",
+            vuln_id=f"GHSA-pyyaml-{i:04d}",
+            cve_ids=[f"CVE-2020-{i:04d}"],
+            summary="PyYAML load() allows arbitrary code execution.",
+            fixed_versions=["5.3.1"],
+            severity="CRITICAL",
+        )
+        for i in range(n)
+    ]
+
+
+def _cve_from_prompt(user_prompt: str) -> str:
+    match = re.search(r"cve: (\S+)", user_prompt)
+    return match.group(1) if match else "?"
+
+
+class _ConcurrentClient:
+    """Mock client recording call count, peak concurrency, completion order.
+
+    Each call sleeps so overlapping calls are observable; earlier-arriving calls
+    sleep longer, skewing completion order away from input order to prove the
+    output order does not follow thread completion.
+    """
+
+    def __init__(self, n: int):
+        self._n = n
+        self._lock = threading.Lock()
+        self._active = 0
+        self.peak_concurrency = 0
+        self.calls = 0
+        self.completion_order: list[str] = []
+
+    def available(self) -> bool:
+        return True
+
+    def complete_json(self, system_prompt: str, user_prompt: str):
+        assert "POST /import" in user_prompt
+        cve = _cve_from_prompt(user_prompt)
+        with self._lock:
+            self.calls += 1
+            arrival = self.calls
+            self._active += 1
+            self.peak_concurrency = max(self.peak_concurrency, self._active)
+        time.sleep(0.02 * (self._n - arrival + 1))
+        with self._lock:
+            self._active -= 1
+            self.completion_order.append(cve)
+        return {
+            "exposure": "internet-facing",
+            "authentication": "none",
+            "rationale": f"route context for {cve}",
+            "summary": f"summary for {cve}",
+        }
+
+
+class _FlakyClient:
+    """Mock client where one subject raises and one returns None."""
+
+    def __init__(self, fail_cve: str, none_cve: str, payload: dict[str, Any]):
+        self._fail_cve = fail_cve
+        self._none_cve = none_cve
+        self._payload = payload
+        self._lock = threading.Lock()
+        self.calls = 0
+
+    def available(self) -> bool:
+        return True
+
+    def complete_json(self, system_prompt: str, user_prompt: str):
+        cve = _cve_from_prompt(user_prompt)
+        with self._lock:
+            self.calls += 1
+        if cve == self._fail_cve:
+            raise RuntimeError("simulated model/transport error")
+        if cve == self._none_cve:
+            return None
+        return self._payload
+
+
+def test_llm_calls_run_concurrently_and_preserve_order(graph, reach):
+    # Several reachable findings: the per-subject model calls run in parallel,
+    # yet every subject is assessed and the output order is deterministic.
+    findings = _pyyaml_findings(5)
+    client = _ConcurrentClient(len(findings))
+
+    assessments = assess_findings(graph, findings, reach, client=client)
+
+    assert client.calls == len(findings)
+    assert len(assessments) == len(findings)
+    # Every subject got its own llm result.
+    assert all(a.provenance == "llm" for a in assessments)
+    assert all(a.advisory is True for a in assessments)
+    # Output order matches the input order (independent of completion order).
+    assert [a.cve for a in assessments] == [f.cve_ids[0] for f in findings]
+    # The calls actually overlapped -- the pool ran them concurrently.
+    assert client.peak_concurrency >= 2
+
+
+def test_one_subject_failure_does_not_break_the_others(graph, reach):
+    # A worker that raises OR returns None must fall back to offline for that
+    # subject only; the others still get their llm result and nothing raises.
+    findings = _pyyaml_findings(4)
+    cves = [f.cve_ids[0] for f in findings]
+    client = _FlakyClient(
+        fail_cve=cves[1],
+        none_cve=cves[2],
+        payload={
+            "exposure": "internet-facing",
+            "authentication": "none",
+            "rationale": "documented as reachable from any user",
+            "summary": "publicly reachable RCE",
+        },
+    )
+
+    # Must not raise out of assess_findings.
+    assessments = assess_findings(graph, findings, reach, client=client)
+
+    assert len(assessments) == len(findings)
+    by_cve = {a.cve: a for a in assessments}
+    assert by_cve[cves[0]].provenance == "llm"
+    assert by_cve[cves[1]].provenance == "offline-heuristic"  # raised -> fallback
+    assert by_cve[cves[2]].provenance == "offline-heuristic"  # None -> fallback
+    assert by_cve[cves[3]].provenance == "llm"
+    # Guardrail intact for every subject regardless of path taken.
+    assert all(a.advisory is True for a in assessments)
+    assert all(
+        a.provenance in {"llm", "offline-heuristic"} for a in assessments
+    )
 
 
 # -- offline heuristic --------------------------------------------------------

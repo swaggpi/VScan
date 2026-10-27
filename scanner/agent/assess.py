@@ -32,6 +32,7 @@ end-to-end with no API key.
 from __future__ import annotations
 
 import re
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -517,17 +518,47 @@ def assess_findings(
             for dep_id in sorted(reachable_ids)
         ]
 
-    assessments: list[Assessment] = []
+    # Gather each subject's doc/route context up front. This is deterministic,
+    # read-only work (no network) and stays on the main thread.
+    prepared: list[tuple[_Subject, list[tuple[str, str]], list[DocEvidence]]] = []
     for subject in subjects:
         entrypoints = ep_by_dep.get(subject.dependency_id, [])
-        evidence = _doc_evidence(graph, entrypoints)
+        prepared.append((subject, entrypoints, _doc_evidence(graph, entrypoints)))
 
-        assessment: Assessment | None = None
-        if use_llm:
-            assessment = _llm_assessment(client, subject, entrypoints, evidence)
-        if assessment is None:
-            assessment = _offline_assessment(subject, entrypoints, evidence)
-        assessments.append(assessment)
+    # When a real model is configured, the per-subject model calls are
+    # independent, so run them concurrently with a small bounded thread pool --
+    # only the network call runs in a worker. A worker that fails (raises OR
+    # returns None) yields ``None`` here so that subject falls back to the
+    # deterministic offline assessment below, exactly as in the sequential path;
+    # a single failure never breaks the others and nothing propagates out. The
+    # offline heuristic path is CPU-only and stays sequential. Results are kept
+    # aligned to ``prepared`` by index (``executor.map`` preserves input order),
+    # so thread completion order never changes the output.
+    llm_results: list[Assessment | None] = [None] * len(prepared)
+    if use_llm and prepared:
+
+        def _call(
+            item: tuple[_Subject, list[tuple[str, str]], list[DocEvidence]],
+        ) -> Assessment | None:
+            subject, entrypoints, evidence = item
+            try:
+                return _llm_assessment(client, subject, entrypoints, evidence)
+            except Exception:
+                # Per-subject guardrail: any worker error becomes an offline
+                # fallback for this subject; never propagate out of the pool.
+                return None
+
+        max_workers = min(8, len(prepared))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            llm_results = list(executor.map(_call, prepared))
+
+    assessments: list[Assessment] = []
+    for (subject, entrypoints, evidence), llm in zip(prepared, llm_results):
+        assessments.append(
+            llm
+            if llm is not None
+            else _offline_assessment(subject, entrypoints, evidence)
+        )
 
     assessments.sort(key=lambda a: (a.dependency_name, a.cve or "", a.dependency_id))
     return assessments
