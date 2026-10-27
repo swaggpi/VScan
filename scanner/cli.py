@@ -17,8 +17,9 @@ import sys
 from typing import Sequence
 
 from .agent import LLMClient, assess_findings, investigate_usage, triage_findings
-from .correlate import CorrelationResult, correlate_full
+from .correlate import CorrelationResult, Finding, correlate_full
 from .correlate import report as correlate_report
+from .correlate.sarif import to_markdown, to_sarif
 from .coverage import compute_coverage
 from .dotenv import load_dotenv
 from .graph import KnowledgeGraph
@@ -27,6 +28,24 @@ from .scan import scan_repo
 from .taint import TaintResult, compute_taint
 
 _DEFAULT_OUTPUT = "vulnreach-graph.json"
+
+
+def _compute_exit_code(fail_on: str, findings: list[Finding]) -> int:
+    """Map the ``--fail-on`` bar + findings to a process exit code.
+
+    ``never`` (the default) always returns 0, preserving current behavior. The
+    other bars return 1 when at least one finding meets them, else 0. Findings
+    must already be joined with reachability/taint for the non-``never`` bars.
+    """
+    if fail_on == "reachable":
+        return 1 if any(f.reachable for f in findings) else 0
+    if fail_on == "confirmed":
+        return 1 if any(f.symbol_match == "confirmed" for f in findings) else 0
+    if fail_on == "tainted":
+        return 1 if any(f.taint == "tainted" for f in findings) else 0
+    if fail_on == "any":
+        return 1 if findings else 0
+    return 0  # "never"
 
 
 def _print_summary(graph: KnowledgeGraph, repo_path: str, output_path: str) -> None:
@@ -496,6 +515,32 @@ def main(argv: Sequence[str] | None = None) -> int:
         "and opt-in: it does not affect the -o/--json output. Works offline, in "
         "which case the findings list is empty.",
     )
+    audit_parser.add_argument(
+        "--sarif",
+        default=None,
+        metavar="PATH",
+        help="Also write a SARIF 2.1.0 log of the findings (for code scanning / "
+        "GitHub). Additive and opt-in: it does not affect stdout. Deterministic "
+        "and offline-friendly -- it needs only findings + taint, never the "
+        "advisory LLM tiers.",
+    )
+    audit_parser.add_argument(
+        "--markdown",
+        default=None,
+        metavar="PATH",
+        help="Also write a GitHub-comment-ready markdown summary (funnel line + a "
+        "table of the top reachable/exploitable findings). Additive and opt-in: "
+        "it does not affect stdout.",
+    )
+    audit_parser.add_argument(
+        "--fail-on",
+        dest="fail_on",
+        choices=["never", "reachable", "confirmed", "tainted", "any"],
+        default="never",
+        help="Exit non-zero (1) for CI when a finding meets this bar: reachable, "
+        "symbol-confirmed, tainted (exploitable), or any finding at all. The "
+        "default 'never' always exits 0 and preserves current behavior.",
+    )
 
     args = parser.parse_args(argv)
 
@@ -585,25 +630,39 @@ def main(argv: Sequence[str] | None = None) -> int:
                     )
                 )
 
-        if args.output or args.json:
-            payload = json.dumps(
-                correlate_report.audit(
-                    graph, correlation, reach,
-                    assessments=assessments, triage=triage, usage=usage,
-                    taint=taint_map,
-                ),
-                indent=2,
+        # The audit payload feeds -o/--json (with the advisory tiers) and the
+        # deterministic --sarif/--markdown renderers (findings + taint only, no
+        # model). Compute it once when any of them is requested; the join it
+        # performs also populates the signals the exit-code logic reads.
+        payload = None
+        if args.output or args.json or args.sarif or args.markdown:
+            payload = correlate_report.audit(
+                graph, correlation, reach,
+                assessments=assessments, triage=triage, usage=usage,
+                taint=taint_map,
             )
-            if args.output:
-                with open(args.output, "w", encoding="utf-8") as handle:
-                    handle.write(payload)
-            if args.json:
-                print(payload)
-                return 0
+
+        if args.output:
+            with open(args.output, "w", encoding="utf-8") as handle:
+                handle.write(json.dumps(payload, indent=2))
+
+        if args.sarif:
+            with open(args.sarif, "w", encoding="utf-8") as handle:
+                handle.write(json.dumps(to_sarif(payload, graph), indent=2))
+
+        if args.markdown:
+            with open(args.markdown, "w", encoding="utf-8") as handle:
+                handle.write(to_markdown(payload))
+
+        if args.json:
+            print(json.dumps(payload, indent=2))
+            # The payload's audit() already joined reachability + taint, so the
+            # findings-based exit code is sound here too (for CI).
+            return _compute_exit_code(args.fail_on, correlation.findings)
 
         print(
             correlate_report.format_report(
-                args.repo_path, graph, correlation, reach
+                args.repo_path, graph, correlation, reach, taint=taint_map
             )
         )
         if args.explain:
@@ -612,7 +671,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             print(_format_triage(triage, model_configured=model_configured))
             print(_format_usage(usage, model_configured=model_configured))
-        return 0
+        # format_report joined reachability + taint, so the findings now carry
+        # the signals the exit-code bars read.
+        return _compute_exit_code(args.fail_on, correlation.findings)
 
     parser.error(f"unknown command: {args.command}")  # pragma: no cover
     return 2

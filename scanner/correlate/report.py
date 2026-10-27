@@ -118,6 +118,45 @@ def rank_findings(findings: list[Finding]) -> list[Finding]:
     )
 
 
+def _apply_taint(
+    findings: list[Finding], taint: dict[str, Any] | None
+) -> None:
+    """Set each finding's derived ``taint``/``taint_evidence`` from a taint map.
+
+    Strictly additive: it only ever sets the two derived taint fields and never
+    touches ``reachable``, the verdict, ``symbol_match`` or ranking. A finding is
+    escalated to ``"tainted"`` only when the map proves a source->sink flow for
+    its dependency. Shared by :func:`audit` and :func:`format_report` so both
+    paths apply the identical logic. A ``None`` map is a no-op.
+    """
+    if taint is None:
+        return
+    for finding in findings:
+        result = taint.get(finding.dependency_id)
+        if result is not None:
+            evidence = (
+                result.to_dict() if hasattr(result, "to_dict") else dict(result)
+            )
+            finding.taint = evidence.get("verdict", "not_proven")
+            finding.taint_evidence = evidence
+
+
+def funnel_line(summary: dict[str, Any]) -> str:
+    """The one-line impact funnel, built from the summary counters.
+
+    Single source of truth for the funnel format, reused by the text report and
+    the markdown PR comment. Renders correctly offline (all counts 0).
+    """
+    return (
+        f"Funnel: {summary['total_dependencies']} deps · "
+        f"{summary['total_vulnerabilities']} known CVEs · "
+        f"{summary['reachable_vulnerabilities']} reachable · "
+        f"{summary['symbol_confirmed_vulnerabilities']} vulnerable-function confirmed · "
+        f"{summary['taint_confirmed_vulnerabilities']} exploitable "
+        f"(attacker input reaches the call)"
+    )
+
+
 def build_summary(graph: KnowledgeGraph, findings: list[Finding]) -> dict[str, Any]:
     """Compute the headline counters for the report header."""
     vulnerable_deps = {f.dependency_id for f in findings}
@@ -187,17 +226,9 @@ def audit(
     escalates a finding to ``"tainted"`` when a source->sink flow is proven.
     """
     join_reachability(graph, correlation.findings, reach)
-    if taint is not None:
-        # Strictly additive: set only the derived taint fields, before ranking
-        # and the summary. Never touches reachable/verdict/symbol_match/ranking.
-        for finding in correlation.findings:
-            result = taint.get(finding.dependency_id)
-            if result is not None:
-                evidence = (
-                    result.to_dict() if hasattr(result, "to_dict") else dict(result)
-                )
-                finding.taint = evidence.get("verdict", "not_proven")
-                finding.taint_evidence = evidence
+    # Strictly additive: set only the derived taint fields, before ranking and
+    # the summary. Never touches reachable/verdict/symbol_match/ranking.
+    _apply_taint(correlation.findings, taint)
     ranked = rank_findings(correlation.findings)
     verdicts = reach.repo.verdict_by_dep
 
@@ -326,9 +357,18 @@ def format_report(
     graph: KnowledgeGraph,
     correlation: CorrelationResult,
     reach: ReachabilityResult,
+    taint: dict[str, Any] | None = None,
 ) -> str:
-    """Render the full ranked audit as a human-readable text report."""
+    """Render the full ranked audit as a human-readable text report.
+
+    ``taint`` is the optional DERIVED taint map (``dependency_id -> TaintResult``
+    from :func:`scanner.taint.compute_taint`). Supplying it lets the funnel show
+    the exploitable count; it is applied with the same additive logic as
+    :func:`audit` (after the reachability join, before ranking/summary) and never
+    changes ``reachable``, the verdict, ``symbol_match`` or ranking.
+    """
     join_reachability(graph, correlation.findings, reach)
+    _apply_taint(correlation.findings, taint)
     ranked = rank_findings(correlation.findings)
     summary = build_summary(graph, ranked)
 
@@ -349,6 +389,8 @@ def format_report(
     lines.append(f"  reachable vulnerabilities:     {summary['reachable_vulnerabilities']}")
     lines.append(f"  actively exploited (KEV):      {summary['kev_vulnerabilities']}")
     lines.append(f"  high EPSS (>= 0.5):            {summary['high_epss_vulnerabilities']}")
+    lines.append("")
+    lines.append(funnel_line(summary))
     lines.append("")
 
     lines.extend(_coverage_block(compute_coverage(graph, reach)))

@@ -390,6 +390,58 @@ default.
 
 <!-- integration / credits section added separately -->
 
+## Continuous integration (GitHub Action)
+
+A composite action runs the scan in CI, uploads the findings to GitHub code
+scanning, and posts a reachability funnel as a PR comment. Minimal usage:
+
+```yaml
+# .github/workflows/vulnreach.yml
+name: vulnreach
+on:
+  pull_request: {}
+  push:
+    branches: [main]
+
+permissions:
+  contents: read            # checkout
+  security-events: write    # upload SARIF to code scanning
+  pull-requests: write      # post/update the PR comment
+
+jobs:
+  vulnreach:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: swaggpi/vulnreach@main
+        with:
+          path: .
+          fail-on: reachable      # never | reachable | confirmed | tainted | any
+```
+
+Key inputs (all optional): `path` (default `.`), `fail-on` (default
+`reachable`), `offline` (default `false`), `comment` (default `true`),
+`upload-sarif` (default `true`), `python-version` (default `3.12`).
+
+The `permissions` block is required: `security-events: write` for the SARIF
+upload and `pull-requests: write` for the PR comment. Drop either permission (or
+set `upload-sarif: false` / `comment: false`) to skip that step.
+
+`fail-on` controls when the job fails — it mirrors the scanner's funnel:
+
+| `fail-on` | Job fails when there is a finding that is… |
+|---|---|
+| `never` | never — report only |
+| `reachable` | reachable from a public entry point |
+| `confirmed` | reachable **and** symbol-confirmed in the vulnerable function |
+| `tainted` | exploitable — attacker input reaches the vulnerable call |
+| `any` | any known CVE in a declared dependency, reachable or not |
+
+Results show up in two places: the repo's **Security → Code scanning** tab
+(from the uploaded SARIF) and as a single PR comment that is updated in place on
+each push (no comment spam). The scan runs `--offline` when `offline: true`,
+which analyzes reachability without querying any network vulnerability database.
+
 ## License
 
 MIT
