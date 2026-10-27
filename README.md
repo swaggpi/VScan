@@ -115,6 +115,56 @@ vulnreach audit <repo> [-o audit.json] [--json] [--offline] [--nvd] [--explain] 
 | `NVD_API_KEY` | Optional; read by `--nvd` for better NVD rate limits. |
 | `VULNREACH_CACHE_DIR` | Optional; override the correlator cache location. |
 
+## MCP server / AI tool
+
+The same library is exposed as an [MCP](https://modelcontextprotocol.io) server
+so an LLM agent can navigate a repository through its knowledge graph (instead
+of reading files), reason over the vulnerability findings, and drive fixes. The
+server wraps the library in process and speaks MCP over stdio.
+
+```bash
+pip install -e ".[mcp]"      # or: pip install "vulnreach[mcp]"
+vulnreach-mcp                # run the stdio server (also: python -m scanner.mcp)
+```
+
+Wire it into an MCP client either via a `.mcp.json` entry:
+
+```json
+{
+  "mcpServers": {
+    "vulnreach": { "command": "vulnreach-mcp" }
+  }
+}
+```
+
+or, for clients with a CLI:
+
+```bash
+claude mcp add vulnreach -- vulnreach-mcp
+```
+
+All tools take a `repo_path` and return compact JSON. The first call scans the
+repo; the graph is cached per path and reused (pass `refresh=true` to re-scan).
+The advisory tiers behind `audit` / `finding_detail` work with no API key via
+the offline heuristic, and honour the same `LLM_*` env vars as the CLI when a
+model is configured. The ten tools, grouped by capability:
+
+**Navigate** (replace manual file reading)
+- `vulnreach_scan_overview` — scan + structural map: counts, languages, entry points, top modules/files. The "understand this repo" entry point.
+- `vulnreach_find` — substring search over node name/id/path → node ids.
+- `vulnreach_describe` — full datasheet for a node (function signature/docstring/callers/callees, dependency version/reachability, entry-point reach), replacing opening the file.
+- `vulnreach_call_graph` — expand callers (`in`) or callees (`out`) of a function to N hops.
+- `vulnreach_trace_entrypoint` — forward: the functions and dependencies a route reaches, with example paths.
+- `vulnreach_dep_reachers` — reverse: which entry points reach a dependency, with the three-way verdict ("who can hit this").
+
+**Discuss problems** (reachability-aware findings)
+- `vulnreach_audit` — the headline "what's wrong" tool: ranked findings (reachable + actively-exploited first) with severity/CVSS/KEV/EPSS, verdict, and optional advisory triage + usage.
+- `vulnreach_finding_detail` — deep dive on one vulnerable dependency: every CVE's full text, reachable paths, triage reasoning, usage evidence.
+
+**Fix**
+- `vulnreach_remediation` — for one dependency or all vulnerable ones: current version, smallest fixed version that clears the CVEs, the manifest file and pin to change, reachability priority, and the entry points/paths to re-test after upgrading.
+- `vulnreach_apply_upgrade` — surgically re-pin one dependency in its manifest and return a unified diff (`dry_run=true` by default previews only). Refuses when the pin is ambiguous or a range, pointing at the file/line to edit manually.
+
 ## Example output
 
 Captured from `samples/vulnerable-app` (a deliberately outdated Python + npm +

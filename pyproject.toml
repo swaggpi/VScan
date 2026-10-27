@@ -18,9 +18,15 @@ dependencies = [
 dev = [
     "pytest>=8",
 ]
+mcp = [
+    # FastMCP lives at ``mcp.server.fastmcp`` in the v1 SDK; mcp 2.x renamed it,
+    # so we cap below 2 to keep the FastMCP stdio server importable.
+    "mcp>=1.2,<2",
+]
 
 [project.scripts]
 vulnreach = "scanner.cli:main"
+vulnreach-mcp = "scanner.mcp.server:main"
 
 [tool.setuptools.packages.find]
 include = ["scanner*"]
