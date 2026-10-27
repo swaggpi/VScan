@@ -37,6 +37,7 @@ from .core import (
     _split_fn_id,
 )
 from .core import compute_taint as _compute_taint
+from .javascript import JavaScriptTaintAdapter
 from .python import (
     PythonTaintAdapter,
     _bind_call_args,
@@ -51,9 +52,11 @@ from .python import (
 
 # The adapter registry, in priority order. Each proven path is handled by the
 # first adapter whose language matches the path's function files. Adding a new
-# language (e.g. JavaScript) means appending its adapter here -- the core driver
-# is untouched.
-_ADAPTERS: tuple[TaintAdapter, ...] = (PythonTaintAdapter(),)
+# language means appending its adapter here -- the core driver is untouched.
+_ADAPTERS: tuple[TaintAdapter, ...] = (
+    PythonTaintAdapter(),
+    JavaScriptTaintAdapter(),
+)
 
 
 def compute_taint(
@@ -75,6 +78,7 @@ __all__ = [
     "TaintAdapter",
     "TaintResult",
     "PythonTaintAdapter",
+    "JavaScriptTaintAdapter",
     "compute_taint",
     # Re-exported internals, kept importable from ``scanner.taint`` for the test
     # suite (unit tests exercise these grammar-specific helpers directly).

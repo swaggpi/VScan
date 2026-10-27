@@ -1,0 +1,11 @@
+{
+  "name": "js-taint-app",
+  "version": "1.0.0",
+  "description": "Express sample app exercising the JavaScript taint adapter (hand-verified ground truth in README.md).",
+  "main": "server.js",
+  "dependencies": {
+    "express": "^4.18.2",
+    "lodash": "4.17.21",
+    "js-yaml": "4.1.0"
+  }
+}
