@@ -120,10 +120,13 @@ from .core import (
 _REQ: str = "@req"  # a value whose type is ``*http.Request``
 _CTX_GIN: str = "@ctx:gin"  # a value whose type is ``*gin.Context``
 _CTX_ECHO: str = "@ctx:echo"  # a value whose type is ``echo.Context``
+_CTX_FIBER: str = "@ctx:fiber"  # a value whose type is ``*fiber.Ctx``
 _URL: str = "@req.url"  # ``r.URL`` (only ``.Query()`` on it is a source)
 _DECODER: str = "@decoder"  # ``json.NewDecoder(<tainted body>)`` result
 
-_SENTINELS: frozenset[str] = frozenset({_REQ, _CTX_GIN, _CTX_ECHO, _URL, _DECODER})
+_SENTINELS: frozenset[str] = frozenset(
+    {_REQ, _CTX_GIN, _CTX_ECHO, _CTX_FIBER, _URL, _DECODER}
+)
 
 # net/http ``*http.Request`` recognised sources.
 _HTTP_SOURCE_METHODS: frozenset[str] = frozenset(
@@ -142,6 +145,14 @@ _GIN_BIND_METHODS: frozenset[str] = frozenset({"ShouldBindJSON", "BindJSON"})
 # echo ``echo.Context`` sources and binds.
 _ECHO_SOURCE_METHODS: frozenset[str] = frozenset({"QueryParam", "FormValue", "Param"})
 _ECHO_BIND_METHODS: frozenset[str] = frozenset({"Bind"})
+
+# fiber ``*fiber.Ctx`` sources and binds. ``Query``/``Params``/``FormValue``/
+# ``Get`` (a request header)/``Body``/``Cookies`` each RETURN attacker data;
+# ``BodyParser(&x)`` decodes the request body into the pointed-to target.
+_FIBER_SOURCE_METHODS: frozenset[str] = frozenset(
+    {"Query", "Params", "FormValue", "Get", "Body", "Cookies"}
+)
+_FIBER_BIND_METHODS: frozenset[str] = frozenset({"BodyParser"})
 
 # Taint-preserving formatting helpers (modelled like Python's ``str.format``).
 _SPRINTF: frozenset[str] = frozenset({"Sprintf", "Sprint", "Sprintln"})
@@ -249,6 +260,8 @@ def _seed_sentinel_for_type(type_text: str) -> str | None:
         return _CTX_GIN
     if t.endswith("echo.Context"):
         return _CTX_ECHO
+    if t.endswith("fiber.Ctx"):
+        return _CTX_FIBER
     return None
 
 
@@ -392,6 +405,8 @@ def _call_taint(node: Any, env: _Env) -> set[str]:
             return {f"{op_text}.{field}"}
         if _CTX_ECHO in obj and field in _ECHO_SOURCE_METHODS:
             return {f"{op_text}.{field}"}
+        if _CTX_FIBER in obj and field in _FIBER_SOURCE_METHODS:
+            return {f"{op_text}.{field}"}
         if _REQ in obj and (field in _HTTP_SOURCE_METHODS or field == "Cookie"):
             return {f"{op_text}.{field}"}
         if _URL in obj and field == "Query":
@@ -426,6 +441,8 @@ def _apply_bind_call(call: Any, env: _Env) -> None:
     if _CTX_GIN in obj and field in _GIN_BIND_METHODS:
         desc = f"{_txt(operand)}.{field}"
     elif _CTX_ECHO in obj and field in _ECHO_BIND_METHODS:
+        desc = f"{_txt(operand)}.{field}"
+    elif _CTX_FIBER in obj and field in _FIBER_BIND_METHODS:
         desc = f"{_txt(operand)}.{field}"
     elif field == "Decode" and _DECODER in obj:
         desc = f"{_txt(operand)}.Decode"

@@ -135,6 +135,7 @@ _ROUTER_CONSTRUCTORS: tuple[tuple[str, frozenset[str], str], ...] = (
     ("github.com/labstack/echo", frozenset({"New"}), "echo"),
     ("github.com/go-chi/chi", frozenset({"NewRouter"}), "chi"),
     ("github.com/gorilla/mux", frozenset({"NewRouter"}), "mux"),
+    ("github.com/gofiber/fiber", frozenset({"New"}), "fiber"),
 )
 
 # Go predeclared (built-in) functions -- callable by a bare name with no import.
@@ -311,13 +312,24 @@ class GoAnalyzer(LanguageAnalyzer):
     def _default_package_name(import_path: str) -> str:
         """Default local identifier for an import path, sans an explicit alias.
 
-        It is the last path segment, with a trailing gopkg.in-style major-version
-        suffix stripped: ``gopkg.in/yaml.v2`` is imported as ``yaml``,
-        ``github.com/gin-gonic/gin`` as ``gin``. This is a sound default (the
-        true package name can still differ, which is why an explicit alias always
-        wins); it covers the ubiquitous ``.vN`` case so calls resolve.
+        It is the last path segment, with a trailing major-version suffix
+        stripped: ``gopkg.in/yaml.v2`` is imported as ``yaml``,
+        ``github.com/gin-gonic/gin`` as ``gin``, and a Go-module ``/vN`` path
+        suffix as its preceding segment (``github.com/gofiber/fiber/v2`` ->
+        ``fiber``, ``github.com/labstack/echo/v4`` -> ``echo``). This is a sound
+        default (the true package name can still differ, which is why an explicit
+        alias always wins); it covers the ubiquitous ``.vN``/``/vN`` cases so
+        calls resolve.
         """
         last = import_path.rsplit("/", 1)[-1]
+        # ``/vN`` module major-version segment: the package name is the segment
+        # before it, not the bare ``vN``.
+        if (
+            "/" in import_path
+            and last.startswith("v")
+            and last[1:].isdigit()
+        ):
+            last = import_path.rsplit("/", 2)[-2]
         if "." in last:
             head, tail = last.rsplit(".", 1)
             if head and tail.startswith("v") and tail[1:].isdigit():
@@ -769,16 +781,24 @@ class GoAnalyzer(LanguageAnalyzer):
                 method_name = field.text.decode("utf-8")
 
                 if method_name == "HandleFunc":
-                    # net/http: the receiver must be the stdlib ``net/http``
-                    # package itself, or a ``*ServeMux`` bound from
-                    # ``http.NewServeMux()``. Anything else is not a route.
-                    if not (
-                        self._is_net_http(recv_name, stdlib)
-                        or routers.get(recv_name) == "net/http"
-                    ):
+                    # ``HandleFunc(path, handler)`` is a route when the receiver
+                    # is either the stdlib ``net/http`` (the package itself, or a
+                    # ``*ServeMux`` bound from ``http.NewServeMux()``) or a
+                    # gorilla/mux router (``mux.NewRouter()``). Anything else is
+                    # not a route.
+                    fw = routers.get(recv_name)
+                    if self._is_net_http(recv_name, stdlib) or fw == "net/http":
+                        framework = "net/http"
+                        methods = ["ANY"]
+                    elif fw == "mux":
+                        # mux: an optionally chained ``.Methods("GET","POST")``
+                        # pins the verbs (one entrypoint each); without it, mux
+                        # matches all methods, so we emit ``ANY``.
+                        framework = "mux"
+                        verbs = self._chained_methods(call)
+                        methods = verbs if verbs else ["ANY"]
+                    else:
                         continue
-                    http_method = "ANY"
-                    framework = "net/http"
                 elif method_name.upper() in _HTTP_VERBS:
                     fw = routers.get(recv_name)
                     if fw is None:
@@ -788,8 +808,8 @@ class GoAnalyzer(LanguageAnalyzer):
                         # already records it in ``unresolved_calls``; emit no
                         # entrypoint and no handler edge.
                         continue
-                    http_method = method_name.upper()
                     framework = fw
+                    methods = [method_name.upper()]
                 else:
                     continue
 
@@ -802,18 +822,19 @@ class GoAnalyzer(LanguageAnalyzer):
                     continue
 
                 handler_arg = args[-1] if len(args) >= 2 else None
-                self._emit_route(
-                    http_method,
-                    path,
-                    framework,
-                    handler_arg,
-                    bound,
-                    local_funcs,
-                    relpath,
-                    graph,
-                    local_pkg_map,
-                    pkg_funcs,
-                )
+                for http_method in methods:
+                    self._emit_route(
+                        http_method,
+                        path,
+                        framework,
+                        handler_arg,
+                        bound,
+                        local_funcs,
+                        relpath,
+                        graph,
+                        local_pkg_map,
+                        pkg_funcs,
+                    )
 
     def _router_vars(
         self,
@@ -898,6 +919,31 @@ class GoAnalyzer(LanguageAnalyzer):
         route).
         """
         return name == "http" and "net/http" in stdlib
+
+    def _chained_methods(self, call: Any) -> list[str] | None:
+        """Verbs of a ``.Methods("GET","POST")`` chained onto a mux route.
+
+        ``call`` is the inner ``r.HandleFunc(path, handler)`` call. A directly
+        chained ``r.HandleFunc(...).Methods(...)`` makes that HandleFunc call the
+        receiver (operand) of a ``.Methods`` selector, whose enclosing call lists
+        the verbs as string literals. Returns the uppercased verbs, or ``None``
+        when there is no such chain (mux then defaults to all methods).
+        """
+        parent = call.parent
+        if parent is None or parent.type != "selector_expression":
+            return None
+        field = parent.child_by_field_name("field")
+        if field is None or field.text.decode("utf-8") != "Methods":
+            return None
+        outer = parent.parent
+        if outer is None or outer.type != "call_expression":
+            return None
+        verbs: list[str] = []
+        for arg in self._named_args(outer):
+            value = self._string_value(arg)
+            if value is not None:
+                verbs.append(value.upper())
+        return verbs or None
 
     def _emit_route(
         self,
