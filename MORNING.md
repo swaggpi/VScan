@@ -9,16 +9,15 @@ scans a repo, builds a 4-language knowledge graph, computes three-way reachabili
 (which entry point reaches which functions and dependencies), correlates the deps
 against real CVE data (OSV + CISA KEV + EPSS), reports coverage/confidence, and —
 with `--explain` — runs an agent pass over the docs to assess exposure. The
-dashboard overlays the reachable-vulnerable findings on the graph. **460 tests pass**,
-across three adversarial review rounds (all findings fixed).
+dashboard overlays the reachable-vulnerable findings on the graph. **508 tests pass**.
+Every finding now escalates: reachable -> vulnerable-function confirmed (symbol_match)
+-> exploitable (taint, Python/JS/Go); transitive dependencies across the full lockfile
+tree (npm/Go/poetry/Pipenv/composer) are correlated; and the scanner is exposed as 12
+MCP tools incl. a fix-and-prove loop (vulnreach_verify_fix / _diff + an audit_and_fix prompt).
 
-## Action needed from you (2 things)
-1. **Push the branch** — 17 commits are local-only because the overnight push was
-   auto-blocked. From the repo root:
-   `git push origin worktree-scanner-layer1`
-   (If this worktree is gone, the branch still exists in the main checkout.)
-   That updates PR #1 (https://github.com/swaggpi/vulnreach/pull/1), which
-   currently shows only the first-night work (scanner + analyzers + viewer).
+## Action needed from you (1 thing)
+1. All work is committed AND pushed to `origin/worktree-scanner-layer1` (every
+   overnight commit is up). Nothing to push.
 2. **Activate the real agent model** (optional; offline heuristic works without it):
    claim your API credits, then set `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`.
    Then `vulnreach audit <repo> --explain` uses the model (else an offline heuristic).
@@ -84,6 +83,30 @@ Real-repo corpus to demo against: `scripts/fetch_test_corpus.sh` (gitignored
 - GitHub Action — composite action: SARIF upload, PR comment, `fail-on` gate.
 - Dashboard — impact funnel plus `symbol_match` / taint escalation view; bundles
   refreshed.
+
+## Shipped overnight (2026-10-28, commits 0364dbc..5ce587e, all pushed)
+- MCP fix-and-prove loop: `vulnreach_verify_fix` (applies an upgrade to a scratch
+  copy — never mutates your tree — re-scans, and PROVES the CVE is cleared by the
+  advisory's own fixed-version AND that nothing new became reachable/tainted; a
+  7-value sound verdict taxonomy), `vulnreach_diff` (scan-vs-scan finding diff),
+  and an `audit_and_fix` prompt. 12 MCP tools total.
+- Transitive dependency CVEs across the full lockfile tree (npm package-lock/pnpm,
+  Go indirect, Python poetry.lock/Pipfile.lock, PHP composer.lock). Sound: a
+  transitive dep is never `unreachable` (we don't analyse a dep's internals) — it
+  is `potentially_reachable`. redash funnel: 1693 deps · 130 CVEs · 1 reachable.
+- Go taint + reachability now resolve same-package cross-file bare calls (Go
+  package == directory; sound, cross-dir probe confirms no false edge).
+- Go web frameworks: gorilla/mux `HandleFunc().Methods()` + fiber routes & taint
+  (now net/http, gin, echo, chi, mux, fiber); fixed a `/vN` package-name bug
+  (also repaired echo v4).
+- Dashboard: transitive deps are legible — funnel `N direct · M transitive`
+  sub-label, inert transitive nodes hidden by default with a toggle (reachable/
+  vulnerable transitive stay visible), a "transitive" detail badge, and a small
+  `transitive-app` demo bundle. Bundles now written as compact JSON.
+- Taint sources now also cover Go gin/echo/chi/mux/fiber request objects.
+- Each feature gated: fresh-agent build -> independent adversarial review (which
+  caught a HIGH false-"fix_verified" in verify_fix and false-`tainted` classes in
+  taint, all fixed) -> my own PoC battery -> commit.
 
 ## Honest limitations (documented, not hidden)
 - The cardinal rule holds throughout: an edge/verdict is asserted only when soundly
