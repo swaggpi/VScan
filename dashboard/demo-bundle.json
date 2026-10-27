@@ -1,0 +1,4028 @@
+{
+  "graph": {
+    "version": 1,
+    "nodes": [
+      {
+        "id": "dep:PyPI:Flask",
+        "kind": "dependency",
+        "name": "Flask",
+        "attrs": {
+          "ecosystem": "PyPI",
+          "version": "3.1.3",
+          "declared": "==3.1.3",
+          "resolved": false,
+          "source_file": "requirements.txt"
+        }
+      },
+      {
+        "id": "dep:PyPI:Jinja2",
+        "kind": "dependency",
+        "name": "Jinja2",
+        "attrs": {
+          "ecosystem": "PyPI",
+          "version": "2.11.2",
+          "declared": "==2.11.2",
+          "resolved": false,
+          "source_file": "requirements.txt"
+        }
+      },
+      {
+        "id": "dep:PyPI:Pillow",
+        "kind": "dependency",
+        "name": "Pillow",
+        "attrs": {
+          "ecosystem": "PyPI",
+          "version": "7.1.0",
+          "declared": "==7.1.0",
+          "resolved": false,
+          "source_file": "requirements.txt"
+        }
+      },
+      {
+        "id": "dep:PyPI:PyYAML",
+        "kind": "dependency",
+        "name": "PyYAML",
+        "attrs": {
+          "ecosystem": "PyPI",
+          "version": "5.3.1",
+          "declared": "==5.3.1",
+          "resolved": false,
+          "source_file": "requirements.txt"
+        }
+      },
+      {
+        "id": "dep:PyPI:requests",
+        "kind": "dependency",
+        "name": "requests",
+        "attrs": {
+          "ecosystem": "PyPI",
+          "version": "2.33.0",
+          "declared": "==2.33.0",
+          "resolved": false,
+          "source_file": "requirements.txt"
+        }
+      },
+      {
+        "id": "dep:PyPI:urllib3",
+        "kind": "dependency",
+        "name": "urllib3",
+        "attrs": {
+          "ecosystem": "PyPI",
+          "version": "1.25.8",
+          "declared": "==1.25.8",
+          "resolved": false,
+          "source_file": "requirements.txt"
+        }
+      },
+      {
+        "id": "doc:README.md",
+        "kind": "doc",
+        "name": "README.md",
+        "attrs": {
+          "relpath": "README.md",
+          "kind_hint": "prose",
+          "excerpt": "# demo-app\n\nA small, mostly-secure Flask service used to showcase the `vulnreach`\nreachability engine. This is a **defensive-security demo fixture**: there is no\nexploit code anywhere in it. The only thing \"vulnerable\" about the app is that a\nfew dependency *versions* in `requirements.txt` are inten"
+        }
+      },
+      {
+        "id": "ep:GET:/health",
+        "kind": "entrypoint",
+        "name": "GET /health",
+        "attrs": {
+          "method": "GET",
+          "path": "/health",
+          "framework": "flask",
+          "handler": "health",
+          "handler_file": "controllers/health_controller.py",
+          "prefix_unresolved": true
+        }
+      },
+      {
+        "id": "ep:GET:/reports/<report_id>",
+        "kind": "entrypoint",
+        "name": "GET /reports/<report_id>",
+        "attrs": {
+          "method": "GET",
+          "path": "/reports/<report_id>",
+          "framework": "flask",
+          "handler": "get_report",
+          "handler_file": "controllers/report_controller.py",
+          "prefix_unresolved": true
+        }
+      },
+      {
+        "id": "ep:POST:/configs/import",
+        "kind": "entrypoint",
+        "name": "POST /configs/import",
+        "attrs": {
+          "method": "POST",
+          "path": "/configs/import",
+          "framework": "flask",
+          "handler": "import_config",
+          "handler_file": "controllers/config_controller.py",
+          "prefix_unresolved": true
+        }
+      },
+      {
+        "id": "file:README.md",
+        "kind": "file",
+        "name": "README.md",
+        "attrs": {
+          "relpath": "README.md",
+          "language": "markdown",
+          "role": "doc",
+          "size": 3434
+        }
+      },
+      {
+        "id": "file:app.py",
+        "kind": "file",
+        "name": "app.py",
+        "attrs": {
+          "relpath": "app.py",
+          "language": "python",
+          "role": "source",
+          "size": 1237
+        }
+      },
+      {
+        "id": "file:controllers/__init__.py",
+        "kind": "file",
+        "name": "__init__.py",
+        "attrs": {
+          "relpath": "controllers/__init__.py",
+          "language": "python",
+          "role": "source",
+          "size": 64
+        }
+      },
+      {
+        "id": "file:controllers/config_controller.py",
+        "kind": "file",
+        "name": "config_controller.py",
+        "attrs": {
+          "relpath": "controllers/config_controller.py",
+          "language": "python",
+          "role": "source",
+          "size": 638
+        }
+      },
+      {
+        "id": "file:controllers/health_controller.py",
+        "kind": "file",
+        "name": "health_controller.py",
+        "attrs": {
+          "relpath": "controllers/health_controller.py",
+          "language": "python",
+          "role": "source",
+          "size": 560
+        }
+      },
+      {
+        "id": "file:controllers/report_controller.py",
+        "kind": "file",
+        "name": "report_controller.py",
+        "attrs": {
+          "relpath": "controllers/report_controller.py",
+          "language": "python",
+          "role": "source",
+          "size": 486
+        }
+      },
+      {
+        "id": "file:maintenance/__init__.py",
+        "kind": "file",
+        "name": "__init__.py",
+        "attrs": {
+          "relpath": "maintenance/__init__.py",
+          "language": "python",
+          "role": "source",
+          "size": 72
+        }
+      },
+      {
+        "id": "file:maintenance/http.py",
+        "kind": "file",
+        "name": "http.py",
+        "attrs": {
+          "relpath": "maintenance/http.py",
+          "language": "python",
+          "role": "source",
+          "size": 463
+        }
+      },
+      {
+        "id": "file:maintenance/sync.py",
+        "kind": "file",
+        "name": "sync.py",
+        "attrs": {
+          "relpath": "maintenance/sync.py",
+          "language": "python",
+          "role": "source",
+          "size": 627
+        }
+      },
+      {
+        "id": "file:parsers/__init__.py",
+        "kind": "file",
+        "name": "__init__.py",
+        "attrs": {
+          "relpath": "parsers/__init__.py",
+          "language": "python",
+          "role": "source",
+          "size": 72
+        }
+      },
+      {
+        "id": "file:parsers/loader.py",
+        "kind": "file",
+        "name": "loader.py",
+        "attrs": {
+          "relpath": "parsers/loader.py",
+          "language": "python",
+          "role": "source",
+          "size": 416
+        }
+      },
+      {
+        "id": "file:parsers/yaml_parser.py",
+        "kind": "file",
+        "name": "yaml_parser.py",
+        "attrs": {
+          "relpath": "parsers/yaml_parser.py",
+          "language": "python",
+          "role": "source",
+          "size": 308
+        }
+      },
+      {
+        "id": "file:renderers/__init__.py",
+        "kind": "file",
+        "name": "__init__.py",
+        "attrs": {
+          "relpath": "renderers/__init__.py",
+          "language": "python",
+          "role": "source",
+          "size": 58
+        }
+      },
+      {
+        "id": "file:renderers/html_renderer.py",
+        "kind": "file",
+        "name": "html_renderer.py",
+        "attrs": {
+          "relpath": "renderers/html_renderer.py",
+          "language": "python",
+          "role": "source",
+          "size": 792
+        }
+      },
+      {
+        "id": "file:requirements.txt",
+        "kind": "file",
+        "name": "requirements.txt",
+        "attrs": {
+          "relpath": "requirements.txt",
+          "language": "text",
+          "role": "manifest",
+          "size": 1032
+        }
+      },
+      {
+        "id": "file:services/__init__.py",
+        "kind": "file",
+        "name": "__init__.py",
+        "attrs": {
+          "relpath": "services/__init__.py",
+          "language": "python",
+          "role": "source",
+          "size": 79
+        }
+      },
+      {
+        "id": "file:services/config_service.py",
+        "kind": "file",
+        "name": "config_service.py",
+        "attrs": {
+          "relpath": "services/config_service.py",
+          "language": "python",
+          "role": "source",
+          "size": 508
+        }
+      },
+      {
+        "id": "file:services/content_service.py",
+        "kind": "file",
+        "name": "content_service.py",
+        "attrs": {
+          "relpath": "services/content_service.py",
+          "language": "python",
+          "role": "source",
+          "size": 489
+        }
+      },
+      {
+        "id": "file:services/health_service.py",
+        "kind": "file",
+        "name": "health_service.py",
+        "attrs": {
+          "relpath": "services/health_service.py",
+          "language": "python",
+          "role": "source",
+          "size": 745
+        }
+      },
+      {
+        "id": "file:services/report_service.py",
+        "kind": "file",
+        "name": "report_service.py",
+        "attrs": {
+          "relpath": "services/report_service.py",
+          "language": "python",
+          "role": "source",
+          "size": 358
+        }
+      },
+      {
+        "id": "file:services/template_service.py",
+        "kind": "file",
+        "name": "template_service.py",
+        "attrs": {
+          "relpath": "services/template_service.py",
+          "language": "python",
+          "role": "source",
+          "size": 410
+        }
+      },
+      {
+        "id": "file:services/validation_service.py",
+        "kind": "file",
+        "name": "validation_service.py",
+        "attrs": {
+          "relpath": "services/validation_service.py",
+          "language": "python",
+          "role": "source",
+          "size": 631
+        }
+      },
+      {
+        "id": "file:tools/__init__.py",
+        "kind": "file",
+        "name": "__init__.py",
+        "attrs": {
+          "relpath": "tools/__init__.py",
+          "language": "python",
+          "role": "source",
+          "size": 76
+        }
+      },
+      {
+        "id": "file:tools/thumbnail_cli.py",
+        "kind": "file",
+        "name": "thumbnail_cli.py",
+        "attrs": {
+          "relpath": "tools/thumbnail_cli.py",
+          "language": "python",
+          "role": "source",
+          "size": 794
+        }
+      },
+      {
+        "id": "fn:controllers/config_controller.py:import_config",
+        "kind": "function",
+        "name": "import_config",
+        "attrs": {
+          "relpath": "controllers/config_controller.py",
+          "module": "controllers.config_controller",
+          "lineno": 16,
+          "is_method": false
+        }
+      },
+      {
+        "id": "fn:controllers/health_controller.py:health",
+        "kind": "function",
+        "name": "health",
+        "attrs": {
+          "relpath": "controllers/health_controller.py",
+          "module": "controllers.health_controller",
+          "lineno": 16,
+          "is_method": false
+        }
+      },
+      {
+        "id": "fn:controllers/report_controller.py:get_report",
+        "kind": "function",
+        "name": "get_report",
+        "attrs": {
+          "relpath": "controllers/report_controller.py",
+          "module": "controllers.report_controller",
+          "lineno": 15,
+          "is_method": false
+        }
+      },
+      {
+        "id": "fn:maintenance/http.py:fetch",
+        "kind": "function",
+        "name": "fetch",
+        "attrs": {
+          "relpath": "maintenance/http.py",
+          "module": "maintenance.http",
+          "lineno": 11,
+          "is_method": false,
+          "unresolved_calls": [
+            "pool.request"
+          ],
+          "unresolved_call_count": 1
+        }
+      },
+      {
+        "id": "fn:maintenance/sync.py:run_sync",
+        "kind": "function",
+        "name": "run_sync",
+        "attrs": {
+          "relpath": "maintenance/sync.py",
+          "module": "maintenance.sync",
+          "lineno": 14,
+          "is_method": false
+        }
+      },
+      {
+        "id": "fn:parsers/loader.py:load_document",
+        "kind": "function",
+        "name": "load_document",
+        "attrs": {
+          "relpath": "parsers/loader.py",
+          "module": "parsers.loader",
+          "lineno": 11,
+          "is_method": false
+        }
+      },
+      {
+        "id": "fn:parsers/yaml_parser.py:parse",
+        "kind": "function",
+        "name": "parse",
+        "attrs": {
+          "relpath": "parsers/yaml_parser.py",
+          "module": "parsers.yaml_parser",
+          "lineno": 10,
+          "is_method": false
+        }
+      },
+      {
+        "id": "fn:renderers/html_renderer.py:render_html",
+        "kind": "function",
+        "name": "render_html",
+        "attrs": {
+          "relpath": "renderers/html_renderer.py",
+          "module": "renderers.html_renderer",
+          "lineno": 15,
+          "is_method": false
+        }
+      },
+      {
+        "id": "fn:services/config_service.py:ingest",
+        "kind": "function",
+        "name": "ingest",
+        "attrs": {
+          "relpath": "services/config_service.py",
+          "module": "services.config_service",
+          "lineno": 10,
+          "is_method": false
+        }
+      },
+      {
+        "id": "fn:services/content_service.py:assemble",
+        "kind": "function",
+        "name": "assemble",
+        "attrs": {
+          "relpath": "services/content_service.py",
+          "module": "services.content_service",
+          "lineno": 10,
+          "is_method": false
+        }
+      },
+      {
+        "id": "fn:services/health_service.py:_summarize",
+        "kind": "function",
+        "name": "_summarize",
+        "attrs": {
+          "relpath": "services/health_service.py",
+          "module": "services.health_service",
+          "lineno": 20,
+          "is_method": false
+        }
+      },
+      {
+        "id": "fn:services/health_service.py:check_upstream",
+        "kind": "function",
+        "name": "check_upstream",
+        "attrs": {
+          "relpath": "services/health_service.py",
+          "module": "services.health_service",
+          "lineno": 14,
+          "is_method": false
+        }
+      },
+      {
+        "id": "fn:services/report_service.py:build_report",
+        "kind": "function",
+        "name": "build_report",
+        "attrs": {
+          "relpath": "services/report_service.py",
+          "module": "services.report_service",
+          "lineno": 10,
+          "is_method": false
+        }
+      },
+      {
+        "id": "fn:services/template_service.py:render",
+        "kind": "function",
+        "name": "render",
+        "attrs": {
+          "relpath": "services/template_service.py",
+          "module": "services.template_service",
+          "lineno": 11,
+          "is_method": false
+        }
+      },
+      {
+        "id": "fn:services/validation_service.py:validate",
+        "kind": "function",
+        "name": "validate",
+        "attrs": {
+          "relpath": "services/validation_service.py",
+          "module": "services.validation_service",
+          "lineno": 14,
+          "is_method": false
+        }
+      },
+      {
+        "id": "fn:tools/thumbnail_cli.py:make_thumbnail",
+        "kind": "function",
+        "name": "make_thumbnail",
+        "attrs": {
+          "relpath": "tools/thumbnail_cli.py",
+          "module": "tools.thumbnail_cli",
+          "lineno": 17,
+          "is_method": false,
+          "unresolved_calls": [
+            "image.resize",
+            "thumbnail.save"
+          ],
+          "unresolved_call_count": 2
+        }
+      },
+      {
+        "id": "mod:app",
+        "kind": "module",
+        "name": "app",
+        "attrs": {
+          "relpath": "app.py",
+          "docstring": "Demo service: a small, mostly-secure notes/config/report API.\n\nThis is a defensive-security demo fixture for the ``vulnreach`` reachability\nengine. There is no exploit code anywhere in this app -- the",
+          "unresolved_calls": [
+            "app.register_blueprint",
+            "app.run"
+          ],
+          "unresolved_call_count": 4
+        }
+      },
+      {
+        "id": "mod:controllers",
+        "kind": "module",
+        "name": "controllers",
+        "attrs": {
+          "relpath": "controllers/__init__.py",
+          "docstring": "HTTP controllers (Flask blueprints) for the demo service."
+        }
+      },
+      {
+        "id": "mod:controllers.config_controller",
+        "kind": "module",
+        "name": "controllers.config_controller",
+        "attrs": {
+          "relpath": "controllers/config_controller.py",
+          "docstring": "Configuration-import controller.\n\nExposes the public ``POST /configs/import`` route. The handler is a plain\nmodule-level function so the reachability engine can follow the call chain from\nthis route s"
+        }
+      },
+      {
+        "id": "mod:controllers.health_controller",
+        "kind": "module",
+        "name": "controllers.health_controller",
+        "attrs": {
+          "relpath": "controllers/health_controller.py",
+          "docstring": "Liveness/health controller.\n\nExposes the public ``GET /health`` route. This path reaches the ``requests``\ndependency (a live upstream check) -- which is current and carries no advisory,\nso it is a goo"
+        }
+      },
+      {
+        "id": "mod:controllers.report_controller",
+        "kind": "module",
+        "name": "controllers.report_controller",
+        "attrs": {
+          "relpath": "controllers/report_controller.py",
+          "docstring": "Report-rendering controller.\n\nExposes the public ``GET /reports/<report_id>`` route, which renders a stored\nreport into an HTML fragment. The handler delegates into the report service."
+        }
+      },
+      {
+        "id": "mod:maintenance",
+        "kind": "module",
+        "name": "maintenance",
+        "attrs": {
+          "relpath": "maintenance/__init__.py",
+          "docstring": "Offline maintenance jobs. Nothing here is wired to an HTTP route."
+        }
+      },
+      {
+        "id": "mod:maintenance.http",
+        "kind": "module",
+        "name": "maintenance.http",
+        "attrs": {
+          "relpath": "maintenance/http.py",
+          "docstring": "Low-level HTTP helper for the maintenance sync job.\n\nUses ``urllib3`` directly. The pinned ``urllib3`` version is outdated and has a\nknown advisory, but this helper is only ever called by the offline "
+        }
+      },
+      {
+        "id": "mod:maintenance.sync",
+        "kind": "module",
+        "name": "maintenance.sync",
+        "attrs": {
+          "relpath": "maintenance/sync.py",
+          "docstring": "Offline config-feed sync job.\n\n``run_sync`` is an operator/cron entry point -- it is invoked from the command\nline (see the ``__main__`` guard), never from any HTTP route. Because no public\nentry poin"
+        }
+      },
+      {
+        "id": "mod:parsers",
+        "kind": "module",
+        "name": "parsers",
+        "attrs": {
+          "relpath": "parsers/__init__.py",
+          "docstring": "Parsing layer: turn raw request bodies into structured documents."
+        }
+      },
+      {
+        "id": "mod:parsers.loader",
+        "kind": "module",
+        "name": "parsers.loader",
+        "attrs": {
+          "relpath": "parsers/loader.py",
+          "docstring": "Low-level YAML loader -- the leaf of the ``/configs/import`` chain.\n\nThis is where the PyYAML dependency is actually called. The pinned PyYAML\nversion is outdated, so this call site is exactly what th"
+        }
+      },
+      {
+        "id": "mod:parsers.yaml_parser",
+        "kind": "module",
+        "name": "parsers.yaml_parser",
+        "attrs": {
+          "relpath": "parsers/yaml_parser.py",
+          "docstring": "YAML parsing front-end.\n\nThird hop of the ``/configs/import`` chain. This module decides *how* to parse\n(document vs. stream) and forwards to the low-level loader."
+        }
+      },
+      {
+        "id": "mod:renderers",
+        "kind": "module",
+        "name": "renderers",
+        "attrs": {
+          "relpath": "renderers/__init__.py",
+          "docstring": "Rendering layer: turn structured content into HTML."
+        }
+      },
+      {
+        "id": "mod:renderers.html_renderer",
+        "kind": "module",
+        "name": "renderers.html_renderer",
+        "attrs": {
+          "relpath": "renderers/html_renderer.py",
+          "docstring": "HTML renderer -- the leaf of the ``/reports/<id>`` chain.\n\nThis is where the Jinja2 dependency is actually called: untrusted report\nfields are escaped through Jinja2 before being placed into the page."
+        }
+      },
+      {
+        "id": "mod:services",
+        "kind": "module",
+        "name": "services",
+        "attrs": {
+          "relpath": "services/__init__.py",
+          "docstring": "Service layer: business logic between controllers and parsers/renderers."
+        }
+      },
+      {
+        "id": "mod:services.config_service",
+        "kind": "module",
+        "name": "services.config_service",
+        "attrs": {
+          "relpath": "services/config_service.py",
+          "docstring": "Configuration ingest service.\n\nFirst hop of the ``/configs/import`` call chain. It hands the raw upload to the\nvalidation service and reports how many top-level keys were accepted."
+        }
+      },
+      {
+        "id": "mod:services.content_service",
+        "kind": "module",
+        "name": "services.content_service",
+        "attrs": {
+          "relpath": "services/content_service.py",
+          "docstring": "Content-assembly service -- second hop of the ``/reports/<id>`` chain.\n\nTurns a report id into a title and body (here, placeholder content for the\ndemo) and hands them to the template service for rend"
+        }
+      },
+      {
+        "id": "mod:services.health_service",
+        "kind": "module",
+        "name": "services.health_service",
+        "attrs": {
+          "relpath": "services/health_service.py",
+          "docstring": "Health-check service -- the leaf of the ``/health`` chain.\n\nCalls an upstream dependency over HTTP using ``requests``. ``requests`` is a\ncurrent, patched version with no known advisory, so although th"
+        }
+      },
+      {
+        "id": "mod:services.report_service",
+        "kind": "module",
+        "name": "services.report_service",
+        "attrs": {
+          "relpath": "services/report_service.py",
+          "docstring": "Report service -- first hop of the ``/reports/<id>`` chain.\n\nLooks up the report shell for an id and asks the content service to assemble\nthe renderable pieces."
+        }
+      },
+      {
+        "id": "mod:services.template_service",
+        "kind": "module",
+        "name": "services.template_service",
+        "attrs": {
+          "relpath": "services/template_service.py",
+          "docstring": "Template service -- third hop of the ``/reports/<id>`` chain.\n\nSelects the HTML renderer for report output. Keeping this indirection in its\nown module is what makes the chain to the templating depende"
+        }
+      },
+      {
+        "id": "mod:services.validation_service",
+        "kind": "module",
+        "name": "services.validation_service",
+        "attrs": {
+          "relpath": "services/validation_service.py",
+          "docstring": "Input-validation service.\n\nSecond hop of the ``/configs/import`` chain. It performs cheap structural\nchecks on the raw upload before parsing, then delegates the actual parse to the\nYAML parser. The ch"
+        }
+      },
+      {
+        "id": "mod:tools",
+        "kind": "module",
+        "name": "tools",
+        "attrs": {
+          "relpath": "tools/__init__.py",
+          "docstring": "Developer CLI tools. Standalone scripts, not part of the web service."
+        }
+      },
+      {
+        "id": "mod:tools.thumbnail_cli",
+        "kind": "module",
+        "name": "tools.thumbnail_cli",
+        "attrs": {
+          "relpath": "tools/thumbnail_cli.py",
+          "docstring": "Thumbnail generator -- a developer CLI, not part of the web service.\n\nRun manually to regenerate report thumbnails:\n\n    python -m tools.thumbnail_cli input.png output.png\n\nIt uses ``Pillow`` (an outd"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "src": "fn:controllers/config_controller.py:import_config",
+        "dst": "dep:PyPI:Flask",
+        "kind": "calls",
+        "attrs": {
+          "symbol": "flask.jsonify"
+        }
+      },
+      {
+        "src": "fn:controllers/config_controller.py:import_config",
+        "dst": "dep:PyPI:Flask",
+        "kind": "calls",
+        "attrs": {
+          "symbol": "flask.request.get_data"
+        }
+      },
+      {
+        "src": "fn:controllers/config_controller.py:import_config",
+        "dst": "fn:services/config_service.py:ingest",
+        "kind": "calls",
+        "attrs": {}
+      },
+      {
+        "src": "fn:controllers/health_controller.py:health",
+        "dst": "dep:PyPI:Flask",
+        "kind": "calls",
+        "attrs": {
+          "symbol": "flask.jsonify"
+        }
+      },
+      {
+        "src": "fn:controllers/health_controller.py:health",
+        "dst": "fn:services/health_service.py:check_upstream",
+        "kind": "calls",
+        "attrs": {}
+      },
+      {
+        "src": "fn:controllers/report_controller.py:get_report",
+        "dst": "fn:services/report_service.py:build_report",
+        "kind": "calls",
+        "attrs": {}
+      },
+      {
+        "src": "fn:maintenance/http.py:fetch",
+        "dst": "dep:PyPI:urllib3",
+        "kind": "calls",
+        "attrs": {
+          "symbol": "urllib3.PoolManager"
+        }
+      },
+      {
+        "src": "fn:maintenance/sync.py:run_sync",
+        "dst": "fn:maintenance/http.py:fetch",
+        "kind": "calls",
+        "attrs": {}
+      },
+      {
+        "src": "fn:parsers/loader.py:load_document",
+        "dst": "dep:PyPI:PyYAML",
+        "kind": "calls",
+        "attrs": {
+          "symbol": "yaml.load"
+        }
+      },
+      {
+        "src": "fn:parsers/yaml_parser.py:parse",
+        "dst": "fn:parsers/loader.py:load_document",
+        "kind": "calls",
+        "attrs": {}
+      },
+      {
+        "src": "fn:renderers/html_renderer.py:render_html",
+        "dst": "dep:PyPI:Jinja2",
+        "kind": "calls",
+        "attrs": {
+          "symbol": "jinja2.escape"
+        }
+      },
+      {
+        "src": "fn:services/config_service.py:ingest",
+        "dst": "fn:services/validation_service.py:validate",
+        "kind": "calls",
+        "attrs": {}
+      },
+      {
+        "src": "fn:services/content_service.py:assemble",
+        "dst": "fn:services/template_service.py:render",
+        "kind": "calls",
+        "attrs": {}
+      },
+      {
+        "src": "fn:services/health_service.py:check_upstream",
+        "dst": "dep:PyPI:requests",
+        "kind": "calls",
+        "attrs": {
+          "symbol": "requests.get"
+        }
+      },
+      {
+        "src": "fn:services/health_service.py:check_upstream",
+        "dst": "fn:services/health_service.py:_summarize",
+        "kind": "calls",
+        "attrs": {}
+      },
+      {
+        "src": "fn:services/report_service.py:build_report",
+        "dst": "fn:services/content_service.py:assemble",
+        "kind": "calls",
+        "attrs": {}
+      },
+      {
+        "src": "fn:services/template_service.py:render",
+        "dst": "fn:renderers/html_renderer.py:render_html",
+        "kind": "calls",
+        "attrs": {}
+      },
+      {
+        "src": "fn:services/validation_service.py:validate",
+        "dst": "fn:parsers/yaml_parser.py:parse",
+        "kind": "calls",
+        "attrs": {}
+      },
+      {
+        "src": "fn:tools/thumbnail_cli.py:make_thumbnail",
+        "dst": "dep:PyPI:Pillow",
+        "kind": "calls",
+        "attrs": {
+          "symbol": "PIL.Image.open"
+        }
+      },
+      {
+        "src": "mod:app",
+        "dst": "dep:PyPI:Flask",
+        "kind": "calls",
+        "attrs": {
+          "symbol": "flask.Flask"
+        }
+      },
+      {
+        "src": "mod:controllers.config_controller",
+        "dst": "dep:PyPI:Flask",
+        "kind": "calls",
+        "attrs": {
+          "symbol": "flask.Blueprint"
+        }
+      },
+      {
+        "src": "mod:controllers.health_controller",
+        "dst": "dep:PyPI:Flask",
+        "kind": "calls",
+        "attrs": {
+          "symbol": "flask.Blueprint"
+        }
+      },
+      {
+        "src": "mod:controllers.report_controller",
+        "dst": "dep:PyPI:Flask",
+        "kind": "calls",
+        "attrs": {
+          "symbol": "flask.Blueprint"
+        }
+      },
+      {
+        "src": "mod:maintenance.sync",
+        "dst": "fn:maintenance/sync.py:run_sync",
+        "kind": "calls",
+        "attrs": {}
+      },
+      {
+        "src": "mod:tools.thumbnail_cli",
+        "dst": "fn:tools/thumbnail_cli.py:make_thumbnail",
+        "kind": "calls",
+        "attrs": {}
+      },
+      {
+        "src": "file:app.py",
+        "dst": "mod:app",
+        "kind": "contains",
+        "attrs": {}
+      },
+      {
+        "src": "file:controllers/__init__.py",
+        "dst": "mod:controllers",
+        "kind": "contains",
+        "attrs": {}
+      },
+      {
+        "src": "file:controllers/config_controller.py",
+        "dst": "mod:controllers.config_controller",
+        "kind": "contains",
+        "attrs": {}
+      },
+      {
+        "src": "file:controllers/health_controller.py",
+        "dst": "mod:controllers.health_controller",
+        "kind": "contains",
+        "attrs": {}
+      },
+      {
+        "src": "file:controllers/report_controller.py",
+        "dst": "mod:controllers.report_controller",
+        "kind": "contains",
+        "attrs": {}
+      },
+      {
+        "src": "file:maintenance/__init__.py",
+        "dst": "mod:maintenance",
+        "kind": "contains",
+        "attrs": {}
+      },
+      {
+        "src": "file:maintenance/http.py",
+        "dst": "mod:maintenance.http",
+        "kind": "contains",
+        "attrs": {}
+      },
+      {
+        "src": "file:maintenance/sync.py",
+        "dst": "mod:maintenance.sync",
+        "kind": "contains",
+        "attrs": {}
+      },
+      {
+        "src": "file:parsers/__init__.py",
+        "dst": "mod:parsers",
+        "kind": "contains",
+        "attrs": {}
+      },
+      {
+        "src": "file:parsers/loader.py",
+        "dst": "mod:parsers.loader",
+        "kind": "contains",
+        "attrs": {}
+      },
+      {
+        "src": "file:parsers/yaml_parser.py",
+        "dst": "mod:parsers.yaml_parser",
+        "kind": "contains",
+        "attrs": {}
+      },
+      {
+        "src": "file:renderers/__init__.py",
+        "dst": "mod:renderers",
+        "kind": "contains",
+        "attrs": {}
+      },
+      {
+        "src": "file:renderers/html_renderer.py",
+        "dst": "mod:renderers.html_renderer",
+        "kind": "contains",
+        "attrs": {}
+      },
+      {
+        "src": "file:services/__init__.py",
+        "dst": "mod:services",
+        "kind": "contains",
+        "attrs": {}
+      },
+      {
+        "src": "file:services/config_service.py",
+        "dst": "mod:services.config_service",
+        "kind": "contains",
+        "attrs": {}
+      },
+      {
+        "src": "file:services/content_service.py",
+        "dst": "mod:services.content_service",
+        "kind": "contains",
+        "attrs": {}
+      },
+      {
+        "src": "file:services/health_service.py",
+        "dst": "mod:services.health_service",
+        "kind": "contains",
+        "attrs": {}
+      },
+      {
+        "src": "file:services/report_service.py",
+        "dst": "mod:services.report_service",
+        "kind": "contains",
+        "attrs": {}
+      },
+      {
+        "src": "file:services/template_service.py",
+        "dst": "mod:services.template_service",
+        "kind": "contains",
+        "attrs": {}
+      },
+      {
+        "src": "file:services/validation_service.py",
+        "dst": "mod:services.validation_service",
+        "kind": "contains",
+        "attrs": {}
+      },
+      {
+        "src": "file:tools/__init__.py",
+        "dst": "mod:tools",
+        "kind": "contains",
+        "attrs": {}
+      },
+      {
+        "src": "file:tools/thumbnail_cli.py",
+        "dst": "mod:tools.thumbnail_cli",
+        "kind": "contains",
+        "attrs": {}
+      },
+      {
+        "src": "file:requirements.txt",
+        "dst": "dep:PyPI:Flask",
+        "kind": "declares",
+        "attrs": {}
+      },
+      {
+        "src": "file:requirements.txt",
+        "dst": "dep:PyPI:Jinja2",
+        "kind": "declares",
+        "attrs": {}
+      },
+      {
+        "src": "file:requirements.txt",
+        "dst": "dep:PyPI:Pillow",
+        "kind": "declares",
+        "attrs": {}
+      },
+      {
+        "src": "file:requirements.txt",
+        "dst": "dep:PyPI:PyYAML",
+        "kind": "declares",
+        "attrs": {}
+      },
+      {
+        "src": "file:requirements.txt",
+        "dst": "dep:PyPI:requests",
+        "kind": "declares",
+        "attrs": {}
+      },
+      {
+        "src": "file:requirements.txt",
+        "dst": "dep:PyPI:urllib3",
+        "kind": "declares",
+        "attrs": {}
+      },
+      {
+        "src": "mod:controllers.config_controller",
+        "dst": "fn:controllers/config_controller.py:import_config",
+        "kind": "declares",
+        "attrs": {}
+      },
+      {
+        "src": "mod:controllers.health_controller",
+        "dst": "fn:controllers/health_controller.py:health",
+        "kind": "declares",
+        "attrs": {}
+      },
+      {
+        "src": "mod:controllers.report_controller",
+        "dst": "fn:controllers/report_controller.py:get_report",
+        "kind": "declares",
+        "attrs": {}
+      },
+      {
+        "src": "mod:maintenance.http",
+        "dst": "fn:maintenance/http.py:fetch",
+        "kind": "declares",
+        "attrs": {}
+      },
+      {
+        "src": "mod:maintenance.sync",
+        "dst": "fn:maintenance/sync.py:run_sync",
+        "kind": "declares",
+        "attrs": {}
+      },
+      {
+        "src": "mod:parsers.loader",
+        "dst": "fn:parsers/loader.py:load_document",
+        "kind": "declares",
+        "attrs": {}
+      },
+      {
+        "src": "mod:parsers.yaml_parser",
+        "dst": "fn:parsers/yaml_parser.py:parse",
+        "kind": "declares",
+        "attrs": {}
+      },
+      {
+        "src": "mod:renderers.html_renderer",
+        "dst": "fn:renderers/html_renderer.py:render_html",
+        "kind": "declares",
+        "attrs": {}
+      },
+      {
+        "src": "mod:services.config_service",
+        "dst": "fn:services/config_service.py:ingest",
+        "kind": "declares",
+        "attrs": {}
+      },
+      {
+        "src": "mod:services.content_service",
+        "dst": "fn:services/content_service.py:assemble",
+        "kind": "declares",
+        "attrs": {}
+      },
+      {
+        "src": "mod:services.health_service",
+        "dst": "fn:services/health_service.py:_summarize",
+        "kind": "declares",
+        "attrs": {}
+      },
+      {
+        "src": "mod:services.health_service",
+        "dst": "fn:services/health_service.py:check_upstream",
+        "kind": "declares",
+        "attrs": {}
+      },
+      {
+        "src": "mod:services.report_service",
+        "dst": "fn:services/report_service.py:build_report",
+        "kind": "declares",
+        "attrs": {}
+      },
+      {
+        "src": "mod:services.template_service",
+        "dst": "fn:services/template_service.py:render",
+        "kind": "declares",
+        "attrs": {}
+      },
+      {
+        "src": "mod:services.validation_service",
+        "dst": "fn:services/validation_service.py:validate",
+        "kind": "declares",
+        "attrs": {}
+      },
+      {
+        "src": "mod:tools.thumbnail_cli",
+        "dst": "fn:tools/thumbnail_cli.py:make_thumbnail",
+        "kind": "declares",
+        "attrs": {}
+      },
+      {
+        "src": "doc:README.md",
+        "dst": "ep:GET:/health",
+        "kind": "documents",
+        "attrs": {
+          "matched": "/health",
+          "snippet": "nders a report to HTML) | | `GET /health` | `controllers.health_contro"
+        }
+      },
+      {
+        "src": "doc:README.md",
+        "dst": "ep:POST:/configs/import",
+        "kind": "documents",
+        "attrs": {
+          "matched": "/configs/import",
+          "snippet": "------------------------------| | `POST /configs/import` | `controllers.config_controller.imp"
+        }
+      },
+      {
+        "src": "mod:app",
+        "dst": "dep:PyPI:Flask",
+        "kind": "imports",
+        "attrs": {}
+      },
+      {
+        "src": "mod:app",
+        "dst": "mod:controllers",
+        "kind": "imports",
+        "attrs": {}
+      },
+      {
+        "src": "mod:app",
+        "dst": "mod:controllers.config_controller",
+        "kind": "imports",
+        "attrs": {}
+      },
+      {
+        "src": "mod:app",
+        "dst": "mod:controllers.health_controller",
+        "kind": "imports",
+        "attrs": {}
+      },
+      {
+        "src": "mod:app",
+        "dst": "mod:controllers.report_controller",
+        "kind": "imports",
+        "attrs": {}
+      },
+      {
+        "src": "mod:controllers.config_controller",
+        "dst": "dep:PyPI:Flask",
+        "kind": "imports",
+        "attrs": {}
+      },
+      {
+        "src": "mod:controllers.config_controller",
+        "dst": "mod:services",
+        "kind": "imports",
+        "attrs": {}
+      },
+      {
+        "src": "mod:controllers.config_controller",
+        "dst": "mod:services.config_service",
+        "kind": "imports",
+        "attrs": {}
+      },
+      {
+        "src": "mod:controllers.health_controller",
+        "dst": "dep:PyPI:Flask",
+        "kind": "imports",
+        "attrs": {}
+      },
+      {
+        "src": "mod:controllers.health_controller",
+        "dst": "mod:services",
+        "kind": "imports",
+        "attrs": {}
+      },
+      {
+        "src": "mod:controllers.health_controller",
+        "dst": "mod:services.health_service",
+        "kind": "imports",
+        "attrs": {}
+      },
+      {
+        "src": "mod:controllers.report_controller",
+        "dst": "dep:PyPI:Flask",
+        "kind": "imports",
+        "attrs": {}
+      },
+      {
+        "src": "mod:controllers.report_controller",
+        "dst": "mod:services",
+        "kind": "imports",
+        "attrs": {}
+      },
+      {
+        "src": "mod:controllers.report_controller",
+        "dst": "mod:services.report_service",
+        "kind": "imports",
+        "attrs": {}
+      },
+      {
+        "src": "mod:maintenance.http",
+        "dst": "dep:PyPI:urllib3",
+        "kind": "imports",
+        "attrs": {}
+      },
+      {
+        "src": "mod:maintenance.sync",
+        "dst": "mod:maintenance",
+        "kind": "imports",
+        "attrs": {}
+      },
+      {
+        "src": "mod:maintenance.sync",
+        "dst": "mod:maintenance.http",
+        "kind": "imports",
+        "attrs": {}
+      },
+      {
+        "src": "mod:parsers.loader",
+        "dst": "dep:PyPI:PyYAML",
+        "kind": "imports",
+        "attrs": {}
+      },
+      {
+        "src": "mod:parsers.yaml_parser",
+        "dst": "mod:parsers",
+        "kind": "imports",
+        "attrs": {}
+      },
+      {
+        "src": "mod:parsers.yaml_parser",
+        "dst": "mod:parsers.loader",
+        "kind": "imports",
+        "attrs": {}
+      },
+      {
+        "src": "mod:renderers.html_renderer",
+        "dst": "dep:PyPI:Jinja2",
+        "kind": "imports",
+        "attrs": {}
+      },
+      {
+        "src": "mod:services.config_service",
+        "dst": "mod:services",
+        "kind": "imports",
+        "attrs": {}
+      },
+      {
+        "src": "mod:services.config_service",
+        "dst": "mod:services.validation_service",
+        "kind": "imports",
+        "attrs": {}
+      },
+      {
+        "src": "mod:services.content_service",
+        "dst": "mod:services",
+        "kind": "imports",
+        "attrs": {}
+      },
+      {
+        "src": "mod:services.content_service",
+        "dst": "mod:services.template_service",
+        "kind": "imports",
+        "attrs": {}
+      },
+      {
+        "src": "mod:services.health_service",
+        "dst": "dep:PyPI:requests",
+        "kind": "imports",
+        "attrs": {}
+      },
+      {
+        "src": "mod:services.report_service",
+        "dst": "mod:services",
+        "kind": "imports",
+        "attrs": {}
+      },
+      {
+        "src": "mod:services.report_service",
+        "dst": "mod:services.content_service",
+        "kind": "imports",
+        "attrs": {}
+      },
+      {
+        "src": "mod:services.template_service",
+        "dst": "mod:renderers",
+        "kind": "imports",
+        "attrs": {}
+      },
+      {
+        "src": "mod:services.template_service",
+        "dst": "mod:renderers.html_renderer",
+        "kind": "imports",
+        "attrs": {}
+      },
+      {
+        "src": "mod:services.validation_service",
+        "dst": "mod:parsers",
+        "kind": "imports",
+        "attrs": {}
+      },
+      {
+        "src": "mod:services.validation_service",
+        "dst": "mod:parsers.yaml_parser",
+        "kind": "imports",
+        "attrs": {}
+      },
+      {
+        "src": "mod:tools.thumbnail_cli",
+        "dst": "dep:PyPI:Pillow",
+        "kind": "imports",
+        "attrs": {}
+      },
+      {
+        "src": "ep:GET:/health",
+        "dst": "fn:controllers/health_controller.py:health",
+        "kind": "route_to_handler",
+        "attrs": {}
+      },
+      {
+        "src": "ep:GET:/reports/<report_id>",
+        "dst": "fn:controllers/report_controller.py:get_report",
+        "kind": "route_to_handler",
+        "attrs": {}
+      },
+      {
+        "src": "ep:POST:/configs/import",
+        "dst": "fn:controllers/config_controller.py:import_config",
+        "kind": "route_to_handler",
+        "attrs": {}
+      }
+    ],
+    "summary": {
+      "node_counts": {
+        "dependency": 6,
+        "doc": 1,
+        "entrypoint": 3,
+        "file": 24,
+        "function": 16,
+        "module": 22
+      },
+      "edge_counts": {
+        "calls": 25,
+        "contains": 22,
+        "declares": 22,
+        "documents": 2,
+        "imports": 33,
+        "route_to_handler": 3
+      },
+      "dependencies": [
+        {
+          "name": "Flask",
+          "ecosystem": "PyPI",
+          "version": "3.1.3",
+          "resolved": false,
+          "source_file": "requirements.txt"
+        },
+        {
+          "name": "Jinja2",
+          "ecosystem": "PyPI",
+          "version": "2.11.2",
+          "resolved": false,
+          "source_file": "requirements.txt"
+        },
+        {
+          "name": "Pillow",
+          "ecosystem": "PyPI",
+          "version": "7.1.0",
+          "resolved": false,
+          "source_file": "requirements.txt"
+        },
+        {
+          "name": "PyYAML",
+          "ecosystem": "PyPI",
+          "version": "5.3.1",
+          "resolved": false,
+          "source_file": "requirements.txt"
+        },
+        {
+          "name": "requests",
+          "ecosystem": "PyPI",
+          "version": "2.33.0",
+          "resolved": false,
+          "source_file": "requirements.txt"
+        },
+        {
+          "name": "urllib3",
+          "ecosystem": "PyPI",
+          "version": "1.25.8",
+          "resolved": false,
+          "source_file": "requirements.txt"
+        }
+      ]
+    }
+  },
+  "reachability": {
+    "entrypoints": [
+      {
+        "id": "ep:GET:/health",
+        "method": "GET",
+        "path": "/health",
+        "handlers": [
+          "fn:controllers/health_controller.py:health"
+        ],
+        "reachable_function_count": 3,
+        "reachable_dependencies": [
+          {
+            "id": "dep:PyPI:Flask",
+            "name": "Flask",
+            "version": "3.1.3",
+            "ecosystem": "PyPI",
+            "symbol": "flask.jsonify",
+            "symbols": [
+              "flask.jsonify"
+            ],
+            "example_path": [
+              "ep:GET:/health",
+              "fn:controllers/health_controller.py:health",
+              "dep:PyPI:Flask"
+            ],
+            "verdict": "reachable"
+          },
+          {
+            "id": "dep:PyPI:requests",
+            "name": "requests",
+            "version": "2.33.0",
+            "ecosystem": "PyPI",
+            "symbol": "requests.get",
+            "symbols": [
+              "requests.get"
+            ],
+            "example_path": [
+              "ep:GET:/health",
+              "fn:controllers/health_controller.py:health",
+              "fn:services/health_service.py:check_upstream",
+              "dep:PyPI:requests"
+            ],
+            "verdict": "reachable"
+          }
+        ],
+        "unresolved_calls_encountered": 0,
+        "fully_resolved": true,
+        "verdict_by_dep": {
+          "dep:PyPI:Flask": "reachable",
+          "dep:PyPI:Pillow": "unreachable",
+          "dep:PyPI:Jinja2": "unreachable",
+          "dep:PyPI:PyYAML": "unreachable",
+          "dep:PyPI:urllib3": "unreachable",
+          "dep:PyPI:requests": "reachable"
+        }
+      },
+      {
+        "id": "ep:GET:/reports/<report_id>",
+        "method": "GET",
+        "path": "/reports/<report_id>",
+        "handlers": [
+          "fn:controllers/report_controller.py:get_report"
+        ],
+        "reachable_function_count": 5,
+        "reachable_dependencies": [
+          {
+            "id": "dep:PyPI:Jinja2",
+            "name": "Jinja2",
+            "version": "2.11.2",
+            "ecosystem": "PyPI",
+            "symbol": "jinja2.escape",
+            "symbols": [
+              "jinja2.escape"
+            ],
+            "example_path": [
+              "ep:GET:/reports/<report_id>",
+              "fn:controllers/report_controller.py:get_report",
+              "fn:services/report_service.py:build_report",
+              "fn:services/content_service.py:assemble",
+              "fn:services/template_service.py:render",
+              "fn:renderers/html_renderer.py:render_html",
+              "dep:PyPI:Jinja2"
+            ],
+            "verdict": "reachable"
+          }
+        ],
+        "unresolved_calls_encountered": 0,
+        "fully_resolved": true,
+        "verdict_by_dep": {
+          "dep:PyPI:Flask": "unreachable",
+          "dep:PyPI:Pillow": "unreachable",
+          "dep:PyPI:Jinja2": "reachable",
+          "dep:PyPI:PyYAML": "unreachable",
+          "dep:PyPI:urllib3": "unreachable",
+          "dep:PyPI:requests": "unreachable"
+        }
+      },
+      {
+        "id": "ep:POST:/configs/import",
+        "method": "POST",
+        "path": "/configs/import",
+        "handlers": [
+          "fn:controllers/config_controller.py:import_config"
+        ],
+        "reachable_function_count": 5,
+        "reachable_dependencies": [
+          {
+            "id": "dep:PyPI:Flask",
+            "name": "Flask",
+            "version": "3.1.3",
+            "ecosystem": "PyPI",
+            "symbol": "flask.jsonify",
+            "symbols": [
+              "flask.jsonify",
+              "flask.request.get_data"
+            ],
+            "example_path": [
+              "ep:POST:/configs/import",
+              "fn:controllers/config_controller.py:import_config",
+              "dep:PyPI:Flask"
+            ],
+            "verdict": "reachable"
+          },
+          {
+            "id": "dep:PyPI:PyYAML",
+            "name": "PyYAML",
+            "version": "5.3.1",
+            "ecosystem": "PyPI",
+            "symbol": "yaml.load",
+            "symbols": [
+              "yaml.load"
+            ],
+            "example_path": [
+              "ep:POST:/configs/import",
+              "fn:controllers/config_controller.py:import_config",
+              "fn:services/config_service.py:ingest",
+              "fn:services/validation_service.py:validate",
+              "fn:parsers/yaml_parser.py:parse",
+              "fn:parsers/loader.py:load_document",
+              "dep:PyPI:PyYAML"
+            ],
+            "verdict": "reachable"
+          }
+        ],
+        "unresolved_calls_encountered": 0,
+        "fully_resolved": true,
+        "verdict_by_dep": {
+          "dep:PyPI:Flask": "reachable",
+          "dep:PyPI:Pillow": "unreachable",
+          "dep:PyPI:Jinja2": "unreachable",
+          "dep:PyPI:PyYAML": "reachable",
+          "dep:PyPI:urllib3": "unreachable",
+          "dep:PyPI:requests": "unreachable"
+        }
+      }
+    ],
+    "repo": {
+      "reachable_deps": [
+        {
+          "id": "dep:PyPI:Flask",
+          "name": "Flask",
+          "version": "3.1.3",
+          "ecosystem": "PyPI"
+        },
+        {
+          "id": "dep:PyPI:Jinja2",
+          "name": "Jinja2",
+          "version": "2.11.2",
+          "ecosystem": "PyPI"
+        },
+        {
+          "id": "dep:PyPI:PyYAML",
+          "name": "PyYAML",
+          "version": "5.3.1",
+          "ecosystem": "PyPI"
+        },
+        {
+          "id": "dep:PyPI:requests",
+          "name": "requests",
+          "version": "2.33.0",
+          "ecosystem": "PyPI"
+        }
+      ],
+      "unreachable_deps": [
+        {
+          "id": "dep:PyPI:Pillow",
+          "name": "Pillow",
+          "version": "7.1.0",
+          "ecosystem": "PyPI"
+        },
+        {
+          "id": "dep:PyPI:urllib3",
+          "name": "urllib3",
+          "version": "1.25.8",
+          "ecosystem": "PyPI"
+        }
+      ],
+      "deps_without_call_site": [],
+      "reachable_region_fully_resolved": true,
+      "verdict_by_dep": {
+        "dep:PyPI:Flask": "reachable",
+        "dep:PyPI:Pillow": "unreachable",
+        "dep:PyPI:Jinja2": "reachable",
+        "dep:PyPI:PyYAML": "reachable",
+        "dep:PyPI:urllib3": "unreachable",
+        "dep:PyPI:requests": "reachable"
+      },
+      "verdict_counts": {
+        "reachable": 4,
+        "potentially_reachable": 0,
+        "unreachable": 2
+      },
+      "has_entrypoints": true,
+      "entrypoints_without_handler": 0,
+      "nodes_with_unresolved_routes": 0,
+      "unresolved_calls": 0
+    }
+  },
+  "findings": [
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-j7hp-h8jx-5ppr",
+      "cve_ids": [
+        "CVE-2023-4863",
+        "CVE-2023-5129"
+      ],
+      "summary": "libwebp: OOB write in BuildHuffmanTable",
+      "fixed_versions": [
+        "10.0.1"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:H/I:H/A:H",
+      "cvss_source": "OSV",
+      "kev": true,
+      "epss": 0.99979,
+      "epss_percentile": 0.9998,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:PyYAML",
+      "dependency_name": "PyYAML",
+      "version": "5.3.1",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-8q59-q68h-6hv4",
+      "cve_ids": [
+        "CVE-2020-14343"
+      ],
+      "summary": "Improper Input Validation in PyYAML",
+      "fixed_versions": [
+        "5.4"
+      ],
+      "severity": "CRITICAL",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.05984,
+      "epss_percentile": 0.93257,
+      "reachable": true,
+      "reachable_entrypoints": [
+        "POST /configs/import"
+      ],
+      "example_path": [
+        "ep:POST:/configs/import",
+        "fn:controllers/config_controller.py:import_config",
+        "fn:services/config_service.py:ingest",
+        "fn:services/validation_service.py:validate",
+        "fn:parsers/yaml_parser.py:parse",
+        "fn:parsers/loader.py:load_document",
+        "dep:PyPI:PyYAML"
+      ],
+      "verdict": "reachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-3wvg-mj6g-m9cv",
+      "cve_ids": [
+        "CVE-2021-27922"
+      ],
+      "summary": "Pillow Uncontrolled Resource Consumption",
+      "fixed_versions": [
+        "8.1.2",
+        "8.1.1"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.04851,
+      "epss_percentile": 0.91965,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Jinja2",
+      "dependency_name": "Jinja2",
+      "version": "2.11.2",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-g3rq-g295-4j3m",
+      "cve_ids": [
+        "CVE-2020-28493"
+      ],
+      "summary": "Regular Expression Denial of Service (ReDoS) in Jinja2",
+      "fixed_versions": [
+        "2.11.3"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:L/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.03546,
+      "epss_percentile": 0.89219,
+      "reachable": true,
+      "reachable_entrypoints": [
+        "GET /reports/<report_id>"
+      ],
+      "example_path": [
+        "ep:GET:/reports/<report_id>",
+        "fn:controllers/report_controller.py:get_report",
+        "fn:services/report_service.py:build_report",
+        "fn:services/content_service.py:assemble",
+        "fn:services/template_service.py:render",
+        "fn:renderers/html_renderer.py:render_html",
+        "dep:PyPI:Jinja2"
+      ],
+      "verdict": "reachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-8vj2-vxx3-667w",
+      "cve_ids": [
+        "CVE-2022-22817"
+      ],
+      "summary": "Arbitrary expression injection in Pillow",
+      "fixed_versions": [
+        "9.0.1",
+        "9.0.0"
+      ],
+      "severity": "CRITICAL",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.03334,
+      "epss_percentile": 0.88549,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:urllib3",
+      "dependency_name": "urllib3",
+      "version": "1.25.8",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-q2q7-5pp4-w6pg",
+      "cve_ids": [
+        "CVE-2021-33503"
+      ],
+      "summary": "Catastrophic backtracking in URL authority parser when passed URL containing many @ characters",
+      "fixed_versions": [
+        "1.26.5"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.03273,
+      "epss_percentile": 0.88329,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-98vv-pw6r-q6q4",
+      "cve_ids": [
+        "CVE-2021-23437"
+      ],
+      "summary": "Uncontrolled Resource Consumption in pillow",
+      "fixed_versions": [
+        "8.3.2"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.0324,
+      "epss_percentile": 0.88202,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-7534-mm45-c74v",
+      "cve_ids": [
+        "CVE-2021-34552"
+      ],
+      "summary": "Buffer Overflow in Pillow",
+      "fixed_versions": [
+        "8.3.0"
+      ],
+      "severity": "CRITICAL",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.03188,
+      "epss_percentile": 0.87995,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-f4w8-cv6p-x6r5",
+      "cve_ids": [
+        "CVE-2021-27921"
+      ],
+      "summary": "Pillow Denial of Service by Uncontrolled Resource Consumption",
+      "fixed_versions": [
+        "8.1.2",
+        "8.1.1"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.0317,
+      "epss_percentile": 0.87938,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-95q3-8gr9-gm8w",
+      "cve_ids": [
+        "CVE-2021-27923"
+      ],
+      "summary": "Pillow Denial of Service by Uncontrolled Resource Consumption",
+      "fixed_versions": [
+        "8.1.2",
+        "8.1.1"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.03045,
+      "epss_percentile": 0.87445,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-77gc-v2xv-rvvh",
+      "cve_ids": [
+        "CVE-2021-25287"
+      ],
+      "summary": "Out-of-bounds Read in Pillow",
+      "fixed_versions": [
+        "8.2.0"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.02931,
+      "epss_percentile": 0.86991,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:urllib3",
+      "dependency_name": "urllib3",
+      "version": "1.25.8",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-38jv-5279-wg99",
+      "cve_ids": [
+        "CVE-2026-21441"
+      ],
+      "summary": "Decompression-bomb safeguards bypassed when following HTTP redirects (streaming API)",
+      "fixed_versions": [
+        "2.6.3"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:P/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:H",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.02922,
+      "epss_percentile": 0.86947,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-9j59-75qj-795w",
+      "cve_ids": [
+        "CVE-2022-24303"
+      ],
+      "summary": "Path traversal in Pillow",
+      "fixed_versions": [
+        "9.0.1"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:H/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.02691,
+      "epss_percentile": 0.85784,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-pw3c-h7wp-cvhx",
+      "cve_ids": [
+        "CVE-2022-22815"
+      ],
+      "summary": "Improper Initialization in Pillow",
+      "fixed_versions": [
+        "9.0.0"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:L/VA:L/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.02578,
+      "epss_percentile": 0.85095,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-7r7m-5h27-29hp",
+      "cve_ids": [
+        "CVE-2021-28676"
+      ],
+      "summary": "Potential infinite loop in Pillow",
+      "fixed_versions": [
+        "8.2.0"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.02501,
+      "epss_percentile": 0.84592,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-q5hq-fp76-qmrc",
+      "cve_ids": [
+        "CVE-2021-28677"
+      ],
+      "summary": "Uncontrolled Resource Consumption in Pillow",
+      "fixed_versions": [
+        "8.2.0"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.02469,
+      "epss_percentile": 0.8439,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-rwv7-3v45-hg29",
+      "cve_ids": [
+        "CVE-2021-25288"
+      ],
+      "summary": "Pillow Out-of-bounds Read vulnerability",
+      "fixed_versions": [
+        "8.2.0"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.02388,
+      "epss_percentile": 0.83829,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-8xjq-8fcg-g5hw",
+      "cve_ids": [
+        "CVE-2021-25290"
+      ],
+      "summary": "Out-of-bounds Write in Pillow",
+      "fixed_versions": [
+        "8.1.1"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.02372,
+      "epss_percentile": 0.83728,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-57h3-9rgr-c24m",
+      "cve_ids": [
+        "CVE-2021-25289"
+      ],
+      "summary": "Out of bounds write in Pillow",
+      "fixed_versions": [
+        "8.1.1"
+      ],
+      "severity": "CRITICAL",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.02345,
+      "epss_percentile": 0.83535,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:urllib3",
+      "dependency_name": "urllib3",
+      "version": "1.25.8",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-wqvq-5m8c-6g24",
+      "cve_ids": [
+        "CVE-2020-26137"
+      ],
+      "summary": "CRLF injection in urllib3",
+      "fixed_versions": [
+        "1.25.9"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:L/VI:L/VA:N/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.02269,
+      "epss_percentile": 0.82927,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-xrcv-f9gm-v42c",
+      "cve_ids": [
+        "CVE-2022-22816"
+      ],
+      "summary": "Out-of-bounds Read in Pillow",
+      "fixed_versions": [
+        "9.0.0"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:L/VA:L/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.0192,
+      "epss_percentile": 0.79756,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-vqcj-wrf2-7v73",
+      "cve_ids": [
+        "CVE-2020-35654"
+      ],
+      "summary": "Pillow Out-of-bounds Write",
+      "fixed_versions": [
+        "8.1.0"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:A/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.01867,
+      "epss_percentile": 0.79148,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-9hx2-hgq2-2g4f",
+      "cve_ids": [
+        "CVE-2021-25292"
+      ],
+      "summary": "Regular Expression Denial of Service (ReDoS) in Pillow",
+      "fixed_versions": [
+        "8.1.1"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:A/VC:N/VI:N/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.01727,
+      "epss_percentile": 0.77402,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-3f63-hfp8-52jq",
+      "cve_ids": [
+        "CVE-2023-50447"
+      ],
+      "summary": "Arbitrary Code Execution in Pillow",
+      "fixed_versions": [
+        "10.2.0"
+      ],
+      "severity": "CRITICAL",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.01703,
+      "epss_percentile": 0.77082,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-hf64-x4gq-p99h",
+      "cve_ids": [
+        "CVE-2020-35655"
+      ],
+      "summary": "Pillow Out-of-bounds Read",
+      "fixed_versions": [
+        "8.1.0"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:P/PR:N/UI:N/VC:L/VI:N/VA:L/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.01663,
+      "epss_percentile": 0.76545,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-f5g8-5qq7-938w",
+      "cve_ids": [
+        "CVE-2020-35653"
+      ],
+      "summary": "Pillow Out-of-bounds Read",
+      "fixed_versions": [
+        "8.1.0"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:P/PR:N/UI:N/VC:L/VI:N/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.0164,
+      "epss_percentile": 0.76199,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-p43w-g3c5-g5mq",
+      "cve_ids": [
+        "CVE-2021-25293"
+      ],
+      "summary": "Out of bounds read in Pillow",
+      "fixed_versions": [
+        "8.1.1"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.01601,
+      "epss_percentile": 0.75629,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-mvg9-xffr-p774",
+      "cve_ids": [
+        "CVE-2021-25291"
+      ],
+      "summary": "Out of bounds read in Pillow",
+      "fixed_versions": [
+        "8.2.0",
+        "8.1.1"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.01398,
+      "epss_percentile": 0.72261,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:urllib3",
+      "dependency_name": "urllib3",
+      "version": "1.25.8",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-v845-jxx5-vc9f",
+      "cve_ids": [
+        "CVE-2023-43804"
+      ],
+      "summary": "`Cookie` HTTP header isn't stripped on cross-origin redirects",
+      "fixed_versions": [
+        "2.0.6",
+        "1.26.17"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:P/PR:H/UI:N/VC:H/VI:H/VA:N/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.0136,
+      "epss_percentile": 0.71542,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-8ghj-p4vj-mr35",
+      "cve_ids": [
+        "CVE-2023-44271"
+      ],
+      "summary": "Pillow Denial of Service vulnerability",
+      "fixed_versions": [
+        "10.0.0"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.01348,
+      "epss_percentile": 0.71265,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-m2vv-5vj5-2hm7",
+      "cve_ids": [
+        "CVE-2022-45198"
+      ],
+      "summary": "Pillow vulnerable to Data Amplification attack.",
+      "fixed_versions": [
+        "9.2.0"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.01303,
+      "epss_percentile": 0.70286,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "PYSEC-2022-42980",
+      "cve_ids": [
+        "CVE-2022-45199"
+      ],
+      "summary": "Pillow before 9.3.0 allows denial of service via SAMPLESPERPIXEL.",
+      "fixed_versions": [
+        "9.3.0"
+      ],
+      "severity": null,
+      "cvss_score": null,
+      "cvss_vector": null,
+      "cvss_source": null,
+      "kev": false,
+      "epss": 0.01212,
+      "epss_percentile": 0.68285,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:urllib3",
+      "dependency_name": "urllib3",
+      "version": "1.25.8",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-34jh-p97f-mpxf",
+      "cve_ids": [
+        "CVE-2024-37891"
+      ],
+      "summary": "urllib3's Proxy-Authorization request header isn't stripped during cross-origin redirects",
+      "fixed_versions": [
+        "1.26.19",
+        "2.2.2"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:H/PR:H/UI:N/S:U/C:H/I:N/A:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.01141,
+      "epss_percentile": 0.66428,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-w889-685w-c8fh",
+      "cve_ids": [
+        "CVE-2026-112900"
+      ],
+      "summary": "Pillow: Argument Injection in Ghostscript call, potentially leading into RCE",
+      "fixed_versions": [
+        "13.0.0"
+      ],
+      "severity": "CRITICAL",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:P/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.01064,
+      "epss_percentile": 0.6443,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-44wm-f244-xhp3",
+      "cve_ids": [
+        "CVE-2024-28219"
+      ],
+      "summary": "Pillow buffer overflow vulnerability",
+      "fixed_versions": [
+        "10.3.0"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:P/PR:L/UI:A/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00997,
+      "epss_percentile": 0.62495,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Jinja2",
+      "dependency_name": "Jinja2",
+      "version": "2.11.2",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-h75v-3vvj-5mfj",
+      "cve_ids": [
+        "CVE-2024-34064"
+      ],
+      "summary": "Jinja vulnerable to HTML attribute injection when passing user input as keys to xmlattr filter",
+      "fixed_versions": [
+        "3.1.4"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:L/I:L/A:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00979,
+      "epss_percentile": 0.61941,
+      "reachable": true,
+      "reachable_entrypoints": [
+        "GET /reports/<report_id>"
+      ],
+      "example_path": [
+        "ep:GET:/reports/<report_id>",
+        "fn:controllers/report_controller.py:get_report",
+        "fn:services/report_service.py:build_report",
+        "fn:services/content_service.py:assemble",
+        "fn:services/template_service.py:render",
+        "fn:renderers/html_renderer.py:render_html",
+        "dep:PyPI:Jinja2"
+      ],
+      "verdict": "reachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-g6rj-rv7j-xwp4",
+      "cve_ids": [
+        "CVE-2021-28675"
+      ],
+      "summary": "Pillow denial of service",
+      "fixed_versions": [
+        "8.2.0"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:P/VC:N/VI:N/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00956,
+      "epss_percentile": 0.61173,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Jinja2",
+      "dependency_name": "Jinja2",
+      "version": "2.11.2",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-h5c8-rqwp-cp95",
+      "cve_ids": [
+        "CVE-2024-22195"
+      ],
+      "summary": "Jinja vulnerable to HTML attribute injection when passing user input as keys to xmlattr filter",
+      "fixed_versions": [
+        "3.1.3"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:L/I:L/A:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00892,
+      "epss_percentile": 0.59161,
+      "reachable": true,
+      "reachable_entrypoints": [
+        "GET /reports/<report_id>"
+      ],
+      "example_path": [
+        "ep:GET:/reports/<report_id>",
+        "fn:controllers/report_controller.py:get_report",
+        "fn:services/report_service.py:build_report",
+        "fn:services/content_service.py:assemble",
+        "fn:services/template_service.py:render",
+        "fn:renderers/html_renderer.py:render_html",
+        "dep:PyPI:Jinja2"
+      ],
+      "verdict": "reachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-332p-7hrc-92wf",
+      "cve_ids": [
+        "CVE-2026-112393"
+      ],
+      "summary": "Pillow: Heap buffer overflow in _tiffWriteProc when saving TIFF to BytesIO",
+      "fixed_versions": [
+        "13.0.0"
+      ],
+      "severity": "CRITICAL",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:H/AT:P/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00818,
+      "epss_percentile": 0.56894,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-8g5g-8vmr-9782",
+      "cve_ids": [
+        "CVE-2026-112403"
+      ],
+      "summary": "Pillow: Heap buffer overflow in ImagingJpegDecode",
+      "fixed_versions": [
+        "13.0.0"
+      ],
+      "severity": "CRITICAL",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:H/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00771,
+      "epss_percentile": 0.55389,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-hjfx-8p6c-g7gx",
+      "cve_ids": [
+        "CVE-2021-28678"
+      ],
+      "summary": "Insufficient Verification of Data Authenticity in Pillow",
+      "fixed_versions": [
+        "8.2.0"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:L/AC:L/AT:N/PR:N/UI:P/VC:N/VI:N/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00732,
+      "epss_percentile": 0.54032,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:urllib3",
+      "dependency_name": "urllib3",
+      "version": "1.25.8",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-2xpw-w6gg-jr37",
+      "cve_ids": [
+        "CVE-2025-66471"
+      ],
+      "summary": "urllib3 streaming API improperly handles highly compressed data",
+      "fixed_versions": [
+        "2.6.0"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:P/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:H",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00682,
+      "epss_percentile": 0.52198,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:urllib3",
+      "dependency_name": "urllib3",
+      "version": "1.25.8",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-gm62-xv2j-4w53",
+      "cve_ids": [
+        "CVE-2025-66418"
+      ],
+      "summary": "urllib3 allows an unbounded number of links in the decompression chain",
+      "fixed_versions": [
+        "2.6.0"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:P/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:H",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00682,
+      "epss_percentile": 0.52198,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:urllib3",
+      "dependency_name": "urllib3",
+      "version": "1.25.8",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-g4mx-q9vg-27p4",
+      "cve_ids": [
+        "CVE-2023-45803"
+      ],
+      "summary": "urllib3's request body not stripped after redirect from 303 status changes request method to GET",
+      "fixed_versions": [
+        "2.0.7",
+        "1.26.18"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:A/AC:L/AT:P/PR:H/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00593,
+      "epss_percentile": 0.48058,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-254f-3936-288h",
+      "cve_ids": [
+        "CVE-2026-112391"
+      ],
+      "summary": "Pillow: PdfParser can recurse without limit in get_value() and linearize_page_tree()",
+      "fixed_versions": [
+        "13.0.0"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:P/PR:N/UI:N/VC:N/VI:N/VA:L/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00581,
+      "epss_percentile": 0.47481,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-5x8w-8jj5-q52h",
+      "cve_ids": [
+        "CVE-2026-112398"
+      ],
+      "summary": "Pillow: Heap buffer overflow in FlashPix (FPX) JPEG decoding leads to code execution",
+      "fixed_versions": [
+        "13.0.0"
+      ],
+      "severity": "CRITICAL",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:H/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.0057,
+      "epss_percentile": 0.46943,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Jinja2",
+      "dependency_name": "Jinja2",
+      "version": "2.11.2",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-q2x7-8rv6-6q7h",
+      "cve_ids": [
+        "CVE-2024-56326"
+      ],
+      "summary": "Jinja has a sandbox breakout through indirect reference to format method",
+      "fixed_versions": [
+        "3.1.5"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:L/AC:L/AT:P/PR:L/UI:P/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00522,
+      "epss_percentile": 0.44008,
+      "reachable": true,
+      "reachable_entrypoints": [
+        "GET /reports/<report_id>"
+      ],
+      "example_path": [
+        "ep:GET:/reports/<report_id>",
+        "fn:controllers/report_controller.py:get_report",
+        "fn:services/report_service.py:build_report",
+        "fn:services/content_service.py:assemble",
+        "fn:services/template_service.py:render",
+        "fn:renderers/html_renderer.py:render_html",
+        "dep:PyPI:Jinja2"
+      ],
+      "verdict": "reachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-45hq-cxwh-f6vc",
+      "cve_ids": [
+        "CVE-2026-55379"
+      ],
+      "summary": "Pillow `BdfFontFile`: `Image.new()` called without `_decompression_bomb_check()` \u2014 bomb protection bypass via font loading",
+      "fixed_versions": [
+        "12.3.0"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00522,
+      "epss_percentile": 0.44042,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-62p4-gmf7-7g93",
+      "cve_ids": [
+        "CVE-2026-54058"
+      ],
+      "summary": "Pillow: Out-of-bounds read via attacker-controlled row stride on Pillow's mmap path (McIdas AREA files)",
+      "fixed_versions": [
+        "12.3.0"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:P/PR:N/UI:N/VC:H/VI:N/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00521,
+      "epss_percentile": 0.43969,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-phj9-mv4w-65pm",
+      "cve_ids": [
+        "CVE-2026-55380"
+      ],
+      "summary": "Pillow `GdImageFile._open()`: image dimensions accepted without `_decompression_bomb_check()`",
+      "fixed_versions": [
+        "12.3.0"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00518,
+      "epss_percentile": 0.43784,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-mrfp-p49p-3hf2",
+      "cve_ids": [
+        "CVE-2026-96640"
+      ],
+      "summary": "Pillow PDF append accepts malformed shared page-tree DAG causing resource exhaustion",
+      "fixed_versions": [
+        "13.0.0"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:P/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00515,
+      "epss_percentile": 0.43581,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-7mwm-ghpf-9vrm",
+      "cve_ids": [
+        "CVE-2026-112402"
+      ],
+      "summary": "Pillow: Double free in ImagingScaleAffine on calloc failure via Image.transform",
+      "fixed_versions": [
+        "13.0.0"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00512,
+      "epss_percentile": 0.43379,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-jg86-v3jv-hrpm",
+      "cve_ids": [
+        "CVE-2026-112894"
+      ],
+      "summary": "Pillow: Quadratic-time DoS in PDF save_all (PdfParser.next_object_id)",
+      "fixed_versions": [
+        "13.0.0"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00512,
+      "epss_percentile": 0.43379,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-q45j-58j2-45rg",
+      "cve_ids": [
+        "CVE-2026-112897"
+      ],
+      "summary": "Pillow: TiffDecode returns uninitialized memory as pixels for short JPEG strips",
+      "fixed_versions": [
+        "13.0.0"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00512,
+      "epss_percentile": 0.43379,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-4558-3h8r-v8xp",
+      "cve_ids": [
+        "CVE-2026-112394"
+      ],
+      "summary": "Pillow: P;2L and P;4L decoders may read 1 to 3 bytes past the passed buffer size",
+      "fixed_versions": [
+        "13.0.0"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:P/PR:N/UI:N/VC:L/VI:N/VA:L/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.0051,
+      "epss_percentile": 0.43233,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Jinja2",
+      "dependency_name": "Jinja2",
+      "version": "2.11.2",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-cpwx-vrp4-4pq7",
+      "cve_ids": [
+        "CVE-2025-27516"
+      ],
+      "summary": "Jinja2 vulnerable to sandbox breakout through attr filter selecting format method",
+      "fixed_versions": [
+        "3.1.6"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:L/AC:L/AT:P/PR:L/UI:P/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00507,
+      "epss_percentile": 0.42984,
+      "reachable": true,
+      "reachable_entrypoints": [
+        "GET /reports/<report_id>"
+      ],
+      "example_path": [
+        "ep:GET:/reports/<report_id>",
+        "fn:controllers/report_controller.py:get_report",
+        "fn:services/report_service.py:build_report",
+        "fn:services/content_service.py:assemble",
+        "fn:services/template_service.py:render",
+        "fn:renderers/html_renderer.py:render_html",
+        "dep:PyPI:Jinja2"
+      ],
+      "verdict": "reachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-27h8-gf7j-v5hc",
+      "cve_ids": [
+        "CVE-2026-112392"
+      ],
+      "summary": "Pillow: NULL dereference in ImagingExpand via rank filters on zero-size images",
+      "fixed_versions": [
+        "13.0.0"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:P/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.005,
+      "epss_percentile": 0.42564,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-58r4-6rv3-gfh8",
+      "cve_ids": [
+        "CVE-2026-112397"
+      ],
+      "summary": "Pillow: Out-of-bounds access in _imagingmorph on a zero-width image",
+      "fixed_versions": [
+        "13.0.0"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00493,
+      "epss_percentile": 0.42079,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-pchr-8j38-3x4p",
+      "cve_ids": [
+        "CVE-2026-112896"
+      ],
+      "summary": "Pillow: TIFF encoder ColorMap plane-size mismatch causes a heap out-of-bounds read",
+      "fixed_versions": [
+        "13.0.0"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:L/VI:N/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00493,
+      "epss_percentile": 0.42079,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-74r2-7ff9-mjj2",
+      "cve_ids": [
+        "CVE-2026-112401"
+      ],
+      "summary": "Pillow: Quadratic GIF comment concatenation allows DoS in Image.open()",
+      "fixed_versions": [
+        "13.0.0"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:L/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00479,
+      "epss_percentile": 0.41077,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:urllib3",
+      "dependency_name": "urllib3",
+      "version": "1.25.8",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-pq67-6m6q-mj2v",
+      "cve_ids": [
+        "CVE-2025-50181"
+      ],
+      "summary": "urllib3 redirects are not disabled when retries are disabled on PoolManager instantiation",
+      "fixed_versions": [
+        "2.5.0"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:H/PR:L/UI:N/S:U/C:H/I:N/A:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00474,
+      "epss_percentile": 0.40705,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-xj96-63gp-2gmr",
+      "cve_ids": [
+        "CVE-2026-59197"
+      ],
+      "summary": "Pillow: Heap out-of-bounds write in `ImageFilter.RankFilter` via integer overflow in `ImagingExpand`",
+      "fixed_versions": [
+        "12.3.0"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:L/A:H",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00445,
+      "epss_percentile": 0.38489,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-g842-9rc4-69pw",
+      "cve_ids": [
+        "CVE-2026-96637"
+      ],
+      "summary": "Pillow: Decompression bomb check bypass in SpiderImagePlugin.seek() leads to unbounded allocation DoS",
+      "fixed_versions": [
+        "13.0.0"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:P/VC:N/VI:N/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00429,
+      "epss_percentile": 0.36866,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-5x94-69rx-g8h2",
+      "cve_ids": [
+        "CVE-2026-54060"
+      ],
+      "summary": "Pillow: `FontFile.compile()`: `Image.new()` called without `_decompression_bomb_check()`",
+      "fixed_versions": [
+        "12.3.0"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00418,
+      "epss_percentile": 0.35871,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-f2g6-542v-9j58",
+      "cve_ids": [
+        "CVE-2026-112406"
+      ],
+      "summary": "Pillow: Infinite loop in PdfParser.rewrite_pages on page tree Parent cycle",
+      "fixed_versions": [
+        "13.0.0"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00417,
+      "epss_percentile": 0.35802,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-gg2r-wvfm-q9rx",
+      "cve_ids": [
+        "CVE-2026-112892"
+      ],
+      "summary": "Pillow: MSP RLE decoder expands a tiny file into unbounded memory",
+      "fixed_versions": [
+        "13.0.0"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00417,
+      "epss_percentile": 0.35802,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-p4wg-p73j-c528",
+      "cve_ids": [
+        "CVE-2026-112895"
+      ],
+      "summary": "Pillow: Unbounded recursion parsing a PDF page tree or trailer chain (incomplete fix for CVE-2026-42310)",
+      "fixed_versions": [
+        "13.0.0"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00417,
+      "epss_percentile": 0.35803,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-xgh8-jp6q-p5x8",
+      "cve_ids": [
+        "CVE-2026-112901"
+      ],
+      "summary": "Pillow: ReDoS in XbmImagePlugin: 512-byte file stalls Image.open() for minutes",
+      "fixed_versions": [
+        "13.0.0"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:L/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00417,
+      "epss_percentile": 0.35802,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-9v9v-9qvf-h2hj",
+      "cve_ids": [
+        "CVE-2026-96644"
+      ],
+      "summary": "Pillow: Heap over-read in WMF/EMF rendering via 16-bit dimension truncation (Windows builds)",
+      "fixed_versions": [
+        "13.0.0"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:P/VC:L/VI:N/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00412,
+      "epss_percentile": 0.35155,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-8v84-f9pq-wr9x",
+      "cve_ids": [
+        "CVE-2026-54059"
+      ],
+      "summary": "Pillow `PcfFontFile._load_bitmaps()`: `Image.frombytes()` called without `_decompression_bomb_check()` \u2014 bomb protection bypass via PCF font loading",
+      "fixed_versions": [
+        "12.3.0"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.0041,
+      "epss_percentile": 0.34952,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-3j72-p6qg-6xp7",
+      "cve_ids": [
+        "CVE-2026-96642"
+      ],
+      "summary": "Pillow: TarIO negative size field causes infinite CPU-spin loop",
+      "fixed_versions": [
+        "13.0.0"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:P/VC:N/VI:N/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00396,
+      "epss_percentile": 0.3355,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-6r8x-57c9-28j4",
+      "cve_ids": [
+        "CVE-2026-59199"
+      ],
+      "summary": "Pillow: Heap out-of-bounds write `Image.paste()` / `Image.crop()` via signed coordinate overflow",
+      "fixed_versions": [
+        "12.3.0"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00385,
+      "epss_percentile": 0.32353,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-9hw9-ch79-4vh6",
+      "cve_ids": [
+        "CVE-2026-59205"
+      ],
+      "summary": "Pillow: Controlled heap out-of-bounds write in Pillow `ImageCmsTransform.apply()` via output mode mismatch",
+      "fixed_versions": [
+        "12.3.0"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00385,
+      "epss_percentile": 0.32353,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-jjj6-mw9f-p565",
+      "cve_ids": [
+        "CVE-2026-59200"
+      ],
+      "summary": "Pillow: Decompression Bomb DoS via PdfParser.PdfStream.decode()",
+      "fixed_versions": [
+        "12.3.0"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00385,
+      "epss_percentile": 0.32353,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-4rm8-3hmm-39fg",
+      "cve_ids": [
+        "CVE-2026-96641"
+      ],
+      "summary": "Pillow: Reachable undefined behavior in native integer operations, potentially leading to denial of service or logic integrity compromise",
+      "fixed_versions": [
+        "13.0.0"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:N/I:N/A:H",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.0035,
+      "epss_percentile": 0.28407,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-p8hx-v2p6-rp84",
+      "cve_ids": [
+        "CVE-2026-96636"
+      ],
+      "summary": "Pillow: Decompression-bomb protection bypass via multi-frame seek() in MPO and DCX (MpoImageFile.seek / DcxImageFile.seek)",
+      "fixed_versions": [
+        "13.0.0"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:N/I:N/A:H",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.0035,
+      "epss_percentile": 0.28407,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:urllib3",
+      "dependency_name": "urllib3",
+      "version": "1.25.8",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-vxq7-64xx-v4gw",
+      "cve_ids": [
+        "CVE-2026-97689"
+      ],
+      "summary": "urllib3: HTTPResponse.stream()/read_chunked() buffers an unbounded chunk-size line into memory",
+      "fixed_versions": [
+        "2.8.0"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:P/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:H",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00335,
+      "epss_percentile": 0.26613,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:urllib3",
+      "dependency_name": "urllib3",
+      "version": "1.25.8",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-qccp-gfcp-xxvc",
+      "cve_ids": [
+        "CVE-2026-44431"
+      ],
+      "summary": "urllib3: Sensitive headers forwarded across origins in proxied low-level redirects",
+      "fixed_versions": [
+        "2.7.0"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:H/AT:P/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00331,
+      "epss_percentile": 0.26086,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-fj7v-r99m-22gq",
+      "cve_ids": [
+        "CVE-2026-59198"
+      ],
+      "summary": "Pillow TGA RLE encoder can serialize up to ~57 KB of adjacent heap data into generated images",
+      "fixed_versions": [
+        "12.3.0"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:N/A:L",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00313,
+      "epss_percentile": 0.23965,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-4x4j-2g7c-83w6",
+      "cve_ids": [
+        "CVE-2026-55798"
+      ],
+      "summary": "Pillow: WindowsViewer.get_command() OS command injection via unescaped shell path",
+      "fixed_versions": [
+        "12.3.0"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:L/AC:H/PR:N/UI:R/S:U/C:L/I:L/A:L",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00179,
+      "epss_percentile": 0.07375,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-r73j-pqj5-w3x7",
+      "cve_ids": [
+        "CVE-2026-42310"
+      ],
+      "summary": "Pillow has a PDF Parsing Trailer Infinite Loop (DoS)",
+      "fixed_versions": [
+        "12.2.0"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:L/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:L/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00171,
+      "epss_percentile": 0.06491,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-wjx4-4jcj-g98j",
+      "cve_ids": [
+        "CVE-2026-42308"
+      ],
+      "summary": "Pillow has an integer overflow when processing fonts",
+      "fixed_versions": [
+        "12.2.0"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:L/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:L/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": 0.00114,
+      "epss_percentile": 0.0144,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-xvh5-g6gv-559v",
+      "cve_ids": [
+        "CVE-2026-112902"
+      ],
+      "summary": "Pillow: Memory disclosure and segfault in libtiff encoder via crafted TIFF tags",
+      "fixed_versions": [
+        "13.0.0"
+      ],
+      "severity": "HIGH",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:H/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": null,
+      "epss_percentile": null,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-jgpv-4h4c-xhw3",
+      "cve_ids": [],
+      "summary": "Uncontrolled Resource Consumption in pillow",
+      "fixed_versions": [
+        "8.1.2"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": null,
+      "epss_percentile": null,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-vx6w-vv9f-6gvg",
+      "cve_ids": [
+        "CVE-2026-112899"
+      ],
+      "summary": "Pillow: EPS load(scale) lets Ghostscript render past the decompression bomb limit",
+      "fixed_versions": [
+        "13.0.0"
+      ],
+      "severity": "MODERATE",
+      "cvss_score": null,
+      "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:N/VA:L/SC:N/SI:N/SA:N",
+      "cvss_source": "OSV",
+      "kev": false,
+      "epss": null,
+      "epss_percentile": null,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "GHSA-4fx9-vc88-q2xc",
+      "cve_ids": [],
+      "summary": "Infinite loop in Pillow",
+      "fixed_versions": [
+        "9.0.0"
+      ],
+      "severity": "LOW",
+      "cvss_score": null,
+      "cvss_vector": null,
+      "cvss_source": null,
+      "kev": false,
+      "epss": null,
+      "epss_percentile": null,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    },
+    {
+      "dependency_id": "dep:PyPI:Pillow",
+      "dependency_name": "Pillow",
+      "version": "7.1.0",
+      "ecosystem": "PyPI",
+      "vuln_id": "PYSEC-2023-175",
+      "cve_ids": [],
+      "summary": "Pillow versions before v10.0.1 bundled libwebp binaries in wheels that are vulnerable to CVE-2023-5129 (previously CVE-2023-4863). Pillow v10.0.1 upgrades the bundled libwebp binary to v1.3.2.",
+      "fixed_versions": [
+        "10.0.1"
+      ],
+      "severity": null,
+      "cvss_score": null,
+      "cvss_vector": null,
+      "cvss_source": null,
+      "kev": false,
+      "epss": null,
+      "epss_percentile": null,
+      "reachable": false,
+      "reachable_entrypoints": [],
+      "example_path": [],
+      "verdict": "unreachable"
+    }
+  ],
+  "summary": {
+    "total_dependencies": 6,
+    "vulnerable_dependencies": 4,
+    "total_vulnerabilities": 87,
+    "reachable_vulnerabilities": 6,
+    "kev_vulnerabilities": 1,
+    "high_epss_vulnerabilities": 1
+  },
+  "coverage": {
+    "files": {
+      "total": 24,
+      "by_language": {
+        "markdown": 1,
+        "python": 22,
+        "text": 1
+      },
+      "parsed": 24,
+      "parse_errors": 0,
+      "parse_success_rate": 1.0
+    },
+    "functions": {
+      "total": 16,
+      "by_language": {
+        "python": 16
+      }
+    },
+    "call_sites": {
+      "resolved": 25,
+      "unresolved": 7,
+      "resolution_rate": 0.78125
+    },
+    "entrypoints": {
+      "total": 3,
+      "by_framework": {
+        "flask": 3
+      },
+      "unresolved_routes": 0,
+      "without_handler": 0
+    },
+    "dependencies": {
+      "total": 6,
+      "with_call_site": 6,
+      "without_call_site": 0,
+      "verdict_breakdown": {
+        "reachable": 4,
+        "potentially_reachable": 0,
+        "unreachable": 2
+      }
+    },
+    "confidence_note": "Reachability is a lower bound: the scan traverses only resolved edges and never infers one, so a dependency marked not-reachable may still be reached via code the analysis could not resolve. Unresolved here: 7 unresolved call site(s)."
+  },
+  "offline": false,
+  "network_ok": true,
+  "notices": []
+}

@@ -1,0 +1,18 @@
+# Demo service dependencies, pinned exactly (== only) so the correlator can
+# look each version up against public advisory data.
+#
+# The mix is deliberate. Some pins are outdated and carry well-known
+# advisories; some are current. What the reachability engine then shows is
+# *which* of the outdated ones a public HTTP route can actually reach.
+
+# --- Current, no known advisory -----------------------------------------
+Flask==3.1.3          # web framework; reached from every route (jsonify)
+requests==2.33.0      # HTTP client; reached from GET /health, but patched
+
+# --- Outdated, advisory exists, REACHABLE from a public route -----------
+PyYAML==5.3.1         # CVE-2020-14343: unsafe yaml.load; reached by /configs/import
+Jinja2==2.11.2        # CVE-2020-28493: urlize ReDoS; reached by /reports/<id>
+
+# --- Outdated, advisory exists, NOT reachable from any public route -----
+urllib3==1.25.8       # only used by the offline maintenance sync job
+Pillow==7.1.0         # only used by the tools/thumbnail_cli.py CLI script
