@@ -120,16 +120,39 @@ def _format_reachability(result: ReachabilityResult, repo_path: str) -> str:
         lines.append("  (none)")
     lines.append("")
 
-    lines.append("Declared but not reachable from any entry point:")
-    if repo.unreachable_deps:
-        no_call_site = {d["id"] for d in repo.deps_without_call_site}
-        for dep in repo.unreachable_deps:
-            note = " (no resolved call site at all)" if dep["id"] in no_call_site else ""
+    # Non-reached deps, split by the sound three-way verdict. ``unreachable_deps``
+    # is declared-minus-reached (binary); the verdict says whether that absence
+    # is trustworthy (region fully resolved) or merely unproven.
+    no_call_site = {d["id"] for d in repo.deps_without_call_site}
+    verdicts = repo.verdict_by_dep
+    groups = (
+        (
+            "potentially_reachable",
+            "Potentially reachable (unresolved call paths exist):",
+        ),
+        (
+            "unreachable",
+            "Not reachable (reachable call graph fully resolved):",
+        ),
+    )
+    first_group = True
+    for verdict, header in groups:
+        members = [
+            d for d in repo.unreachable_deps if verdicts.get(d["id"]) == verdict
+        ]
+        if not members:
+            continue
+        if not first_group:
+            lines.append("")
+        first_group = False
+        lines.append(header)
+        for dep in members:
+            note = (
+                " (no resolved call site at all)" if dep["id"] in no_call_site else ""
+            )
             lines.append(
                 f"  - {dep['name']} {dep['version']} [{dep['ecosystem']}]{note}"
             )
-    else:
-        lines.append("  (none)")
 
     return "\n".join(lines)
 
