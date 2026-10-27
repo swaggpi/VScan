@@ -73,6 +73,11 @@ class OsvVuln:
     severity_label: str | None
     cvss_vector: str | None
     fixed_versions: list[str] = field(default_factory=list)
+    # The full OSV ``details`` description (markdown), whitespace-collapsed and
+    # bounded to _DETAILS_LIMIT. Unlike the one-line ``summary`` (CVE title), the
+    # details text usually names the vulnerable function/sink (e.g. "yaml.load",
+    # "Session.resolve_redirects"), which symbol-level triage reasons over.
+    details: str | None = None
 
 
 @dataclass
@@ -197,6 +202,11 @@ def _short(text: str | None, limit: int = 300) -> str:
     return collapsed if len(collapsed) <= limit else collapsed[: limit - 1] + "…"
 
 
+# The full OSV ``details`` description is bounded to keep finding/bundle payloads
+# sane while still carrying enough prose to name the vulnerable function/sink.
+_DETAILS_LIMIT = 2000
+
+
 def _pick_cvss_vector(record: dict[str, Any]) -> str | None:
     """Pick a CVSS vector string from ``severity[]`` (prefer V4, then V3)."""
     severities = record.get("severity") or []
@@ -266,6 +276,7 @@ def _merge_group(group: list[OsvVuln]) -> OsvVuln:
         severity_label=next((v.severity_label for v in group if v.severity_label), None),
         cvss_vector=next((v.cvss_vector for v in group if v.cvss_vector), None),
         fixed_versions=fixed,
+        details=representative.details or next((v.details for v in group if v.details), None),
     )
 
 
@@ -315,6 +326,9 @@ def parse_vuln(record: dict[str, Any], name: str, ecosystem: str | None) -> OsvV
         return None
     database_specific = record.get("database_specific") or {}
     summary = record.get("summary") or _short(record.get("details"))
+    # The full description, kept alongside the short title: it is the text that
+    # usually names the vulnerable function/sink for symbol-level triage.
+    details = _short(record.get("details"), limit=_DETAILS_LIMIT) or None
     return OsvVuln(
         id=str(record.get("id", "")),
         cve_ids=_cve_ids(record),
@@ -322,6 +336,7 @@ def parse_vuln(record: dict[str, Any], name: str, ecosystem: str | None) -> OsvV
         severity_label=database_specific.get("severity"),
         cvss_vector=_pick_cvss_vector(record),
         fixed_versions=_fixed_versions(record, name, ecosystem),
+        details=details,
     )
 
 

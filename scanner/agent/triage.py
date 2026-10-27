@@ -184,15 +184,23 @@ def _unresolved_into_dep(graph: KnowledgeGraph, dep_id: str) -> bool:
 
 
 def _cve_text(finding: "Finding") -> str:
-    """The CVE description to reason over: the finding ``summary`` (+ details)."""
-    parts: list[str] = []
-    summary = getattr(finding, "summary", None)
-    if isinstance(summary, str) and summary.strip():
-        parts.append(summary)
+    """The CVE text to reason over: the full OSV ``details``, else the ``summary``.
+
+    ``details`` (the full OSV description) is the PRIMARY text, because it is
+    what usually names the vulnerable function/sink -- e.g. "yaml.load",
+    "Session.resolve_redirects", "Template.render" -- that the symbol-level
+    comparison needs. The one-line ``summary`` (CVE title) is only the FALLBACK,
+    used when no details were carried onto the finding. This single text feeds
+    both the LLM prompt and the offline keyword/symbol matcher, so they always
+    reason over the same description.
+    """
     details = getattr(finding, "details", None)
     if isinstance(details, str) and details.strip():
-        parts.append(details)
-    return "\n".join(parts)
+        return details
+    summary = getattr(finding, "summary", None)
+    if isinstance(summary, str) and summary.strip():
+        return summary
+    return ""
 
 
 # -- symbol <-> CVE-text matching ---------------------------------------------

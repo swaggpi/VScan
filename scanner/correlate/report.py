@@ -19,6 +19,12 @@ from ..graph import KnowledgeGraph
 from ..reachability import ReachabilityResult
 from . import CorrelationResult, Finding
 
+# Upper bound on the serialized OSV ``details`` description, so the bundle/--json
+# payload a UI consumes never carries an unbounded advisory blob. Findings from
+# the correlation path are already bounded at the OSV parse step; this re-caps
+# defensively so a directly-constructed Finding cannot bloat the output.
+_DETAILS_MAX = 2000
+
 # Ordinal weight for a severity label when no numeric CVSS score is available.
 _SEVERITY_RANK: dict[str, float] = {
     "CRITICAL": 9.5,
@@ -136,6 +142,11 @@ def audit(
         payload["verdict"] = verdicts.get(finding.dependency_id) or (
             "reachable" if finding.reachable else "unreachable"
         )
+        # Carry the full OSV description so a UI can show the real CVE text (it
+        # names the vulnerable function/sink). Bounded defensively.
+        details = payload.get("details")
+        if isinstance(details, str) and len(details) > _DETAILS_MAX:
+            payload["details"] = details[: _DETAILS_MAX - 1] + "…"
         return payload
 
     payload: dict[str, Any] = {

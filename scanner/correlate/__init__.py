@@ -51,8 +51,13 @@ class Finding:
     # Which vulnerability.
     vuln_id: str
     cve_ids: list[str]
-    summary: str
+    summary: str  # short CVE title (one line)
     fixed_versions: list[str]
+
+    # Full OSV ``details`` description (bounded), when available. Unlike the
+    # one-line ``summary``, this usually names the vulnerable function/sink and
+    # is the primary text the exploitability-triage agent reasons over.
+    details: str | None = None
 
     # Severity. ``cvss_score`` is numeric (NVD only); ``cvss_vector`` is the
     # CVSS vector string (OSV or NVD); ``severity`` is a label (CRITICAL/HIGH/..).
@@ -143,6 +148,7 @@ def correlate_full(
                     vuln_id=vuln.id,
                     cve_ids=list(vuln.cve_ids),
                     summary=vuln.summary,
+                    details=vuln.details,
                     fixed_versions=list(vuln.fixed_versions),
                     severity=vuln.severity_label,
                     cvss_vector=vuln.cvss_vector,

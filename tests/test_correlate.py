@@ -33,6 +33,12 @@ _OSV_RECORDS = {
     "GHSA-pyyaml-3pqx": {
         "id": "GHSA-pyyaml-3pqx",
         "summary": "PyYAML full_load / load allows arbitrary code execution",
+        "details": (
+            "The package PyYAML before 5.3.1 is vulnerable to Arbitrary Code "
+            "Execution. When using the full_load method or the FullLoader loader, "
+            "a crafted YAML file naming python/object/new tags can be abused. The "
+            "yaml.load function with the default loader is the vulnerable sink."
+        ),
         "aliases": [PYYAML_CVE, "PYSEC-2020-176"],
         "database_specific": {"severity": "CRITICAL"},
         "severity": [
@@ -131,6 +137,29 @@ def test_finding_produced_with_cve_and_fixed_version(graph, mocked_db):
     # No numeric score without NVD, but the OSV vector is carried.
     assert pyyaml.cvss_score is None
     assert pyyaml.cvss_vector and pyyaml.cvss_source == "OSV"
+
+
+def test_finding_carries_full_osv_details(graph, mocked_db):
+    # The one-line title stays in `summary`; the full OSV `details` description
+    # (which names the vulnerable sink) is carried through onto the Finding.
+    findings = correlate(graph)
+    pyyaml = _find(findings, "PyYAML")
+
+    assert pyyaml.summary and "yaml.load" not in pyyaml.summary
+    assert pyyaml.details is not None
+    assert "yaml.load" in pyyaml.details
+
+
+def test_audit_payload_includes_finding_details(graph, mocked_db):
+    # The serialized audit payload (bundle/--json) exposes `details` so a UI can
+    # show the real CVE description, not just the one-line title.
+    result = correlate_full(graph)
+    reach = compute_reachability(graph)
+    payload = report.audit(graph, result, reach)
+
+    pyyaml = next(f for f in payload["findings"] if f["dependency_name"] == "PyYAML")
+    assert "details" in pyyaml
+    assert pyyaml["details"] and "yaml.load" in pyyaml["details"]
 
 
 def test_clean_dependency_produces_no_finding(graph, mocked_db):

@@ -56,8 +56,14 @@ def reach(graph):
     return compute_reachability(graph)
 
 
-def _pyyaml_finding(summary: str, *, cve: str = "CVE-2020-14343") -> Finding:
-    """A reachable PyYAML finding (the project calls yaml.load) with a given CVE."""
+def _pyyaml_finding(
+    summary: str, *, cve: str = "CVE-2020-14343", details: str | None = None
+) -> Finding:
+    """A reachable PyYAML finding (the project calls yaml.load) with a given CVE.
+
+    ``details`` carries the full OSV description when a test needs to exercise
+    the details-first behaviour; left ``None`` the triage falls back to summary.
+    """
     return Finding(
         dependency_id=PYYAML_ID,
         dependency_name="PyYAML",
@@ -66,6 +72,7 @@ def _pyyaml_finding(summary: str, *, cve: str = "CVE-2020-14343") -> Finding:
         vuln_id="GHSA-pyyaml-3pqx",
         cve_ids=[cve],
         summary=summary,
+        details=details,
         fixed_versions=["5.3.1"],
         severity="CRITICAL",
     )
@@ -178,6 +185,56 @@ def test_uncertain_when_unresolved_calls_present_even_if_function_named(graph, r
     assert t.unresolved_calls_into_dependency is True
     assert t.affected == "uncertain"
     assert t.affected != "likely_unaffected"
+
+
+def test_affected_from_sink_named_in_full_details(graph, reach):
+    # The one-line summary names no sink; the full OSV `details` does name
+    # yaml.load, which the project calls -> AFFECTED. This is the real-data bug:
+    # with only the summary the sink is invisible and triage returns uncertain.
+    finding = _pyyaml_finding(
+        "Improper Input Validation in PyYAML",
+        details=(
+            "PyYAML before 5.3.1 is vulnerable to arbitrary code execution. The "
+            "yaml.load function, when used with the default FullLoader, can "
+            "construct arbitrary Python objects from untrusted input."
+        ),
+    )
+    t = triage_findings(graph, [finding], reach, client=LLMClient.disabled())[0]
+    assert t.called_symbols == ["yaml.load"]
+    assert t.affected == "affected"
+    assert "yaml.load" in t.rationale
+
+
+def test_likely_unaffected_from_absent_function_named_in_details(graph, reach):
+    # `details` names a specific function (Session.resolve_redirects) the project
+    # does NOT call, PyYAML has no unresolved calls into it, and the summary is a
+    # bare title -> LIKELY_UNAFFECTED (driven by the details text).
+    finding = _pyyaml_finding(
+        "Improper Certificate Validation",
+        details=(
+            "The requests library mishandles Session.resolve_redirects when "
+            "following a cross-host redirect, leaking the Authorization header to "
+            "a different origin. Applications that never trigger a redirect are "
+            "not affected."
+        ),
+    )
+    t = triage_findings(graph, [finding], reach, client=LLMClient.disabled())[0]
+    assert t.unresolved_calls_into_dependency is False
+    assert t.affected == "likely_unaffected"
+    assert "resolve_redirects" in t.rationale
+
+
+def test_triage_prefers_details_over_summary(graph, reach):
+    # The summary points at an absent function (would read as likely_unaffected on
+    # its own); the details point at the called sink (yaml.load). The details must
+    # win -> AFFECTED, proving details is the primary text, not the summary.
+    finding = _pyyaml_finding(
+        "A flaw in Session.resolve_redirects allows header leakage.",
+        details="The yaml.load entry point deserializes untrusted input unsafely.",
+    )
+    t = triage_findings(graph, [finding], reach, client=LLMClient.disabled())[0]
+    assert t.affected == "affected"
+    assert "yaml.load" in t.rationale
 
 
 def test_offline_is_deterministic(graph, reach):
