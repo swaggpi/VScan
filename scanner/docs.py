@@ -8,6 +8,12 @@ Matching is deliberately conservative to avoid noise: a doc links to an entry
 point only when it mentions that route's exact path as a whole token, and to a
 module/function only when the name appears backticked (inline code). Each edge
 carries a short ``snippet`` of the surrounding text.
+
+In addition to the ``documents`` edge, the matched reference is attached to the
+*target* node as a ``docs`` attr -- a list of ``{"source": <doc relpath>,
+"snippet": <excerpt>}`` -- so an entry point or function node directly carries
+which docs mention it and the quoted excerpt + source file (handy for a UI that
+shows node detail on click). Identical ``source``/``snippet`` pairs are deduped.
 """
 
 from __future__ import annotations
@@ -22,7 +28,13 @@ from .walker import FileInfo
 # A backticked token: `something` -- used to find explicit symbol references.
 _BACKTICK = re.compile(r"`([^`]+)`")
 
-_EXCERPT_LEN = 300
+# Per-``doc``-node ``excerpt`` cap. Kept generous (not a tiny 300-char window)
+# so a repo-level fact stated a little deeper in a README/OpenAPI/docs file --
+# e.g. "configs are persisted in PostgreSQL via SQLAlchemy" -- is still captured
+# in the node, yet bounded so a huge doc never bloats the graph. The short,
+# targeted ``documents``-edge snippets and per-node ``docs`` refs are built by
+# ``_snippet`` and are unaffected by this cap.
+_EXCERPT_LEN = 2500
 
 
 def _is_openapi(info: FileInfo) -> bool:
@@ -51,6 +63,24 @@ def _snippet(text: str, index: int, token: str) -> str:
     start = max(0, index - 40)
     end = min(len(text), index + len(token) + 40)
     return " ".join(text[start:end].split())
+
+
+def _attach_doc_ref(
+    graph: KnowledgeGraph, target_id: str, source: str, snippet: str
+) -> None:
+    """Record on ``target_id`` that doc ``source`` mentions it, with ``snippet``.
+
+    Appends to the node's ``docs`` list, deduping identical ``source``/``snippet``
+    pairs so a node mentioned several times (or re-scanned) stays clean. A no-op
+    when the target node is absent.
+    """
+    node = graph.get_node(target_id)
+    if node is None:
+        return
+    refs = node.attrs.setdefault("docs", [])
+    ref = {"source": source, "snippet": snippet}
+    if ref not in refs:
+        refs.append(ref)
 
 
 def ingest_docs(files: list[FileInfo], graph: KnowledgeGraph) -> None:
@@ -93,13 +123,16 @@ def ingest_docs(files: list[FileInfo], graph: KnowledgeGraph) -> None:
             excerpt=text[:_EXCERPT_LEN].strip() or None,
         )
 
-        _link_entrypoints(graph, doc_id, text, entrypoints)
-        _link_symbols(graph, doc_id, text, module_names, function_names)
+        _link_entrypoints(graph, doc_id, info.relpath, text, entrypoints)
+        _link_symbols(
+            graph, doc_id, info.relpath, text, module_names, function_names
+        )
 
 
 def _link_entrypoints(
     graph: KnowledgeGraph,
     doc_id: str,
+    source: str,
     text: str,
     entrypoints: list[tuple[str, str]],
 ) -> None:
@@ -108,18 +141,21 @@ def _link_entrypoints(
         pattern = re.compile(r"(?<![\w/])" + re.escape(path) + r"(?![\w/])")
         match = pattern.search(text)
         if match:
+            snippet = _snippet(text, match.start(), path)
             graph.add_edge(
                 doc_id,
                 ep_id,
                 "documents",
                 matched=path,
-                snippet=_snippet(text, match.start(), path),
+                snippet=snippet,
             )
+            _attach_doc_ref(graph, ep_id, source, snippet)
 
 
 def _link_symbols(
     graph: KnowledgeGraph,
     doc_id: str,
+    source: str,
     text: str,
     module_names: dict[str, str],
     function_names: dict[str, str],
@@ -136,10 +172,12 @@ def _link_symbols(
             target_id = function_names[bare]
         if target_id and target_id not in seen:
             seen.add(target_id)
+            snippet = _snippet(text, match.start(), token)
             graph.add_edge(
                 doc_id,
                 target_id,
                 "documents",
                 matched=bare,
-                snippet=_snippet(text, match.start(), token),
+                snippet=snippet,
             )
+            _attach_doc_ref(graph, target_id, source, snippet)

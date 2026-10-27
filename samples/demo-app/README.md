@@ -66,3 +66,37 @@ end to end.
   only used by the offline `maintenance/` sync job and the `tools/` CLI script
   respectively. No public route reaches them, so they are reported as *not
   reachable from a public entry point*.
+
+## Data and storage
+
+Configuration records and rendered reports are persisted in **PostgreSQL** and
+accessed through **SQLAlchemy**: `POST /configs/import` writes the parsed
+document as a config record, and `GET /reports/<report_id>` loads a report row
+by its id before rendering it. (In this fixture the persistence layer is stubbed
+out — `assemble` returns placeholder content — so the scan stays offline and
+deterministic; the schema above is the shape the service is modelled on.)
+
+A small **Redis** cache fronts report rendering so repeat `GET /reports/<id>`
+requests avoid re-rendering, and `GET /health` performs a live check against an
+**upstream status service** (`https://status.internal.example/health`) over HTTP
+using the `requests` client — that upstream call is what makes `check_upstream`
+reach the `requests` dependency.
+
+## Auth model
+
+**All routes are public and unauthenticated.** There is no login, session, API
+key or token layer anywhere in the app; the three blueprints are registered
+directly on the Flask app in `app.py` and any client can call them. This is
+deliberate for the fixture — it keeps every public entry point trivially
+reachable so the reachability story is about the *call chain*, not about access
+control.
+
+## Data handling
+
+`POST /configs/import` accepts **user-supplied YAML** in the request body: the
+raw bytes flow through `ingest` → `validate` → `parse` → `load_document`, where
+PyYAML's `yaml.load` turns them into Python objects. Because the input is
+untrusted and the pinned PyYAML version is outdated, this is the chain the
+reachability engine flags. `GET /reports/<report_id>` likewise takes a
+caller-controlled `report_id` and renders it into HTML, escaping the untrusted
+fields through Jinja2 in `render_html` before they reach the page.

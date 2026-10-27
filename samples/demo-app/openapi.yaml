@@ -1,0 +1,91 @@
+openapi: 3.0.3
+info:
+  title: demo-app API
+  version: "1.0.0"
+  description: >
+    Public HTTP API for the demo-app reachability fixture. All three routes are
+    public and unauthenticated: there is no login, API key or token layer, so
+    any client can call every endpoint. Configuration records and rendered
+    reports are persisted in PostgreSQL via SQLAlchemy, a Redis cache fronts
+    report rendering, and the health probe calls an upstream status service over
+    HTTP with the requests client.
+servers:
+  - url: http://localhost:5000
+    description: Local development server
+paths:
+  /configs/import:
+    post:
+      operationId: import_config
+      summary: Import a YAML configuration document
+      description: >
+        Accepts user-supplied YAML in the request body and ingests it. The raw
+        bytes flow through the config service (`ingest`) into the validation
+        service (`validate`) and the YAML parser (`load_document`), which parses
+        the document with PyYAML. The accepted document is stored as a config
+        record in PostgreSQL via SQLAlchemy. This endpoint is public and
+        unauthenticated.
+      requestBody:
+        required: true
+        description: The raw YAML configuration document to import.
+        content:
+          application/x-yaml:
+            schema:
+              type: string
+              example: |
+                name: example
+                retries: 3
+      responses:
+        "200":
+          description: Number of top-level keys imported.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  imported:
+                    type: integer
+  /reports/{report_id}:
+    get:
+      operationId: get_report
+      summary: Render a stored report as HTML
+      description: >
+        Loads the report row identified by `report_id` from PostgreSQL (through
+        SQLAlchemy, with a Redis cache in front to avoid re-rendering repeat
+        requests) and renders it to an HTML fragment. Untrusted report fields are
+        escaped through Jinja2 in the renderer before they reach the page. Public
+        and unauthenticated.
+      parameters:
+        - name: report_id
+          in: path
+          required: true
+          description: Caller-controlled identifier of the report to render.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: An HTML fragment for the report.
+          content:
+            text/html:
+              schema:
+                type: string
+  /health:
+    get:
+      operationId: health
+      summary: Liveness probe plus upstream reachability
+      description: >
+        Reports liveness and checks the upstream status service
+        (https://status.internal.example/health) over HTTP using the requests
+        client (`check_upstream`). Used by load balancers and uptime monitors.
+        Public and unauthenticated.
+      responses:
+        "200":
+          description: Service status and whether the upstream is reachable.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  upstream_reachable:
+                    type: boolean

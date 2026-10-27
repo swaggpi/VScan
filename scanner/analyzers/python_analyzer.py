@@ -246,7 +246,9 @@ class PythonAnalyzer(LanguageAnalyzer):
         functions, calls = _collect(tree)
         local_quals = {qual for qual, _ in functions}
 
-        # Function nodes + declares edges.
+        # Function nodes + declares edges. Each node also carries display detail
+        # a UI can show on click: the function's docstring, a readable signature
+        # (parameter names) and the definition line number.
         for qual, fnode in functions:
             fn_id = f"fn:{relpath}:{qual}"
             graph.add_node(
@@ -257,6 +259,8 @@ class PythonAnalyzer(LanguageAnalyzer):
                 module=module_path,
                 lineno=getattr(fnode, "lineno", None),
                 is_method="." in qual,
+                signature=self._format_signature(qual, fnode),
+                docstring=self._function_docstring(fnode),
             )
             graph.add_edge(mod_id, fn_id, "declares")
 
@@ -334,6 +338,57 @@ class PythonAnalyzer(LanguageAnalyzer):
             mountable,
         )
         self._extract_django_urls(tree, symtab, relpath, repo_index, graph)
+
+    # -- function display detail ----------------------------------------------
+
+    # Longest docstring we store on a node (keeps the graph JSON compact; a UI
+    # can show the first paragraph and link to the source for the rest).
+    _DOCSTRING_LIMIT = 500
+
+    @classmethod
+    def _function_docstring(cls, fnode: ast.AST) -> str | None:
+        """Return the function's docstring, stripped and length-capped, or None."""
+        try:
+            doc = ast.get_docstring(fnode)
+        except TypeError:  # pragma: no cover - only FunctionDef nodes reach here
+            return None
+        if not doc:
+            return None
+        doc = doc.strip()
+        if len(doc) > cls._DOCSTRING_LIMIT:
+            doc = doc[: cls._DOCSTRING_LIMIT].rstrip() + "..."
+        return doc or None
+
+    @staticmethod
+    def _format_signature(qual: str, fnode: ast.AST) -> str | None:
+        """Return a readable ``name(param, ...)`` signature, or None.
+
+        Only parameter *names* are rendered (no annotations or defaults), in
+        definition order, with ``*args``/``**kwargs`` and positional-only (``/``)
+        / keyword-only (``*``) separators preserved. The display name is the last
+        dotted segment of the qualified name (the method/function's own name).
+        """
+        args = getattr(fnode, "args", None)
+        if not isinstance(args, ast.arguments):
+            return None
+        name = qual.split(".")[-1]
+        params: list[str] = []
+        posonly = list(getattr(args, "posonlyargs", []))
+        for arg in posonly:
+            params.append(arg.arg)
+        if posonly:
+            params.append("/")
+        for arg in args.args:
+            params.append(arg.arg)
+        if args.vararg is not None:
+            params.append("*" + args.vararg.arg)
+        elif args.kwonlyargs:
+            params.append("*")
+        for arg in args.kwonlyargs:
+            params.append(arg.arg)
+        if args.kwarg is not None:
+            params.append("**" + args.kwarg.arg)
+        return f"{name}(" + ", ".join(params) + ")"
 
     # -- symbol table ---------------------------------------------------------
 
