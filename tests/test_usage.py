@@ -33,7 +33,7 @@ import pytest
 from scanner.agent import LLMClient, Usage, investigate_usage
 from scanner.agent.usage import _build_targets
 from scanner.cli import main
-from scanner.correlate import Finding, correlate_full
+from scanner.correlate import Finding, correlate_full, enrich, osv
 from scanner.correlate import report
 from scanner.graph import KnowledgeGraph
 from scanner.reachability import compute_reachability
@@ -326,20 +326,97 @@ def test_audit_payload_serializes_usage_when_provided(graph, reach):
 # -- CLI wiring ---------------------------------------------------------------
 
 
-def test_cli_bundle_includes_usage_key(tmp_path):
+# Recorded OSV + enrichment fixtures so ``audit`` finds a real vulnerable dep
+# with NO resolved static call edge -- the dynamic-usage tier's exact target.
+# urllib3 is declared in vulnerable-app but never called, so marking it
+# vulnerable makes the usage tier emit exactly one record. This lets the
+# CLI-wiring tests assert the tier is actually POPULATED; an empty list would
+# mean the CLI stopped invoking it, which an ``isinstance(list)``-only check
+# cannot catch. ``--offline`` cannot be used (it zeroes the vuln findings, so
+# usage would be legitimately empty), so we patch every network boundary (OSV,
+# KEV, EPSS) and force the LLM client unavailable -- the usage tier runs its
+# deterministic offline heuristic and no request is ever issued, honouring this
+# module's no-network contract.
+_URLLIB3_CVE = "CVE-2021-33503"
+_OSV_RECORDS = {
+    "GHSA-urllib3-redos": {
+        "id": "GHSA-urllib3-redos",
+        "summary": "urllib3 catastrophic backtracking (ReDoS) in authority parsing",
+        "details": "A crafted URL can cause catastrophic backtracking.",
+        "aliases": [_URLLIB3_CVE],
+        "database_specific": {"severity": "HIGH"},
+        "severity": [
+            {
+                "type": "CVSS_V3",
+                "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+            }
+        ],
+        "affected": [
+            {
+                "package": {"name": "urllib3", "ecosystem": "PyPI"},
+                "ranges": [
+                    {
+                        "type": "ECOSYSTEM",
+                        "events": [{"introduced": "0"}, {"fixed": "99.0"}],
+                    }
+                ],
+            }
+        ],
+    },
+}
+_OSV_IDS_BY_NAME = {"urllib3": ["GHSA-urllib3-redos"]}
+
+
+@pytest.fixture
+def mocked_vuln_db(tmp_path, monkeypatch):
+    """Patch every network boundary so ``audit`` finds the urllib3 CVE offline.
+
+    Mirrors ``tests/test_correlate.py``'s ``mocked_db``: OSV / KEV / EPSS return
+    recorded fixtures, the on-disk cache is redirected to a temp dir, and the LLM
+    client is forced unavailable so the usage tier uses its deterministic offline
+    heuristic. No request is ever issued.
+    """
+    monkeypatch.setenv("VULNREACH_CACHE_DIR", str(tmp_path / "vulnreach-cache"))
+    monkeypatch.setattr(
+        osv,
+        "query_batch",
+        lambda queries: [
+            _OSV_IDS_BY_NAME.get(q["package"]["name"], []) for q in queries
+        ],
+    )
+    monkeypatch.setattr(osv, "fetch_vuln", lambda vuln_id: _OSV_RECORDS[vuln_id])
+    monkeypatch.setattr(enrich, "fetch_kev_catalog", lambda: set())
+    monkeypatch.setattr(enrich, "query_epss", lambda cves: {_URLLIB3_CVE: (0.2, 0.5)})
+    monkeypatch.setattr(LLMClient, "available", lambda self: False)
+
+
+def test_cli_bundle_includes_usage_key(tmp_path, mocked_vuln_db):
+    # `audit --bundle` carries the advisory dynamic-usage tier, POPULATED:
+    # urllib3 is vulnerable with NO resolved call edge in vulnerable-app, so it
+    # is a usage target and the tier must emit a non-empty list.
     bundle_path = tmp_path / "bundle.json"
-    rc = main(["audit", DEMO_APP, "--offline", "--bundle", str(bundle_path)])
+    rc = main(["audit", SAMPLE_APP, "--bundle", str(bundle_path)])
     assert rc == 0
     bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
-    assert "usage" in bundle and isinstance(bundle["usage"], list)
+    assert "usage" in bundle
+    usage = bundle["usage"]
+    assert isinstance(usage, list) and usage, "usage tier must be wired + non-empty"
+    entry = usage[0]
+    assert entry["dependency_id"]
+    assert entry["key"] == entry["dependency_id"]  # usage keys on the dep id
 
 
-def test_cli_audit_json_gains_usage_key(tmp_path):
+def test_cli_audit_json_gains_usage_key(tmp_path, mocked_vuln_db):
     out_path = tmp_path / "audit.json"
-    rc = main(["audit", DEMO_APP, "--offline", "--json", "-o", str(out_path)])
+    rc = main(["audit", SAMPLE_APP, "--json", "-o", str(out_path)])
     assert rc == 0
     payload = json.loads(out_path.read_text(encoding="utf-8"))
-    assert "usage" in payload and isinstance(payload["usage"], list)
+    assert "usage" in payload
+    usage = payload["usage"]
+    assert isinstance(usage, list) and usage, "usage tier must be wired + non-empty"
+    entry = usage[0]
+    assert entry["dependency_id"]
+    assert entry["key"] == entry["dependency_id"]  # usage keys on the dep id
 
 
 def test_cli_default_text_output_has_no_usage_section(capsys):

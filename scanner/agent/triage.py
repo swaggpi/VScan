@@ -50,13 +50,13 @@ end-to-end with no API key.
 from __future__ import annotations
 
 import re
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any
 
 from ..graph import KnowledgeGraph
 from ..reachability import ReachabilityResult, _unresolved_count
-
+from ._graph import _called_symbols, _reachable_dep_ids
+from ._runner import _normalize, run_tier
 from .client import LLMClient
 
 if TYPE_CHECKING:  # avoid a hard import cycle; only needed for typing
@@ -141,29 +141,6 @@ class Triage:
 
 
 # -- deterministic context from the graph -------------------------------------
-
-
-def _reachable_dep_ids(reachability: ReachabilityResult) -> set[str]:
-    """Dependency ids reachable from any public entry point."""
-    return {dep["id"] for dep in reachability.repo.reachable_deps}
-
-
-def _called_symbols(graph: KnowledgeGraph, dep_id: str) -> list[str]:
-    """The distinct dependency symbols the project calls (sorted, deduped).
-
-    Collected from every ``calls`` edge whose ``dst`` is this ``dep:`` node; each
-    such edge carries the called dependency symbol in ``attrs['symbol']`` (e.g.
-    ``yaml.load``, ``flask.jsonify``). This is the project's actual usage surface
-    of the dependency -- the left-hand side of the triage comparison.
-    """
-    symbols: set[str] = set()
-    for edge in graph.edges:
-        if edge.kind != "calls" or edge.dst != dep_id:
-            continue
-        symbol = edge.attrs.get("symbol")
-        if isinstance(symbol, str) and symbol:
-            symbols.add(symbol)
-    return sorted(symbols)
 
 
 def _unresolved_into_dep(graph: KnowledgeGraph, dep_id: str) -> bool:
@@ -438,12 +415,6 @@ def _build_prompt(
     return system_prompt, "\n".join(lines)
 
 
-def _normalize_confidence(value: Any) -> str:
-    if isinstance(value, str) and value.strip().lower() in _CONFIDENCE_VALUES:
-        return value.strip().lower()
-    return "low"
-
-
 def _llm_triage(
     client: LLMClient,
     finding: "Finding",
@@ -462,7 +433,7 @@ def _llm_triage(
     # The conservative gate is enforced on the MODEL output too: a model can
     # never hand us a false "safe".
     affected = _enforce_conservative(affected, called_symbols, unresolved, text)
-    confidence = _normalize_confidence(data.get("confidence"))
+    confidence = _normalize(data.get("confidence"), _CONFIDENCE_VALUES, default="low")
     rationale = data.get("rationale")
     if not (isinstance(rationale, str) and rationale.strip()):
         rationale = (
@@ -546,34 +517,15 @@ def triage_findings(
         prepared.append((finding, called, unresolved, _cve_text(finding)))
 
     # When a real model is configured, the per-finding calls are independent, so
-    # run them concurrently with a small bounded pool (only the network call runs
-    # in a worker). A worker that raises OR returns None yields ``None`` here, so
-    # that finding falls back to the deterministic offline triage; a single
-    # failure never breaks the others and nothing propagates out. Results stay
-    # aligned to ``prepared`` by index (``executor.map`` preserves input order).
-    llm_results: list[Triage | None] = [None] * len(prepared)
-    if use_llm and prepared:
-
-        def _call(item: tuple["Finding", list[str], bool, str]) -> Triage | None:
-            finding, called, unresolved, text = item
-            try:
-                return _llm_triage(client, finding, called, unresolved, text)
-            except Exception:
-                # Per-finding guardrail: any worker error becomes an offline
-                # fallback for this finding; never propagate out of the pool.
-                return None
-
-        max_workers = min(8, len(prepared))
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            llm_results = list(executor.map(_call, prepared))
-
-    triages: list[Triage] = []
-    for (finding, called, unresolved, text), llm in zip(prepared, llm_results):
-        triages.append(
-            llm
-            if llm is not None
-            else _offline_triage(finding, called, unresolved, text)
-        )
-
-    triages.sort(key=lambda t: (t.dependency_name, t.cve or "", t.dependency_id))
-    return triages
+    # the shared runner runs them concurrently in a small bounded pool (only the
+    # network call runs in a worker). A worker that raises OR returns None falls
+    # back to the deterministic offline triage for that finding only; a single
+    # failure never breaks the others and nothing propagates out. Order is
+    # preserved and the final sort is applied last (see ``run_tier``).
+    return run_tier(
+        prepared,
+        use_llm=use_llm,
+        llm_fn=lambda item: _llm_triage(client, item[0], item[1], item[2], item[3]),
+        offline_fn=lambda item: _offline_triage(item[0], item[1], item[2], item[3]),
+        sort_key=lambda t: (t.dependency_name, t.cve or "", t.dependency_id),
+    )

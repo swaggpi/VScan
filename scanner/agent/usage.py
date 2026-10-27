@@ -60,7 +60,6 @@ from __future__ import annotations
 
 import os
 import re
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -68,6 +67,8 @@ from ..analyzers.python_analyzer import IMPORT_NAME_TO_PACKAGE
 from ..graph import KnowledgeGraph
 from ..reachability import ReachabilityResult
 from ..walker import walk_repo
+from ._graph import _called_symbols
+from ._runner import _normalize, run_tier
 from .client import LLMClient
 
 if TYPE_CHECKING:  # avoid a hard import cycle; only needed for typing
@@ -167,23 +168,6 @@ class Usage:
 
 
 # -- target selection (deterministic, read-only) ------------------------------
-
-
-def _called_symbols(graph: KnowledgeGraph, dep_id: str) -> list[str]:
-    """The distinct dependency symbols the project statically calls (sorted).
-
-    Mirrors :func:`scanner.agent.triage._called_symbols`: collected from every
-    ``calls`` edge whose ``dst`` is this ``dep:`` node. A dependency with an
-    EMPTY result is the "no static resolving" case this tier investigates.
-    """
-    symbols: set[str] = set()
-    for edge in graph.edges:
-        if edge.kind != "calls" or edge.dst != dep_id:
-            continue
-        symbol = edge.attrs.get("symbol")
-        if isinstance(symbol, str) and symbol:
-            symbols.add(symbol)
-    return sorted(symbols)
 
 
 @dataclass
@@ -562,18 +546,6 @@ def _build_prompt(target: _Target, hits: list[_Hit], files_scanned: int) -> tupl
     return system_prompt, "\n".join(lines)
 
 
-def _normalize_usage_kind(value: Any) -> str:
-    if isinstance(value, str) and value.strip().lower() in _USAGE_KINDS:
-        return value.strip().lower()
-    return "uncertain"
-
-
-def _normalize_confidence(value: Any) -> str:
-    if isinstance(value, str) and value.strip().lower() in _CONFIDENCE_VALUES:
-        return value.strip().lower()
-    return "low"
-
-
 def _llm_usage(
     client: LLMClient, target: _Target, hits: list[_Hit], files_scanned: int
 ) -> Usage | None:
@@ -584,8 +556,8 @@ def _llm_usage(
     if data is None:
         return None
 
-    usage_kind = _normalize_usage_kind(data.get("usage_kind"))
-    confidence = _normalize_confidence(data.get("confidence"))
+    usage_kind = _normalize(data.get("usage_kind"), _USAGE_KINDS, default="uncertain")
+    confidence = _normalize(data.get("confidence"), _CONFIDENCE_VALUES, default="low")
     summary = data.get("summary")
     if not (isinstance(summary, str) and summary.strip()):
         # Fall back to the deterministic, grounded summary rather than invent one.
@@ -660,34 +632,20 @@ def investigate_usage(
     # repo pass for all targets. Stays on the main thread.
     hits_by_dep, files_scanned = _gather_evidence(repo_path, targets)
 
-    # When a real model is configured the per-dep calls are independent, so run
-    # them concurrently with a small bounded pool (only the network call runs in
-    # a worker). A worker that raises OR returns None yields ``None`` here, so
-    # that dep falls back to the deterministic offline usage; a single failure
-    # never breaks the others and nothing propagates out. Results stay aligned to
-    # ``targets`` by index (``executor.map`` preserves input order).
-    llm_results: list[Usage | None] = [None] * len(targets)
-    if use_llm:
-
-        def _call(target: _Target) -> Usage | None:
-            try:
-                return _llm_usage(client, target, hits_by_dep[target.dependency_id], files_scanned)
-            except Exception:
-                # Per-dep guardrail: any worker error becomes an offline fallback
-                # for this dep; never propagate out of the pool.
-                return None
-
-        max_workers = min(8, len(targets))
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            llm_results = list(executor.map(_call, targets))
-
-    usages: list[Usage] = []
-    for target, llm in zip(targets, llm_results):
-        usages.append(
-            llm
-            if llm is not None
-            else _offline_usage(target, hits_by_dep[target.dependency_id], files_scanned)
-        )
-
-    usages.sort(key=lambda u: (u.dependency_name, u.dependency_id))
-    return usages
+    # When a real model is configured the per-dep calls are independent, so the
+    # shared runner runs them concurrently in a small bounded pool (only the
+    # network call runs in a worker). A worker that raises OR returns None falls
+    # back to the deterministic offline usage for that dep only; a single failure
+    # never breaks the others and nothing propagates out. Order is preserved and
+    # the final sort is applied last (see ``run_tier``).
+    return run_tier(
+        targets,
+        use_llm=use_llm,
+        llm_fn=lambda target: _llm_usage(
+            client, target, hits_by_dep[target.dependency_id], files_scanned
+        ),
+        offline_fn=lambda target: _offline_usage(
+            target, hits_by_dep[target.dependency_id], files_scanned
+        ),
+        sort_key=lambda u: (u.dependency_name, u.dependency_id),
+    )

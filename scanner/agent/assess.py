@@ -32,12 +32,13 @@ end-to-end with no API key.
 from __future__ import annotations
 
 import re
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from ..graph import KnowledgeGraph
 from ..reachability import ReachabilityResult
+from ._graph import _reachable_dep_ids
+from ._runner import _normalize, run_tier
 from .client import LLMClient
 
 if TYPE_CHECKING:  # avoid a hard import cycle; only needed for typing
@@ -221,11 +222,6 @@ class Assessment:
 # -- context gathering (deterministic) ---------------------------------------
 
 
-def _reachable_dep_ids(reachability: ReachabilityResult) -> set[str]:
-    """Dependency ids reachable from any public entry point."""
-    return {dep["id"] for dep in reachability.repo.reachable_deps}
-
-
 def _entrypoints_by_dep(
     reachability: ReachabilityResult,
 ) -> dict[str, list[tuple[str, str]]]:
@@ -382,13 +378,6 @@ def _dep_subject(graph: KnowledgeGraph, dep_id: str) -> _Subject:
 
 
 # -- the two assessment paths -------------------------------------------------
-
-
-def _normalize(value: Any, allowed: frozenset[str]) -> str:
-    """Coerce a model value into an allowed verdict, defaulting to ``unknown``."""
-    if isinstance(value, str) and value.strip().lower() in allowed:
-        return value.strip().lower()
-    return "unknown"
 
 
 def _find_phrase(text: str, phrases: tuple[str, ...]) -> str | None:
@@ -867,8 +856,10 @@ def _llm_assessment(
         return None
 
     labels = sorted({label for _, label in entrypoints})
-    exposure = _normalize(data.get("exposure"), _EXPOSURE_VALUES)
-    authentication = _normalize(data.get("authentication"), _AUTH_VALUES)
+    exposure = _normalize(data.get("exposure"), _EXPOSURE_VALUES, default="unknown")
+    authentication = _normalize(
+        data.get("authentication"), _AUTH_VALUES, default="unknown"
+    )
     rationale = data.get("rationale")
     summary = data.get("summary")
     context = _normalize_context(data.get("context"))
@@ -955,41 +946,20 @@ def assess_findings(
         prepared.append((subject, entrypoints, _doc_evidence(graph, entrypoints)))
 
     # When a real model is configured, the per-subject model calls are
-    # independent, so run them concurrently with a small bounded thread pool --
-    # only the network call runs in a worker. A worker that fails (raises OR
-    # returns None) yields ``None`` here so that subject falls back to the
-    # deterministic offline assessment below, exactly as in the sequential path;
-    # a single failure never breaks the others and nothing propagates out. The
-    # offline heuristic path is CPU-only and stays sequential. Results are kept
-    # aligned to ``prepared`` by index (``executor.map`` preserves input order),
-    # so thread completion order never changes the output.
-    llm_results: list[Assessment | None] = [None] * len(prepared)
-    if use_llm and prepared:
-
-        def _call(
-            item: tuple[_Subject, list[tuple[str, str]], list[DocEvidence]],
-        ) -> Assessment | None:
-            subject, entrypoints, evidence = item
-            try:
-                return _llm_assessment(
-                    client, subject, entrypoints, evidence, repo_docs
-                )
-            except Exception:
-                # Per-subject guardrail: any worker error becomes an offline
-                # fallback for this subject; never propagate out of the pool.
-                return None
-
-        max_workers = min(8, len(prepared))
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            llm_results = list(executor.map(_call, prepared))
-
-    assessments: list[Assessment] = []
-    for (subject, entrypoints, evidence), llm in zip(prepared, llm_results):
-        assessments.append(
-            llm
-            if llm is not None
-            else _offline_assessment(subject, entrypoints, evidence, repo_docs)
-        )
-
-    assessments.sort(key=lambda a: (a.dependency_name, a.cve or "", a.dependency_id))
-    return assessments
+    # independent, so the shared runner runs them concurrently in a small bounded
+    # pool -- only the network call runs in a worker. A worker that fails (raises
+    # OR returns None) falls back to the deterministic offline assessment for that
+    # subject only; a single failure never breaks the others and nothing
+    # propagates out. The CPU-only offline path stays sequential. Order is
+    # preserved and the final sort is applied last (see ``run_tier``).
+    return run_tier(
+        prepared,
+        use_llm=use_llm,
+        llm_fn=lambda item: _llm_assessment(
+            client, item[0], item[1], item[2], repo_docs
+        ),
+        offline_fn=lambda item: _offline_assessment(
+            item[0], item[1], item[2], repo_docs
+        ),
+        sort_key=lambda a: (a.dependency_name, a.cve or "", a.dependency_id),
+    )

@@ -31,7 +31,7 @@ import json
 from scanner.agent import LLMClient, Triage, triage_findings
 from scanner.agent.triage import _offline_triage
 from scanner.cli import main
-from scanner.correlate import Finding
+from scanner.correlate import Finding, enrich, osv
 from scanner.reachability import compute_reachability
 from scanner.scan import scan_repo
 
@@ -367,21 +367,97 @@ def test_offline_triage_helper_matches_pass(graph, reach):
 # -- CLI wiring ---------------------------------------------------------------
 
 
-def test_cli_bundle_includes_triage_key(tmp_path, capsys):
-    # `audit --bundle` always carries the advisory triage tier (offline here).
+# Recorded OSV + enrichment fixtures so ``audit`` finds a real reachable
+# vulnerability (PyYAML / yaml.load) with NO network, letting the CLI-wiring
+# tests assert the triage tier is actually POPULATED -- an empty list would mean
+# the CLI stopped invoking the tier, which an ``isinstance(list)``-only check
+# cannot catch. ``--offline`` cannot be used here: it zeroes the vuln findings,
+# so triage would be legitimately empty. Instead we patch every network boundary
+# (OSV, KEV, EPSS) and force the LLM client unavailable, so the triage tier runs
+# its deterministic offline heuristic and no request is ever issued -- honouring
+# this module's no-network contract.
+_PYYAML_CVE = "CVE-2020-1747"
+_OSV_RECORDS = {
+    "GHSA-pyyaml-3pqx": {
+        "id": "GHSA-pyyaml-3pqx",
+        "summary": "PyYAML yaml.load allows arbitrary code execution",
+        "details": "yaml.load with the default loader is the vulnerable sink.",
+        "aliases": [_PYYAML_CVE],
+        "database_specific": {"severity": "CRITICAL"},
+        "severity": [
+            {
+                "type": "CVSS_V3",
+                "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+            }
+        ],
+        "affected": [
+            {
+                "package": {"name": "pyyaml", "ecosystem": "PyPI"},
+                "ranges": [
+                    {
+                        "type": "ECOSYSTEM",
+                        "events": [{"introduced": "0"}, {"fixed": "5.3.1"}],
+                    }
+                ],
+            }
+        ],
+    },
+}
+_OSV_IDS_BY_NAME = {"PyYAML": ["GHSA-pyyaml-3pqx"]}
+
+
+@pytest.fixture
+def mocked_vuln_db(tmp_path, monkeypatch):
+    """Patch every network boundary so ``audit`` finds the PyYAML CVE offline.
+
+    Mirrors ``tests/test_correlate.py``'s ``mocked_db``: OSV / KEV / EPSS return
+    recorded fixtures, the on-disk cache is redirected to a temp dir, and the LLM
+    client is forced unavailable so the triage tier uses its deterministic
+    offline heuristic. No request is ever issued.
+    """
+    monkeypatch.setenv("VULNREACH_CACHE_DIR", str(tmp_path / "vulnreach-cache"))
+    monkeypatch.setattr(
+        osv,
+        "query_batch",
+        lambda queries: [
+            _OSV_IDS_BY_NAME.get(q["package"]["name"], []) for q in queries
+        ],
+    )
+    monkeypatch.setattr(osv, "fetch_vuln", lambda vuln_id: _OSV_RECORDS[vuln_id])
+    monkeypatch.setattr(enrich, "fetch_kev_catalog", lambda: {_PYYAML_CVE})
+    monkeypatch.setattr(enrich, "query_epss", lambda cves: {_PYYAML_CVE: (0.9, 0.99)})
+    monkeypatch.setattr(LLMClient, "available", lambda self: False)
+
+
+def _assert_valid_triage_entry(entry: dict) -> None:
+    # Spot-check one serialized entry: a real, keyed, in-vocabulary judgement.
+    assert entry["dependency_id"]
+    assert entry["affected"] in {"affected", "likely_unaffected", "uncertain"}
+    assert entry["key"].startswith(entry["dependency_id"])
+
+
+def test_cli_bundle_includes_triage_key(tmp_path, mocked_vuln_db):
+    # `audit --bundle` carries the advisory triage tier, POPULATED: PyYAML is
+    # reachable + vulnerable here, so the tier must emit a non-empty list.
     bundle_path = tmp_path / "bundle.json"
-    rc = main(["audit", SAMPLE_APP, "--offline", "--bundle", str(bundle_path)])
+    rc = main(["audit", SAMPLE_APP, "--bundle", str(bundle_path)])
     assert rc == 0
     bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
-    assert "triage" in bundle and isinstance(bundle["triage"], list)
+    assert "triage" in bundle
+    triage = bundle["triage"]
+    assert isinstance(triage, list) and triage, "triage tier must be wired + non-empty"
+    _assert_valid_triage_entry(triage[0])
 
 
-def test_cli_audit_json_gains_triage_key(tmp_path, capsys):
+def test_cli_audit_json_gains_triage_key(tmp_path, mocked_vuln_db):
     out_path = tmp_path / "audit.json"
-    rc = main(["audit", SAMPLE_APP, "--offline", "--json", "-o", str(out_path)])
+    rc = main(["audit", SAMPLE_APP, "--json", "-o", str(out_path)])
     assert rc == 0
     payload = json.loads(out_path.read_text(encoding="utf-8"))
-    assert "triage" in payload and isinstance(payload["triage"], list)
+    assert "triage" in payload
+    triage = payload["triage"]
+    assert isinstance(triage, list) and triage, "triage tier must be wired + non-empty"
+    _assert_valid_triage_entry(triage[0])
 
 
 def test_cli_default_text_output_has_no_triage_section(capsys):
