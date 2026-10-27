@@ -15,7 +15,7 @@ import json
 import sys
 from typing import Sequence
 
-from .agent import LLMClient, assess_findings
+from .agent import LLMClient, assess_findings, triage_findings
 from .correlate import CorrelationResult, correlate_full
 from .correlate import report as correlate_report
 from .coverage import compute_coverage
@@ -230,12 +230,73 @@ def _format_assessments(assessments: list, *, model_configured: bool) -> str:
     return "\n".join(lines)
 
 
+def _triage_exploitability(
+    graph: KnowledgeGraph,
+    correlation: CorrelationResult,
+    reach: ReachabilityResult,
+    *,
+    offline: bool,
+) -> tuple[list, bool]:
+    """Run the advisory symbol-level triage pass once, returning (triage, model).
+
+    The second agent capability: for each reachable vulnerable dependency it
+    compares the dependency symbols the project actually calls against the CVE
+    description and judges whether the project is actually affected. Uses the
+    configured model when available; otherwise the deterministic offline
+    heuristic. ``offline`` forces the heuristic (no network) regardless of the
+    model env vars, matching ``audit --offline`` and ``_assess_exposure``. The
+    result is reused by ``--explain``, ``--bundle`` and ``--json``/``-o`` so the
+    model is called at most once per run for triage.
+    """
+    client = LLMClient.disabled() if offline else LLMClient()
+    triage = triage_findings(graph, correlation.findings, reach, client=client)
+    return triage, client.available()
+
+
+def _format_triage(triage: list, *, model_configured: bool) -> str:
+    """Render the advisory symbol-level exploitability triage for the findings."""
+    lines: list[str] = ["", "Exploitability triage (advisory tier)", "-" * 72]
+    if model_configured:
+        lines.append("Model: configured via LLM_BASE_URL/LLM_API_KEY/LLM_MODEL.")
+    else:
+        lines.append(
+            "Note: using the offline heuristic (no model configured). Enable the "
+            "model by setting LLM_BASE_URL, LLM_API_KEY and LLM_MODEL."
+        )
+    lines.append(
+        "This tier is ADVISORY ONLY and CONSERVATIVE: it compares the project's "
+        "called symbols to the CVE, never changes reachability, and withholds "
+        "'likely_unaffected' unless usage is fully resolved."
+    )
+    lines.append("")
+
+    if not triage:
+        lines.append("No reachable findings to triage.")
+        return "\n".join(lines)
+
+    for index, t in enumerate(triage, start=1):
+        ref = t.cve or t.vuln_id or "(no advisory id)"
+        called = ", ".join(t.called_symbols) or "no resolved symbols"
+        lines.append(
+            f"{index:>2}. {t.dependency_name} {ref}: "
+            f"{t.affected.upper()} ({t.confidence})"
+        )
+        lines.append(f"    calls: {_oneline(called, 200)}")
+        if t.unresolved_calls_into_dependency:
+            lines.append("    note: unresolved calls into this dependency (usage view incomplete)")
+        lines.append(f"    rationale: {_oneline(t.rationale)}")
+        lines.append(f"    [provenance={t.provenance}; advisory={t.advisory}]")
+        lines.append("")
+    return "\n".join(lines)
+
+
 def _build_bundle(
     graph: KnowledgeGraph,
     correlation: CorrelationResult,
     reach: ReachabilityResult,
     *,
     assessments: list,
+    triage: list,
 ) -> dict:
     """Assemble one self-contained payload the dashboard viewer can load.
 
@@ -245,14 +306,16 @@ def _build_bundle(
     the full reachability result so the viewer needs no other file. Works
     offline too: findings is then empty and ``offline``/``network_ok`` say so.
 
-    ``assessments`` is the advisory agent tier (already computed by the caller
-    with the real model when configured, else the offline heuristic), surfaced
-    under ``"assessments"`` so the viewer can attach each exposure/auth judgement
-    and its structured ``context`` to the matching finding / entry point. The
-    bundle therefore ALWAYS carries assessments (offline-grounded by default).
+    ``assessments`` is the advisory exposure tier and ``triage`` the advisory
+    symbol-level exploitability tier (both already computed by the caller with
+    the real model when configured, else the offline heuristic). They are
+    surfaced under ``"assessments"`` and ``"triage"`` so the viewer can attach
+    each exposure/auth judgement and each affected/likely_unaffected/uncertain
+    judgement to the matching finding / entry point. The bundle therefore ALWAYS
+    carries both tiers (offline-grounded by default).
     """
     audit_payload = correlate_report.audit(
-        graph, correlation, reach, assessments=assessments
+        graph, correlation, reach, assessments=assessments, triage=triage
     )
     return {
         "graph": graph.to_dict(),
@@ -261,6 +324,7 @@ def _build_bundle(
         "summary": audit_payload["summary"],
         "coverage": audit_payload["coverage"],
         "assessments": audit_payload["assessments"],
+        "triage": audit_payload["triage"],
         "offline": audit_payload["offline"],
         "network_ok": audit_payload["network_ok"],
         "notices": audit_payload["notices"],
@@ -402,9 +466,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         # is called at most once per run -- only when something needs it. The
         # default audit TEXT output never triggers it, so defaults are unchanged.
         assessments: list = []
+        triage: list = []
         model_configured = False
         if args.bundle or args.json or args.output or args.explain:
             assessments, model_configured = _assess_exposure(
+                graph, correlation, reach, offline=args.offline
+            )
+            triage, _ = _triage_exploitability(
                 graph, correlation, reach, offline=args.offline
             )
 
@@ -413,7 +481,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 handle.write(
                     json.dumps(
                         _build_bundle(
-                            graph, correlation, reach, assessments=assessments
+                            graph,
+                            correlation,
+                            reach,
+                            assessments=assessments,
+                            triage=triage,
                         ),
                         indent=2,
                     )
@@ -422,7 +494,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.output or args.json:
             payload = json.dumps(
                 correlate_report.audit(
-                    graph, correlation, reach, assessments=assessments
+                    graph, correlation, reach, assessments=assessments, triage=triage
                 ),
                 indent=2,
             )
@@ -442,6 +514,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(
                 _format_assessments(assessments, model_configured=model_configured)
             )
+            print(_format_triage(triage, model_configured=model_configured))
         return 0
 
     parser.error(f"unknown command: {args.command}")  # pragma: no cover

@@ -19,5 +19,12 @@ from __future__ import annotations
 
 from .assess import Assessment, assess_findings
 from .client import LLMClient
+from .triage import Triage, triage_findings
 
-__all__ = ["Assessment", "assess_findings", "LLMClient"]
+__all__ = [
+    "Assessment",
+    "assess_findings",
+    "LLMClient",
+    "Triage",
+    "triage_findings",
+]

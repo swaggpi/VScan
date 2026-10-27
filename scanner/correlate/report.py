@@ -103,10 +103,11 @@ def audit(
     reach: ReachabilityResult,
     *,
     assessments: list[Any] | None = None,
+    triage: list[Any] | None = None,
 ) -> dict[str, Any]:
     """Run the join + ranking and return a JSON-serializable audit payload.
 
-    ``assessments`` is the optional advisory agent tier (a list of
+    ``assessments`` is the optional advisory exposure tier (a list of
     :class:`~scanner.agent.Assessment`). It is computed by the CLI (which owns
     the model/offline choice) and passed in so this network-free module never
     imports or invokes the agent itself. When provided, each assessment is
@@ -114,6 +115,15 @@ def audit(
     ``cve`` / ``vuln_id`` and ``reaching_entrypoints`` so a UI can attach it to
     the matching finding or entry point, plus the structured ``context``. When
     ``None`` the key is omitted and the payload is byte-for-byte as before.
+
+    ``triage`` is the optional advisory symbol-level exploitability tier (a list
+    of :class:`~scanner.agent.Triage`), handled the same way: computed by the
+    CLI and passed in, so this module stays network-free and agent-agnostic.
+    When provided, each triage is serialized under a ``"triage"`` key with an
+    explicit ``"key"`` of ``"<dependency_id>|<cve-or-vuln-id>"`` so a UI can
+    attach each affected/likely_unaffected/uncertain judgement to the matching
+    finding. Advisory only -- it never influences findings, ranking or summary.
+    When ``None`` the key is omitted and the payload is byte-for-byte as before.
     """
     join_reachability(graph, correlation.findings, reach)
     ranked = rank_findings(correlation.findings)
@@ -138,6 +148,8 @@ def audit(
     }
     if assessments is not None:
         payload["assessments"] = [_assessment_dict(a) for a in assessments]
+    if triage is not None:
+        payload["triage"] = [_triage_dict(t) for t in triage]
     return payload
 
 
@@ -151,6 +163,22 @@ def _assessment_dict(assessment: Any) -> dict[str, Any]:
     findings, ranking, summary or reachability above.
     """
     return assessment.to_dict()
+
+
+def _triage_dict(triage: Any) -> dict[str, Any]:
+    """Serialize one advisory :class:`~scanner.agent.Triage` for the payload.
+
+    Uses the triage's own ``to_dict`` (dependency id/name/version, cve list,
+    the called symbols, the affected/confidence/rationale verdict, the
+    unresolved-calls signal, provenance and the advisory flag) and adds an
+    explicit ``"key"`` of ``"<dependency_id>|<cve-or-vuln-id>"`` so a UI can
+    attach each judgement to the matching finding. Advisory only -- it never
+    influences the findings, ranking, summary or reachability above.
+    """
+    payload = triage.to_dict()
+    cve = payload.get("cve") or payload.get("vuln_id") or ""
+    payload["key"] = f"{payload.get('dependency_id')}|{cve}"
+    return payload
 
 
 # -- text rendering -----------------------------------------------------------
