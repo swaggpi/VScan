@@ -29,11 +29,19 @@
       <!-- filled by app.js -->
     </dl>
     <div class="titleblock__load">
-      <label class="loadbtn" for="file">
-        <input type="file" id="file" accept=".json,application/json" />
-        <span>Load a scan</span>
-      </label>
-      <span class="scanname" id="scanname">sample · vulnerable-app</span>
+      <div class="viewswitch" id="viewswitch" role="group" aria-label="Choose a scan to view">
+        <button class="seg" id="view-redash" type="button" aria-pressed="false" disabled>
+          <span class="seg__name">redash</span><span class="seg__sub">big repo</span>
+        </button>
+        <button class="seg" id="view-sample" type="button" aria-pressed="false">
+          <span class="seg__name">Sample app</span>
+        </button>
+        <label class="seg seg--file" id="view-file">
+          <input type="file" id="file" accept=".json,application/json" />
+          <span class="seg__name">Load a scan</span>
+        </label>
+      </div>
+      <span class="scanname" id="scanname">starting…</span>
     </div>
   </header>
 
@@ -67,6 +75,8 @@
     </aside>
 
     <section class="stage" aria-label="Code-path diagram">
+      <div class="stage__banner" id="banner" role="status" aria-live="polite" hidden></div>
+      <div class="stage__canvas">
       <div class="stage__grid" aria-hidden="true"></div>
       <div id="graph" tabindex="0" role="application" aria-label="Repository code-path graph. Select an entry point from the list to trace reachability."></div>
       <div class="stage__hint" id="hint" aria-hidden="true">Click empty space to reset</div>
@@ -79,6 +89,7 @@
         <span class="legend__item"><i class="dot dot--sig"></i>reachable trace</span>
         <span class="legend__item legend__item--vuln"><i class="dot dot--vuln"></i>vulnerable dependency</span>
         <span class="legend__item legend__item--vuln"><i class="dot dot--vulnhot"></i>reachable &amp; vulnerable</span>
+      </div>
       </div>
     </section>
   </main>

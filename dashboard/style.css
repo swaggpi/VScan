@@ -154,23 +154,47 @@ body {
 /* Separator before the vulnerability counts so they read as a second group. */
 .counts > div.counts__vuln-lead { border-left: 1px solid var(--hair); padding-left: 1.4rem; margin-left: -0.3rem; }
 
-.titleblock__load { display: flex; flex-direction: column; align-items: flex-end; gap: 0.35rem; }
-.loadbtn {
-  position: relative;
+.titleblock__load { display: flex; flex-direction: column; align-items: flex-end; gap: 0.4rem; }
+
+/* Segmented control: the three ways in. A schematic selector switch — one
+   throw lit amber, the rest quiet. */
+.viewswitch {
   display: inline-flex;
-  align-items: center;
-  cursor: pointer;
-  padding: 0.5rem 0.95rem;
   border: 1px solid var(--panel-edge);
   border-radius: var(--radius);
-  background: transparent;
-  font: 500 0.8rem/1 var(--f-mono);
-  color: var(--ink);
-  transition: border-color 0.15s, background 0.15s;
+  overflow: hidden;
+  background: var(--ground-sink);
 }
-.loadbtn:hover { border-color: var(--signal); background: var(--signal-soft); }
-.loadbtn input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
-.loadbtn:focus-within { outline: 2px solid var(--signal); outline-offset: 2px; }
+.seg {
+  position: relative;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 0.05rem;
+  cursor: pointer;
+  padding: 0.42rem 0.8rem;
+  border: 0;
+  border-left: 1px solid var(--hair);
+  background: transparent;
+  color: var(--ink-dim);
+  font: 500 0.78rem/1.05 var(--f-mono);
+  transition: color 0.15s, background 0.15s;
+}
+.seg:first-child { border-left: 0; }
+.seg:hover:not([disabled]) { color: var(--ink); background: var(--signal-soft); }
+.seg[aria-pressed="true"] { color: var(--ground); background: var(--signal); }
+.seg[aria-pressed="true"] .seg__sub { color: rgba(11,34,57,0.7); }
+.seg[disabled] { opacity: 0.4; cursor: not-allowed; }
+.seg__sub {
+  font: 500 0.56rem/1 var(--f-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-mut);
+}
+.seg--file { position: relative; overflow: hidden; }
+.seg--file input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+.seg--file:focus-within { outline: 2px solid var(--signal); outline-offset: -2px; }
 .scanname {
   font: 400 0.68rem/1.2 var(--f-mono);
   color: var(--ink-mut);
@@ -375,7 +399,48 @@ body {
   background: var(--ground-sink);
   overflow: hidden;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
+/* The canvas sits below an optional focused-view banner; absolute overlays
+   (graph, grid, legend, hint, tooltip) anchor to this box, not the whole stage. */
+.stage__canvas {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+/* Focused-view notice: shown only when a large repo is reduced to its
+   security-relevant subgraph. A hairline strip, not a modal — it states the
+   curation plainly and gets out of the way. */
+.stage__banner {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem 0.9rem;
+  flex-wrap: wrap;
+  padding: 0.6rem 1.1rem;
+  border-bottom: 1px solid var(--panel-edge);
+  background: linear-gradient(90deg, var(--alert-soft), rgba(14,42,69,0.6) 60%);
+  font: 400 0.74rem/1.4 var(--f-mono);
+  color: var(--ink-dim);
+}
+.stage__banner[hidden] { display: none; }
+.stage__banner .banner__lead {
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: 0.01em;
+}
+.stage__banner .banner__lead::before {
+  content: "";
+  display: inline-block;
+  width: 7px; height: 7px;
+  margin-right: 0.5rem;
+  background: var(--alert);
+  box-shadow: 0 0 8px var(--alert-glow);
+  vertical-align: 0.08em;
+}
+.stage__banner b { color: var(--signal); font-weight: 600; }
+.stage__banner .banner__full { color: var(--ink-mut); }
 .stage__grid {
   position: absolute;
   inset: 0;

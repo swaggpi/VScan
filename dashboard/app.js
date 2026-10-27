@@ -15,6 +15,11 @@
   // Kinds hidden by default to keep the code/dependency subgraph legible.
   var OFF_BY_DEFAULT = { file: true, doc: true };
 
+  // Above this many nodes a graph is unusable as a hairball, so we render a
+  // curated security-relevant subgraph instead of every node. The sample app
+  // (~33 nodes) stays well under this, so its behavior is unchanged.
+  var LARGE_GRAPH = 1200;
+
   var KIND_LABEL = {
     entrypoint: "entry points", dependency: "dependencies", function: "functions",
     module: "modules", file: "files", doc: "docs"
@@ -38,6 +43,18 @@
   var findings = [];          // ranked finding dicts from the bundle
   var vulnByDep = {};         // dep node id -> { findings, kev, reachable, worst, entrypoints }
   var bundleMeta = null;      // { summary, offline, network_ok, notices } or null
+  var bundleReach = null;     // bundle.reachability (per-entrypoint reachable chains) or null
+
+  // Focused-view state. When a loaded graph exceeds LARGE_GRAPH we render only
+  // the security-relevant subgraph; these hold the full-repo totals and the
+  // curation counts the banner reports. Empty/false for small graphs.
+  var focusedMode = false;
+  var focusedMeta = null;     // { epTotal, promEp, clustered, vulnDeps, reachablePaths, fullNodes, fullEdges }
+  var repoCounts = {};        // kind -> count across the FULL repo (header "Repository totals")
+
+  // The fetched redash bundle, cached so the header switcher re-renders without
+  // re-fetching 6+ MB.
+  var redashBundle = null;
 
   var el = {
     counts: document.getElementById("counts"),
@@ -51,7 +68,11 @@
     graph: document.getElementById("graph"),
     tooltip: document.getElementById("tooltip"),
     scanname: document.getElementById("scanname"),
-    file: document.getElementById("file")
+    file: document.getElementById("file"),
+    banner: document.getElementById("banner"),
+    viewRedash: document.getElementById("view-redash"),
+    viewSample: document.getElementById("view-sample"),
+    viewFile: document.getElementById("view-file")
   };
 
   /* ---------------------------------------------------------------- model */
@@ -130,6 +151,16 @@
         "shape": "ellipse", "width": 20, "height": 20, "color": "#F2B134", "font-weight": 600
       }},
 
+      /* focused-view only: the compact stand-in for the entry points that reach
+         no vulnerable dependency, so the canvas isn't N loose dots */
+      { selector: 'node[kind = "epcluster"]', style: {
+        "background-color": "rgba(78,116,147,0.18)", "border-color": "#4E7493",
+        "border-width": 1.5, "border-style": "dashed", "shape": "round-rectangle",
+        "width": 150, "height": 42, "color": "#8FB2CE", "font-size": 9,
+        "text-valign": "center", "text-margin-y": 0, "text-wrap": "wrap",
+        "text-max-width": 134, "font-weight": 600
+      }},
+
       /* vulnerability overlay — a red ring marks a dependency with findings */
       { selector: 'node[vuln = 1]', style: {
         "border-color": ALERT, "border-width": 3, "color": "#F79885",
@@ -202,8 +233,20 @@
         tkey: e.src + "\u0000" + e.dst + "\u0000" + e.kind
       }});
     });
+    // Focused view: one cluster node stands in for the entry points that reach
+    // nothing vulnerable. It carries no edges and is not part of the model, so
+    // the filters, entry-point list and reachability trace never touch it.
+    if (focusedMode && focusedMeta && focusedMeta.clustered > 0) {
+      eles.push({ data: {
+        id: EPCLUSTER_ID, kind: "epcluster",
+        label: "+" + focusedMeta.clustered + " entry points\nreach no vulnerable dep",
+        name: focusedMeta.clustered + " more entry points"
+      }});
+    }
     return eles;
   }
+
+  var EPCLUSTER_ID = "__vr_epcluster__";
 
   function labelFor(n) {
     if (n.kind === "entrypoint") {
@@ -242,8 +285,37 @@
       spacingFactor: 1.4,
       padding: 40,
       animate: false,
-      fit: true
+      fit: !focusedMode
     }).run();
+    if (focusedMode) {
+      arrangeOrphans();
+      cy.fit(undefined, 44);
+    }
+  }
+
+  // In the focused view the connected fan (routes -> handlers -> reachable
+  // vulnerable dep) is the story; the unreached-but-vulnerable deps and the
+  // "+N entry points" cluster have no edges. Lay those on a tidy shelf above
+  // the fan rather than letting breadthfirst stack them at the origin.
+  function arrangeOrphans() {
+    var connected = cy.nodes(":visible").filter(function (n) { return n.connectedEdges(":visible").length > 0; });
+    var orphans = cy.nodes(":visible").filter(function (n) { return n.connectedEdges(":visible").length === 0; });
+    if (!orphans.length) return;
+    // cluster node first, then vulnerable deps, so the shelf reads consistently
+    var list = orphans.sort(function (a, b) {
+      var ca = a.data("kind") === "epcluster" ? 0 : 1;
+      var cb = b.data("kind") === "epcluster" ? 0 : 1;
+      if (ca !== cb) return ca - cb;
+      return String(a.data("name")).localeCompare(String(b.data("name")));
+    });
+    var bb = connected.length ? connected.boundingBox() : { x1: 0, w: 1000, y1: 0 };
+    var span = Math.max(bb.w, (list.length - 1) * 180);
+    var x0 = bb.x1 + (bb.w - span) / 2;
+    var y = bb.y1 - 150;
+    var step = list.length > 1 ? span / (list.length - 1) : 0;
+    list.forEach(function (n, i) {
+      n.position({ x: x0 + i * step, y: y });
+    });
   }
 
   function applyFilter(preserveSelection) {
@@ -319,8 +391,9 @@
 
   /* ---------------------------------------------------------------- panels */
   function renderCounts() {
-    var counts = {};
-    model.nodes.forEach(function (n) { counts[n.kind] = (counts[n.kind] || 0) + 1; });
+    // Full-repo totals, so the header reads as "Repository totals" even when the
+    // canvas shows only the focused subgraph.
+    var counts = repoCounts;
     var order = [
       ["file", "files"], ["dependency", "dependencies"], ["function", "functions"], ["entrypoint", "entry points"]
     ];
@@ -356,6 +429,29 @@
     }
   }
 
+  function groupNum(n) { return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ","); }
+
+  // The focused-view notice. States the curation plainly: how many entry points
+  // exist, how many reach a vulnerable dependency, how many are grouped, and the
+  // full-graph size we chose not to render.
+  function renderBanner() {
+    if (!focusedMode || !focusedMeta) {
+      el.banner.hidden = true;
+      el.banner.innerHTML = "";
+      return;
+    }
+    var m = focusedMeta;
+    var reach = m.reachablePaths + " reachable path" + (m.reachablePaths === 1 ? "" : "s");
+    el.banner.hidden = false;
+    el.banner.innerHTML =
+      '<span class="banner__lead">Large repository — focused security view</span>' +
+      '<span>' + groupNum(m.epTotal) + ' entry points (<b>' + m.promEp +
+      '</b> reach a vulnerable dependency, ' + m.clustered + ' grouped) · ' +
+      m.vulnDeps + ' vulnerable dependencies · <b>' + reach + '</b></span>' +
+      '<span class="banner__full">Full graph: ' + groupNum(m.fullNodes) + ' nodes, ' +
+      groupNum(m.fullEdges) + ' edges — not rendered.</span>';
+  }
+
   function renderEntryPoints() {
     var eps = model.nodes.filter(function (n) { return n.kind === "entrypoint"; })
       .sort(function (a, b) { return labelFor(a).localeCompare(labelFor(b)); });
@@ -364,7 +460,12 @@
       el.epNote.textContent = "No public entry points were detected in this scan.";
       return;
     }
-    el.epNote.textContent = "Public routes the outside world can call.";
+    if (focusedMode && focusedMeta) {
+      el.epNote.textContent = "Routes that reach a vulnerable dependency. " +
+        focusedMeta.clustered + " more reach nothing vulnerable (grouped on the canvas).";
+    } else {
+      el.epNote.textContent = "Public routes the outside world can call.";
+    }
     eps.forEach(function (n) {
       var a = n.attrs || {};
       var li = document.createElement("li");
@@ -592,6 +693,8 @@
   function bindGraphEvents() {
     cy.on("tap", "node", function (evt) {
       var node = evt.target;
+      // The focused-view cluster stand-in is not a real node — ignore taps.
+      if (node.data("kind") === "epcluster") return;
       if (node.data("kind") === "entrypoint") {
         if (selectedEp === node.id()) resetView(); else lightTrace(node.id(), false);
         return;
@@ -659,14 +762,91 @@
   function renderAll(name) {
     selectedEp = null;
     visibleKinds = {};
+    el.stage.classList.remove("is-traced"); // drop any trace hint from a prior view
     renderCounts();
+    renderBanner();
     renderEntryPoints();
     renderFilters();
     renderReachInitial();
     renderVulns();
     renderGraph();
     document.body.classList.toggle("has-vulns", !!(bundleMeta && findings.length));
+    document.body.classList.toggle("is-focused", focusedMode);
     if (name) el.scanname.textContent = name;
+  }
+
+  function countByKind(nodes) {
+    var c = {};
+    (nodes || []).forEach(function (n) { c[n.kind] = (c[n.kind] || 0) + 1; });
+    return c;
+  }
+
+  // Reduce a large graph to its security-relevant subgraph:
+  //   - every dependency that has a finding (the vulnerable deps),
+  //   - every node on a reachable chain from an entry point to a vulnerable dep
+  //     (so each "route -> handler -> vulnerable dep" path shows in full),
+  //   - the edges among those included nodes only.
+  // Entry points that reach a vulnerable dep are kept individually (prominent);
+  // the rest are counted and collapsed into one cluster node by toCy().
+  function computeFocused(fullGraph) {
+    var allNodes = fullGraph.nodes || [];
+    var allEdges = fullGraph.edges || [];
+    var byId = {};
+    allNodes.forEach(function (n) { byId[n.id] = n; });
+
+    var keep = {};     // real node ids to render
+    var promEp = {};   // entry points that reach a vulnerable dependency
+
+    // vulnerable dependencies are always shown (reachable or not)
+    Object.keys(vulnByDep).forEach(function (id) { if (byId[id]) keep[id] = true; });
+
+    // reachable chains that terminate at a vulnerable dependency
+    if (bundleReach && Array.isArray(bundleReach.entrypoints)) {
+      bundleReach.entrypoints.forEach(function (ep) {
+        (ep.reachable_dependencies || []).forEach(function (rd) {
+          if (!vulnByDep[rd.id]) return;
+          promEp[ep.id] = true;
+          (rd.example_path || []).forEach(function (nid) { if (byId[nid]) keep[nid] = true; });
+        });
+      });
+    }
+    Object.keys(promEp).forEach(function (id) { if (byId[id]) keep[id] = true; });
+
+    var nodes = allNodes.filter(function (n) { return keep[n.id]; });
+    var edges = allEdges.filter(function (e) { return keep[e.src] && keep[e.dst]; });
+    var epTotal = countByKind(allNodes).entrypoint || 0;
+    var promCount = Object.keys(promEp).length;
+
+    return {
+      graph: { nodes: nodes, edges: edges },
+      meta: {
+        epTotal: epTotal,
+        promEp: promCount,
+        clustered: Math.max(0, epTotal - promCount),
+        vulnDeps: Object.keys(vulnByDep).length,
+        reachablePaths: findings.filter(function (f) { return f.reachable; }).length,
+        fullNodes: allNodes.length,
+        fullEdges: allEdges.length
+      }
+    };
+  }
+
+  // Shared installer: records full-repo totals, then renders either the whole
+  // graph (small) or the curated focused subgraph (large). The vuln overlay is
+  // unaffected — it is driven by vulnByDep / bundleMeta, set before this runs.
+  function installGraph(fullGraph, name) {
+    var allNodes = (fullGraph && fullGraph.nodes) || [];
+    repoCounts = countByKind(allNodes);
+    focusedMode = allNodes.length > LARGE_GRAPH;
+    focusedMeta = null;
+    if (focusedMode) {
+      var f = computeFocused(fullGraph);
+      focusedMeta = f.meta;
+      buildModel(f.graph);
+    } else {
+      buildModel(fullGraph || {});
+    }
+    renderAll(name);
   }
 
   // A plain {nodes,edges} graph: structure only, overlay cleared.
@@ -674,8 +854,8 @@
     findings = [];
     vulnByDep = {};
     bundleMeta = null;
-    buildModel(graph);
-    renderAll(name);
+    bundleReach = null;
+    installGraph(graph, name);
   }
 
   // A self-contained audit bundle {graph, findings, summary, ...}: render the
@@ -688,9 +868,9 @@
       network_ok: bundle.network_ok,
       notices: bundle.notices || []
     };
+    bundleReach = bundle.reachability || null;
     computeVulnState();
-    buildModel(bundle.graph || {});
-    renderAll(name);
+    installGraph(bundle.graph || {}, name);
   }
 
   // Auto-detect: a bundle carries a `graph` object; a plain scan is {nodes:[...]}.
@@ -711,6 +891,7 @@
     reader.onload = function () {
       try {
         loadAuto(JSON.parse(reader.result), f.name);
+        setActiveView(null); // a loaded file is neither the redash nor sample view
       } catch (err) {
         el.scanname.textContent = "Could not read " + f.name +
           " — expected a scan graph (nodes array) or an audit bundle.";
@@ -722,14 +903,51 @@
 
   window.addEventListener("resize", function () { if (cy) cy.resize(); });
 
-  /* ---------------------------------------------------------------- boot */
-  // Prefer the vulnerability bundle so the overlay shows on open; fall back to
-  // the plain structural sample, then to an empty prompt.
-  if (window.SAMPLE_BUNDLE && isBundle(window.SAMPLE_BUNDLE)) {
-    loadBundle(window.SAMPLE_BUNDLE, "sample · vulnerable-app · audit");
-  } else if (window.SAMPLE_GRAPH) {
-    loadGraph(window.SAMPLE_GRAPH, "sample · vulnerable-app");
-  } else {
-    el.reachBody.innerHTML = '<p class="reach-none">No bundled sample found. Use “Load a scan” to open a graph.json or an audit bundle.</p>';
+  /* ---------------------------------------------------------------- views */
+  function setActiveView(which) {
+    el.viewRedash.setAttribute("aria-pressed", which === "redash" ? "true" : "false");
+    el.viewSample.setAttribute("aria-pressed", which === "sample" ? "true" : "false");
   }
+
+  // The inline sample (vulnerable-app) — always available, and the only option
+  // when the page is opened via file:// (no fetch).
+  function showSample() {
+    if (window.SAMPLE_BUNDLE && isBundle(window.SAMPLE_BUNDLE)) {
+      loadBundle(window.SAMPLE_BUNDLE, "sample · vulnerable-app · audit");
+    } else if (window.SAMPLE_GRAPH) {
+      loadGraph(window.SAMPLE_GRAPH, "sample · vulnerable-app");
+    } else {
+      el.reachBody.innerHTML = '<p class="reach-none">No bundled sample found. Use “Load a scan” to open a graph.json or an audit bundle.</p>';
+    }
+    setActiveView("sample");
+  }
+
+  // The large real repo — rendered from the already-fetched bundle.
+  function showRedash() {
+    if (!redashBundle) return;
+    loadBundle(redashBundle, "redash · big repo · audit");
+    setActiveView("redash");
+  }
+
+  el.viewSample.addEventListener("click", showSample);
+  el.viewRedash.addEventListener("click", showRedash);
+
+  /* ---------------------------------------------------------------- boot */
+  // Default to the served redash bundle so a real, large repo shows on open.
+  // If the fetch fails (e.g. opened via file://), fall back to the inline
+  // sample exactly as before.
+  el.scanname.textContent = "loading redash…";
+  fetch("redash-bundle.json")
+    .then(function (r) { if (!r.ok) throw new Error("http " + r.status); return r.json(); })
+    .then(function (b) {
+      redashBundle = b;
+      el.viewRedash.disabled = false;
+      el.viewRedash.removeAttribute("title");
+      showRedash();
+    })
+    .catch(function () {
+      el.viewRedash.disabled = true;
+      el.viewRedash.title = "Open the dashboard from a local web server to load the redash bundle.";
+      showSample();
+    });
 })();
