@@ -67,13 +67,35 @@ from typing import Any
 
 from . import LanguageAnalyzer, register
 
-# Well-known import-name -> PyPI-distribution-name mismatches.
+# Well-known import-name -> PyPI-distribution-name mismatches. Each entry lets
+# ``build_import_index`` register the real top-level module name (case included)
+# for a distribution whose import name is not derivable from the package name by
+# the lower/``-``->``_`` normalisation it already applies. An entry only takes
+# effect when the repository actually declares that distribution, so it can only
+# RECOVER a missed import->dependency edge, never fabricate one. Keep values to
+# genuine, unambiguous mappings so the cardinal soundness rule holds.
 IMPORT_NAME_TO_PACKAGE: dict[str, str] = {
     "yaml": "PyYAML",
     "bs4": "beautifulsoup4",
     "cv2": "opencv-python",
     "PIL": "Pillow",
     "sklearn": "scikit-learn",
+    "dateutil": "python-dateutil",
+    "psycopg2": "psycopg2-binary",
+    "jwt": "PyJWT",
+    "dotenv": "python-dotenv",
+    "OpenSSL": "pyOpenSSL",
+    "RestrictedPython": "RestrictedPython",  # import name differs only by case
+    "msgpack": "msgpack-python",
+    "attr": "attrs",
+    "serial": "pyserial",
+    "dns": "dnspython",
+    "slugify": "python-slugify",
+    "magic": "python-magic",
+    "ldap": "python-ldap",
+    "Crypto": "pycryptodome",
+    "git": "GitPython",
+    "memcache": "python-memcached",
 }
 
 # HTTP-method decorator names (FastAPI/Flask/APIRouter style) -> HTTP verb.
