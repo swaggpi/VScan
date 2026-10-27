@@ -84,6 +84,11 @@
       <div id="graph" tabindex="0" role="application" aria-label="Repository code-path graph. Select an entry point from the list to trace reachability."></div>
       <div class="stage__hint" id="hint" aria-hidden="true">Click empty space to reset</div>
       <div class="tooltip" id="tooltip" role="status" aria-live="polite" hidden></div>
+      <div class="zoomctl" role="group" aria-label="Zoom">
+        <button type="button" class="zoomctl__btn" id="zoom-in" aria-label="Zoom in">+</button>
+        <button type="button" class="zoomctl__btn zoomctl__btn--fit" id="zoom-fit" aria-label="Fit the diagram to view">⤢</button>
+        <button type="button" class="zoomctl__btn" id="zoom-out" aria-label="Zoom out">−</button>
+      </div>
       <div class="legend" aria-label="Legend">
         <span class="legend__item"><i class="dot dot--ep"></i>entry point</span>
         <span class="legend__item"><i class="dot dot--dep"></i>dependency</span>
@@ -95,6 +100,10 @@
       </div>
       </div>
     </section>
+
+    <aside class="detail" id="detail" aria-label="Selected node details" aria-live="polite">
+      <div class="detail__inner" id="detail-inner"></div>
+    </aside>
   </main>
 
   <script src="sample-bundle.js"></script>

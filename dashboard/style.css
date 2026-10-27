@@ -38,6 +38,7 @@
 
   --radius: 4px;
   --rail-w: 20rem;
+  --detail-w: 21rem;
 
   --f-display: "Space Grotesk", system-ui, sans-serif;
   --f-body: "Inter", system-ui, sans-serif;
@@ -209,7 +210,7 @@ body {
 .layout {
   flex: 1;
   display: grid;
-  grid-template-columns: var(--rail-w) 1fr;
+  grid-template-columns: var(--rail-w) minmax(0, 1fr) var(--detail-w);
   min-height: 0;
 }
 
@@ -509,6 +510,296 @@ body.has-vulns .legend__item--vuln { display: flex; }
 .tooltip .t-vuln { color: var(--alert-ink); font-size: 0.66rem; }
 .tooltip .t-id { color: var(--ink-mut); font-size: 0.66rem; word-break: break-all; }
 
+/* ---------------------------------------------------------------- zoom controls */
+/* A compact schematic selector in the corner. The wheel does the real zooming;
+   these are discrete nudges and a one-tap "fit everything". */
+.zoomctl {
+  position: absolute;
+  right: 1rem; bottom: 1rem;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--hair);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: rgba(8, 26, 44, 0.82);
+  backdrop-filter: blur(3px);
+}
+.zoomctl__btn {
+  width: 2rem; height: 2rem;
+  display: grid; place-items: center;
+  border: 0;
+  border-top: 1px solid var(--hair);
+  background: transparent;
+  color: var(--ink-dim);
+  font: 500 1rem/1 var(--f-mono);
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+.zoomctl__btn:first-child { border-top: 0; }
+.zoomctl__btn:hover { color: var(--ink); background: var(--signal-soft); }
+.zoomctl__btn:active { background: rgba(242,177,52,0.28); }
+.zoomctl__btn--fit { font-size: 0.86rem; color: var(--ink-mut); }
+
+/* ---------------------------------------------------------------- detail panel */
+/* The spec sheet. A title-block callout for whichever node is selected: the
+   engineering-drawing metaphor extended to a single part's datasheet. */
+.detail {
+  border-left: 1px solid var(--panel-edge);
+  background: var(--panel);
+  overflow-y: auto;
+  min-height: 0;
+}
+.detail__inner { display: flex; flex-direction: column; min-height: 100%; }
+
+/* Empty state — an invitation, in the interface's voice. */
+.detail__empty {
+  margin: auto;
+  padding: 2rem 1.4rem;
+  text-align: center;
+  color: var(--ink-dim);
+}
+.detail__empty .d-mark {
+  display: block;
+  width: 26px; height: 26px;
+  margin: 0 auto 0.85rem;
+  border: 1.5px solid var(--panel-edge);
+  border-radius: 5px;
+  position: relative;
+}
+.detail__empty .d-mark::after {
+  content: "";
+  position: absolute; inset: 7px;
+  border: 1.5px solid var(--dep);
+  border-radius: 2px;
+}
+.detail__empty h2 { margin: 0 0 0.4rem; font: 600 0.95rem/1.2 var(--f-display); color: var(--ink); }
+.detail__empty p { margin: 0; font-size: 0.8rem; line-height: 1.5; }
+
+/* Head: a kind-coded accent bar, the kind eyebrow, the node's name, close. */
+.detail__head {
+  position: sticky; top: 0; z-index: 2;
+  padding: 1rem 1.2rem 0.85rem;
+  border-bottom: 1px solid var(--hair);
+  border-left: 3px solid var(--kind, var(--muted));
+  background: linear-gradient(180deg, rgba(14,42,69,0.97), rgba(14,42,69,0.9));
+  backdrop-filter: blur(3px);
+}
+.detail__kind {
+  display: inline-flex; align-items: center; gap: 0.45rem;
+  font: 600 0.6rem/1 var(--f-mono);
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--kind, var(--ink-mut));
+}
+.detail__kind::before {
+  content: ""; width: 7px; height: 7px; border-radius: 2px;
+  background: var(--kind, var(--muted));
+}
+.detail__title {
+  margin: 0.5rem 0 0;
+  font: 600 1.02rem/1.25 var(--f-mono);
+  color: var(--ink);
+  word-break: break-word;
+  padding-right: 1.8rem;
+}
+.detail__close {
+  position: absolute; top: 0.75rem; right: 0.8rem;
+  width: 1.7rem; height: 1.7rem;
+  display: grid; place-items: center;
+  border: 1px solid var(--hair);
+  border-radius: var(--radius);
+  background: var(--ground-sink);
+  color: var(--ink-dim);
+  font: 400 1rem/1 var(--f-mono);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.detail__close:hover { color: var(--ink); border-color: var(--panel-edge); }
+
+.detail__body { padding: 1rem 1.2rem 1.4rem; display: flex; flex-direction: column; gap: 1.15rem; }
+
+/* A labelled section inside the datasheet. */
+.dsec { display: flex; flex-direction: column; gap: 0.5rem; }
+.dsec__h {
+  margin: 0;
+  font: 600 0.62rem/1 var(--f-mono);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-mut);
+}
+.dsec__h .dsec__count { color: var(--ink-mut); font-weight: 500; }
+
+/* Key/value rows (signature, source, ecosystem …). */
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 0.3rem 0.8rem; align-items: baseline; }
+.kv dt { font: 500 0.66rem/1.3 var(--f-mono); letter-spacing: 0.04em; color: var(--ink-mut); text-transform: uppercase; }
+.kv dd { margin: 0; font: 400 0.76rem/1.4 var(--f-mono); color: var(--ink); word-break: break-word; }
+.kv dd.is-signal { color: var(--signal); }
+
+.mono { font: 400 0.76rem/1.5 var(--f-mono); color: var(--ink); word-break: break-word; }
+.prose { font: 400 0.82rem/1.55 var(--f-body); color: var(--ink-dim); margin: 0; }
+.prose--quote {
+  border-left: 2px solid var(--hair);
+  padding-left: 0.7rem;
+  color: var(--ink);
+}
+.dim-note { font: 400 0.76rem/1.5 var(--f-body); color: var(--ink-mut); margin: 0; }
+
+/* A code block for a signature. */
+.codeblock {
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--hair);
+  border-left: 2px solid var(--fn);
+  border-radius: var(--radius);
+  background: var(--ground-sink);
+  font: 500 0.76rem/1.5 var(--f-mono);
+  color: var(--ink);
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Badges — exposure / authentication / provenance. Risk tone when the value
+   widens the attack surface (internet-facing, no auth); quiet otherwise. */
+.badges { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.badge {
+  display: inline-flex; align-items: baseline; gap: 0.4rem;
+  padding: 0.32rem 0.5rem;
+  border: 1px solid var(--hair);
+  border-radius: var(--radius);
+  background: var(--ground-sink);
+  font: 500 0.72rem/1 var(--f-mono);
+  color: var(--ink);
+}
+.badge__k { font-size: 0.56rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-mut); }
+.badge--risk { border-color: var(--alert); color: var(--alert-ink); background: var(--alert-soft); }
+.badge--risk .badge__k { color: var(--alert-ink); }
+.badge--ok { border-color: rgba(120,178,224,0.4); }
+
+/* Advisory marker — this block is an assessment, not the deterministic verdict. */
+.advisory {
+  display: flex; flex-direction: column; gap: 0.3rem;
+  padding: 0.5rem 0.65rem;
+  border: 1px dashed var(--signal);
+  border-radius: var(--radius);
+  background: var(--signal-soft);
+}
+.advisory__lead {
+  font: 600 0.6rem/1 var(--f-mono);
+  letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--signal);
+  display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;
+}
+.advisory__prov {
+  font-size: 0.56rem; letter-spacing: 0.08em;
+  padding: 0.14rem 0.36rem;
+  border: 1px solid var(--signal); border-radius: 2px;
+  color: var(--signal);
+}
+.advisory__note { font: 400 0.68rem/1.4 var(--f-body); color: var(--ink-dim); margin: 0; }
+
+/* Context items grouped by category. */
+.ctxgroup { display: flex; flex-direction: column; gap: 0.4rem; }
+.ctxgroup__h {
+  font: 600 0.58rem/1 var(--f-mono);
+  letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--dep);
+}
+.ctxlist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.4rem; }
+.ctxitem {
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--hair);
+  border-left: 2px solid var(--dep);
+  border-radius: var(--radius);
+  background: var(--ground-sink);
+}
+.ctxitem__detail { font: 500 0.76rem/1.3 var(--f-mono); color: var(--ink); }
+.ctxitem__access { margin-top: 0.15rem; font: 400 0.72rem/1.4 var(--f-body); color: var(--ink-dim); }
+
+/* A cited snippet of untrusted doc text — always rendered as text. */
+.snip { margin-top: 0.35rem; }
+.snip__src {
+  display: inline-block; margin-bottom: 0.2rem;
+  font: 500 0.6rem/1 var(--f-mono);
+  letter-spacing: 0.04em;
+  color: var(--ink-mut);
+}
+.snip__src::before { content: "“ "; }
+.snip__text {
+  font: 400 0.68rem/1.45 var(--f-mono);
+  color: var(--ink-dim);
+  background: rgba(8,26,44,0.5);
+  border-radius: 2px;
+  padding: 0.3rem 0.45rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+/* Clamp long snippets/docstrings until expanded. */
+.clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+.more {
+  margin-top: 0.3rem;
+  border: 0; background: transparent;
+  padding: 0;
+  font: 500 0.66rem/1 var(--f-mono);
+  letter-spacing: 0.04em;
+  color: var(--signal);
+  cursor: pointer;
+}
+.more:hover { text-decoration: underline; }
+
+/* Doc references. */
+.docref { padding-left: 0.1rem; }
+.docref__src {
+  font: 500 0.64rem/1 var(--f-mono);
+  color: var(--signal);
+}
+
+/* Trace affordance + CVE list reuse the rail card look. */
+.btn-trace {
+  display: inline-flex; align-items: center; gap: 0.45rem;
+  padding: 0.45rem 0.7rem;
+  border: 1px solid var(--signal);
+  border-radius: var(--radius);
+  background: var(--signal-soft);
+  color: var(--signal);
+  font: 600 0.72rem/1 var(--f-mono);
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: background 0.15s;
+  align-self: flex-start;
+}
+.btn-trace::before {
+  content: ""; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--signal); box-shadow: 0 0 7px var(--signal-glow);
+}
+.btn-trace:hover { background: rgba(242,177,52,0.26); }
+.btn-trace[disabled] { opacity: 0.45; cursor: default; border-color: var(--hair); color: var(--ink-mut); }
+.btn-trace[disabled]::before { background: var(--muted); box-shadow: none; }
+
+/* Reachability verdict line. */
+.verdict {
+  display: inline-flex; align-items: center; gap: 0.45rem;
+  font: 500 0.76rem/1.3 var(--f-mono);
+}
+.verdict::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.verdict--reach { color: var(--signal); }
+.verdict--reach::before { background: var(--signal); box-shadow: 0 0 7px var(--signal-glow); }
+.verdict--maybe { color: var(--ink-dim); }
+.verdict--maybe::before { background: var(--dep); }
+
+/* Mini CVE cards inside the dependency datasheet. */
+.cvelist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+.cve {
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--hair);
+  border-left: 2px solid var(--alert);
+  border-radius: var(--radius);
+  background: var(--ground-sink);
+}
+.cve__id { font: 600 0.74rem/1.3 var(--f-mono); color: var(--alert-ink); word-break: break-all; }
+.cve__sum { margin-top: 0.2rem; font: 400 0.72rem/1.4 var(--f-body); color: var(--ink-dim); }
+.cve__fix { margin-top: 0.25rem; font: 400 0.68rem/1.3 var(--f-mono); color: var(--ink-mut); }
+.cve__fix b { color: var(--dep); font-weight: 600; }
+
 /* ---------------------------------------------------------------- responsive */
 @media (max-width: 860px) {
   .titleblock {
@@ -529,6 +820,12 @@ body.has-vulns .legend__item--vuln { display: flex; }
   }
   .panel--filters { margin-top: 0; }
   .stage { min-height: 70vh; }
+  .detail {
+    border-left: none;
+    border-top: 1px solid var(--panel-edge);
+    overflow: visible;
+  }
+  .detail__head { position: static; }
   .legend { position: static; margin: 0; }
   .stage .legend { display: none; } /* keep canvas uncluttered on small screens */
 }

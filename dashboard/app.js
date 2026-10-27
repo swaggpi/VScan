@@ -44,6 +44,8 @@
   var vulnByDep = {};         // dep node id -> { findings, kev, reachable, worst, entrypoints }
   var bundleMeta = null;      // { summary, offline, network_ok, notices } or null
   var bundleReach = null;     // bundle.reachability (per-entrypoint reachable chains) or null
+  var assessments = [];       // per-endpoint advisory exposure assessments (bundle.assessments)
+  var selectedNodeId = null;  // node whose datasheet the detail panel shows
 
   // Focused-view state. When a loaded graph exceeds LARGE_GRAPH we render only
   // the security-relevant subgraph; these hold the full-repo totals and the
@@ -70,6 +72,11 @@
     scanname: document.getElementById("scanname"),
     file: document.getElementById("file"),
     banner: document.getElementById("banner"),
+    detail: document.getElementById("detail"),
+    detailInner: document.getElementById("detail-inner"),
+    zoomIn: document.getElementById("zoom-in"),
+    zoomOut: document.getElementById("zoom-out"),
+    zoomFit: document.getElementById("zoom-fit"),
     viewDemo: document.getElementById("view-demo"),
     viewRedash: document.getElementById("view-redash"),
     viewSample: document.getElementById("view-sample"),
@@ -130,26 +137,31 @@
       { selector: "node", style: {
         "label": "data(label)", "font-family": "JetBrains Mono, monospace",
         "font-size": 10, "color": "#CFE4F2", "text-valign": "bottom",
-        "text-margin-y": 5, "text-wrap": "wrap", "text-max-width": 120,
-        "width": 16, "height": 16, "border-width": 1.5,
+        "text-margin-y": 6, "text-wrap": "ellipsis", "text-max-width": 128,
+        // A dark halo lifts labels off the grid, edges and overlapping nodes.
+        "text-outline-color": "#081A2C", "text-outline-width": 2.4, "text-outline-opacity": 0.92,
+        "width": 15, "height": 15, "border-width": 1.5,
         "background-color": "#4E7493", "border-color": "#4E7493",
         "transition-property": "background-color, border-color, opacity, width, height, line-color",
         "transition-duration": REDUCED ? "0s" : "260ms"
       }},
+      // Dependencies read as packages — a hexagon, filled cyan.
       { selector: 'node[kind = "dependency"]', style: {
-        "background-color": "#6FB8E0", "border-color": "#6FB8E0", "shape": "round-rectangle",
-        "width": 18, "height": 18
+        "background-color": "#6FB8E0", "border-color": "#9FD2EF", "shape": "hexagon",
+        "width": 22, "height": 20, "color": "#D7ECF9"
       }},
+      // Functions are the call-graph nodes — a hollow ring.
       { selector: 'node[kind = "function"]', style: {
-        "background-color": "rgba(159,198,224,0.0)", "border-color": "#9FC6E0",
-        "border-width": 1.5, "shape": "ellipse"
+        "background-color": "rgba(159,198,224,0.08)", "border-color": "#9FC6E0",
+        "border-width": 1.5, "shape": "ellipse", "width": 14, "height": 14
       }},
-      { selector: 'node[kind = "module"]', style: { "background-color": "#345069", "border-color": "#4E7493", "shape": "round-rectangle" }},
-      { selector: 'node[kind = "file"]', style: { "background-color": "rgba(78,116,147,0.25)", "border-color": "#4E7493", "shape": "rectangle" }},
-      { selector: 'node[kind = "doc"]', style: { "background-color": "rgba(78,116,147,0.25)", "border-color": "#4E7493", "shape": "diamond" }},
+      { selector: 'node[kind = "module"]', style: { "background-color": "#2C4660", "border-color": "#4E7493", "shape": "round-rectangle", "width": 13, "height": 13 }},
+      { selector: 'node[kind = "file"]', style: { "background-color": "rgba(78,116,147,0.22)", "border-color": "#4E7493", "shape": "rectangle", "width": 12, "height": 12 }},
+      { selector: 'node[kind = "doc"]', style: { "background-color": "rgba(78,116,147,0.22)", "border-color": "#4E7493", "shape": "diamond", "width": 13, "height": 13 }},
+      // Entry points are the public doors — a wide amber gate at the base of the flow.
       { selector: 'node[kind = "entrypoint"]', style: {
-        "background-color": "#0B2239", "border-color": "#F2B134", "border-width": 2.5,
-        "shape": "ellipse", "width": 20, "height": 20, "color": "#F2B134", "font-weight": 600
+        "background-color": "#12304C", "border-color": "#F2B134", "border-width": 2.5,
+        "shape": "round-rectangle", "width": 30, "height": 20, "color": "#F2B134", "font-weight": 600
       }},
 
       /* focused-view only: the compact stand-in for the entry points that reach
@@ -178,15 +190,29 @@
       { selector: "edge", style: {
         "width": 1, "line-color": "#3C5E7E", "target-arrow-color": "#3C5E7E",
         "target-arrow-shape": "triangle", "arrow-scale": 0.7,
-        "curve-style": "bezier", "opacity": 0.75,
+        "curve-style": "bezier", "opacity": 0.72,
         "transition-property": "line-color, target-arrow-color, width, opacity",
         "transition-duration": REDUCED ? "0s" : "220ms"
+      }},
+      // The call-flow spine (route -> handler -> callee) is drawn as orthogonal
+      // wiring, so the diagram reads like the schematic its palette promises.
+      { selector: 'edge[kind = "route_to_handler"], edge[kind = "calls"]', style: {
+        "curve-style": "taxi", "taxi-direction": "vertical", "taxi-turn": "50%",
+        "taxi-turn-min-distance": "6px", "taxi-radius": "8px",
+        "line-color": "#4E7CA3", "target-arrow-color": "#4E7CA3",
+        "width": 1.4, "opacity": 0.8
+      }},
+      // Structural edges (imports/contains/declares/documents) are context, not
+      // flow — keep them as faint hairlines so they never fight the spine.
+      { selector: 'edge[kind = "imports"], edge[kind = "contains"], edge[kind = "declares"], edge[kind = "documents"]', style: {
+        "line-color": "#2E4B66", "target-arrow-color": "#2E4B66",
+        "width": 0.8, "opacity": 0.4, "arrow-scale": 0.55
       }},
 
       /* off the call-flow spine (unreached functions, module/file/doc) — kept
          visible but visually secondary. Declared before .dim so an active trace
          still dims these further; .lit/.focus come later and override it. */
-      { selector: "node.offspine", style: { "opacity": 0.5 } },
+      { selector: "node.offspine", style: { "opacity": 0.4, "font-size": 9, "text-opacity": 0.75 } },
 
       /* dimmed (something else is selected) */
       { selector: ".dim", style: { "opacity": 0.12 } },
@@ -213,7 +239,17 @@
       /* neighborhood focus (click a node) */
       { selector: ".focus", style: { "opacity": 1 } },
       { selector: "node.focus", style: { "border-color": "#CFE4F2" } },
-      { selector: "edge.focus", style: { "line-color": "#6FB8E0", "target-arrow-color": "#6FB8E0", "opacity": 0.9, "width": 1.6 } }
+      { selector: "edge.focus", style: { "line-color": "#6FB8E0", "target-arrow-color": "#6FB8E0", "opacity": 0.9, "width": 1.6 } },
+
+      /* a lit, focused or selected node shows its full label, not an ellipsis */
+      { selector: "node.lit, node.focus, node.selected", style: { "text-wrap": "wrap", "text-max-width": 200, "z-index": 30 } },
+
+      /* the node whose datasheet is open in the detail panel — a bright halo so
+         it's obvious which part the panel describes. Declared last to win. */
+      { selector: "node.selected", style: {
+        "overlay-color": "#CFE4F2", "overlay-opacity": 0.16, "overlay-padding": 11,
+        "text-opacity": 1
+      }}
     ];
   }
 
@@ -271,7 +307,13 @@
       container: el.graph,
       elements: toCy(),
       style: cyStyle(),
-      minZoom: 0.2, maxZoom: 2.5
+      // Continuous, fluid zoom: a low wheel sensitivity turns each notch into a
+      // fine increment rather than a jump, so the wheel feels analog, not stepped.
+      minZoom: 0.08, maxZoom: 4,
+      wheelSensitivity: 0.2,
+      zoomingEnabled: true, userZoomingEnabled: true,
+      panningEnabled: true, userPanningEnabled: true,
+      boxSelectionEnabled: false
     });
     applyFilter(false);
     bindGraphEvents();
@@ -445,6 +487,8 @@
 
     renderReach(epId, res);
     updateEpButtons(epId);
+    // Selecting an entry point lights its path AND opens its datasheet.
+    if (model.index[epId]) showDetail(model.index[epId]);
   }
 
   function focusNeighborhood(node) {
@@ -463,6 +507,7 @@
     clearHighlight();
     updateEpButtons(null);
     renderReachInitial();
+    clearDetail();
   }
 
   /* ---------------------------------------------------------------- panels */
@@ -743,6 +788,314 @@
     return "Not reachable from a public entry point.";
   }
 
+  /* ---------------------------------------------------------------- detail panel */
+  var CTX_ORDER = ["data_store", "external_service", "authentication", "data_handling", "other"];
+  var CTX_LABEL = {
+    data_store: "Data stores", external_service: "External services",
+    authentication: "Authentication", data_handling: "Data handling", other: "Other context"
+  };
+  var KIND_EYEBROW = {
+    entrypoint: "Entry point", dependency: "Dependency", function: "Function",
+    module: "Module", file: "File", doc: "Document"
+  };
+
+  function uniq(arr) { var out = []; arr.forEach(function (x) { if (out.indexOf(x) < 0) out.push(x); }); return out; }
+  function moreBtn() { return '<button type="button" class="more" data-clamp>Show more</button>'; }
+
+  function isRiskExposure(e) { return /internet|public|external/i.test(String(e)); }
+  function isRiskAuth(a) { return /none|no\s*auth|unauth|anonymous/i.test(String(a)); }
+  function badge(k, v, risk) {
+    return '<span class="badge ' + (risk ? "badge--risk" : "badge--ok") + '">' +
+      '<span class="badge__k">' + esc(k) + '</span>' + esc(v) + '</span>';
+  }
+
+  // Mark the node whose datasheet is open (bright halo on the canvas).
+  function markSelected(id) {
+    selectedNodeId = id;
+    if (!cy) return;
+    cy.nodes().removeClass("selected");
+    if (id) { var n = cy.getElementById(id); if (n && n.length) n.addClass("selected"); }
+  }
+
+  // Assessments whose reaching_entrypoints include this endpoint's label
+  // ("METHOD /path"), which is exactly how the bundle records them.
+  function assessmentsForEpLabel(label) {
+    var want = String(label).trim();
+    return assessments.filter(function (a) {
+      return (a.reaching_entrypoints || []).some(function (x) { return String(x).trim() === want; });
+    });
+  }
+
+  function docRefHtml(dref) {
+    return '<div class="docref"><span class="docref__src">' + esc(dref.source || "doc") + '</span>' +
+      '<div class="snip__text clamp">' + esc(String(dref.snippet || "").trim()) + '</div>' + moreBtn() + '</div>';
+  }
+
+  function detailHead(kind, title) {
+    var color = KIND_COLOR[kind] || "#4E7493";
+    return '<div class="detail__head" style="--kind:' + color + '">' +
+      '<span class="detail__kind">' + esc(KIND_EYEBROW[kind] || kind) + '</span>' +
+      '<button type="button" class="detail__close" id="detail-close" aria-label="Close details">×</button>' +
+      '<h1 class="detail__title">' + esc(title) + '</h1></div>';
+  }
+
+  // The advisory assessment block for an endpoint. Several assessments can match
+  // one endpoint (one per CVE on the same route); dedupe exposure/auth/rationale,
+  // list the CVEs covered, and merge the cited context items by category.
+  function assessmentBlockHtml(ms) {
+    var exposures = uniq(ms.map(function (a) { return a.exposure; }).filter(Boolean));
+    var auths = uniq(ms.map(function (a) { return a.authentication; }).filter(Boolean));
+    var provs = uniq(ms.map(function (a) { return a.provenance; }).filter(Boolean));
+    var rationales = uniq(ms.map(function (a) { return a.rationale; }).filter(Boolean));
+    var cves = uniq(ms.map(function (a) { return a.cve || a.vuln_id; }).filter(Boolean));
+
+    var seen = {}, byCat = {};
+    ms.forEach(function (a) {
+      (a.context || []).forEach(function (c) {
+        var cat = c.category || "other";
+        var key = cat + "|" + (c.detail || "") + "|" + (c.source || "") + "|" + (c.snippet || "");
+        if (seen[key]) return;
+        seen[key] = true;
+        (byCat[cat] || (byCat[cat] = [])).push(c);
+      });
+    });
+
+    var html = '<section class="dsec"><h2 class="dsec__h">Agent assessment</h2>';
+    html += '<div class="advisory"><div class="advisory__lead">Advisory' +
+      provs.map(function (p) { return '<span class="advisory__prov">' + esc(p) + '</span>'; }).join("") +
+      '</div><p class="advisory__note">An exposure assessment, not the deterministic reachability verdict. It adds context; it never changes whether a path exists.</p></div>';
+
+    html += '<div class="badges">';
+    exposures.forEach(function (e) { html += badge("Exposure", e, isRiskExposure(e)); });
+    auths.forEach(function (a) { html += badge("Auth", a, isRiskAuth(a)); });
+    html += '</div>';
+
+    if (rationales.length) {
+      html += '<div>';
+      rationales.forEach(function (r) { html += '<p class="prose prose--quote clamp">' + esc(r) + '</p>' + moreBtn(); });
+      html += '</div>';
+    }
+    if (cves.length) html += '<p class="dim-note">Covers ' + cves.map(esc).join(", ") + '</p>';
+
+    var cats = CTX_ORDER.slice();
+    Object.keys(byCat).forEach(function (k) { if (cats.indexOf(k) < 0) cats.push(k); });
+    cats.forEach(function (cat) {
+      var items = byCat[cat];
+      if (!items || !items.length) return;
+      html += '<div class="ctxgroup"><div class="ctxgroup__h">' + esc(CTX_LABEL[cat] || cat) +
+        ' <span class="dsec__count">' + items.length + '</span></div><ul class="ctxlist">';
+      items.forEach(function (c) {
+        html += '<li class="ctxitem"><div class="ctxitem__detail">' + esc(c.detail || "") + '</div>' +
+          (c.access ? '<div class="ctxitem__access">' + esc(c.access) + '</div>' : '') +
+          '<div class="snip"><span class="snip__src">' + esc(c.source || "doc") + '</span>' +
+          '<div class="snip__text clamp">' + esc(String(c.snippet || "").trim()) + '</div>' + moreBtn() +
+          '</div></li>';
+      });
+      html += '</ul></div>';
+    });
+    html += '</section>';
+    return html;
+  }
+
+  function detailEntrypoint(n) {
+    var a = n.attrs || {};
+    var label = labelFor(n);
+    var html = detailHead("entrypoint", label) + '<div class="detail__body">';
+
+    html += '<section class="dsec"><h2 class="dsec__h">Route</h2><dl class="kv">' +
+      '<dt>Method</dt><dd class="is-signal">' + esc(a.method || "ANY") + '</dd>' +
+      '<dt>Path</dt><dd>' + esc(a.path || n.name || n.id) + '</dd>' +
+      (a.framework ? '<dt>Framework</dt><dd>' + esc(a.framework) + '</dd>' : "") +
+      (a.handler ? '<dt>Handler</dt><dd>' + esc(a.handler) + '</dd>' : "") +
+      '</dl></section>';
+
+    var res = trace(n.id);
+    html += '<section class="dsec"><h2 class="dsec__h">Reaches <span class="dsec__count">' + res.deps.length + '</span></h2>';
+    if (res.deps.length) {
+      html += '<ul class="deplist">';
+      res.deps.forEach(function (d) {
+        var da = d.attrs || {}, vs = vulnByDep[d.id];
+        html += '<li class="dep"><div class="dep__name">' + esc(d.name || d.id) + '</div><div class="dep__meta">' +
+          (da.ecosystem ? '<span class="dep__eco">' + esc(da.ecosystem) + '</span>' : "") +
+          (da.version ? '<span class="dep__ver">' + esc(da.version) + '</span>' : "") +
+          (vs ? '<span class="tag tag--sev">' + vs.findings.length + " finding" + (vs.findings.length === 1 ? "" : "s") + '</span>' : "") +
+          '</div></li>';
+      });
+      html += '</ul>';
+    } else {
+      html += '<p class="dim-note">This route resolves no call into a declared dependency.</p>';
+    }
+    html += '<button type="button" class="btn-trace" data-ep="' + esc(n.id) + '">Light this trace</button></section>';
+
+    var docs = a.docs || [];
+    if (docs.length) {
+      html += '<section class="dsec"><h2 class="dsec__h">Mentioned in docs <span class="dsec__count">' + docs.length + '</span></h2>';
+      docs.forEach(function (dref) { html += docRefHtml(dref); });
+      html += '</section>';
+    }
+
+    var ms = assessmentsForEpLabel(label);
+    if (ms.length) html += assessmentBlockHtml(ms);
+
+    return html + '</div>';
+  }
+
+  function detailFunction(n) {
+    var a = n.attrs || {};
+    var qn = a.module ? (a.module + "." + (n.name || "")) : (n.name || n.id);
+    var loc = (a.relpath || "") + (a.lineno != null ? ":" + a.lineno : "");
+    var html = detailHead("function", n.name || n.id) + '<div class="detail__body">';
+
+    html += '<section class="dsec"><h2 class="dsec__h">Function</h2><dl class="kv">' +
+      '<dt>Qualified</dt><dd>' + esc(qn) + '</dd>' +
+      (loc ? '<dt>Source</dt><dd>' + esc(loc) + '</dd>' : "") +
+      (a.is_method ? '<dt>Kind</dt><dd>method</dd>' : "") +
+      '</dl></section>';
+
+    html += '<section class="dsec"><h2 class="dsec__h">Signature</h2>' +
+      (a.signature ? '<pre class="codeblock">' + esc(a.signature) + '</pre>' : '<p class="dim-note">Not recorded.</p>') +
+      '</section>';
+
+    html += '<section class="dsec"><h2 class="dsec__h">Docstring</h2>' +
+      (a.docstring ? '<p class="prose clamp">' + esc(a.docstring) + '</p>' + moreBtn() : '<p class="dim-note">No docstring.</p>') +
+      '</section>';
+
+    var docs = a.docs || [];
+    if (docs.length) {
+      html += '<section class="dsec"><h2 class="dsec__h">Mentioned in docs <span class="dsec__count">' + docs.length + '</span></h2>';
+      docs.forEach(function (dref) { html += docRefHtml(dref); });
+      html += '</section>';
+    }
+
+    if (selectedEp) {
+      var res = trace(selectedEp);
+      if (res.nodes[n.id]) {
+        var ep = model.index[selectedEp];
+        html += '<section class="dsec"><h2 class="dsec__h">In the lit trace</h2>' +
+          '<p class="dim-note">On the path from <b>' + esc(ep ? labelFor(ep) : selectedEp) +
+          '</b>, call depth ' + (res.depth[n.id] != null ? res.depth[n.id] : "?") + '.</p></section>';
+      }
+    }
+
+    return html + '</div>';
+  }
+
+  function detailDependency(n) {
+    var a = n.attrs || {};
+    var vs = vulnByDep[n.id];
+    var depFindings = findings.filter(function (f) { return f.dependency_id === n.id; });
+    var html = detailHead("dependency", n.name || n.id) + '<div class="detail__body">';
+
+    html += '<section class="dsec"><h2 class="dsec__h">Package</h2><dl class="kv">' +
+      '<dt>Name</dt><dd>' + esc(n.name || n.id) + '</dd>' +
+      (a.version ? '<dt>Version</dt><dd class="is-signal">' + esc(a.version) + '</dd>' : "") +
+      (a.ecosystem ? '<dt>Ecosystem</dt><dd>' + esc(a.ecosystem) + '</dd>' : "") +
+      (a.source_file ? '<dt>Declared in</dt><dd>' + esc(a.source_file) + '</dd>' : "") +
+      '</dl></section>';
+
+    html += '<section class="dsec"><h2 class="dsec__h">Reachability</h2>';
+    var traceEp = null;
+    if (vs && vs.reachable && vs.entrypoints.length) {
+      traceEp = epIdForLabel(vs.entrypoints[0]);
+      html += '<span class="verdict verdict--reach">Reachable from a public route</span>' +
+        '<p class="dim-note">Via ' + vs.entrypoints.map(esc).join(", ") + '.</p>';
+      var withPath = depFindings.filter(function (f) { return f.example_path && f.example_path.length; })[0];
+      if (withPath) {
+        var steps = withPath.example_path.map(function (id) { var m = model.index[id]; return m ? (m.name || m.id) : id; });
+        html += '<p class="vuln__path"><span class="path-steps">' + esc(steps.join(" → ")) + '</span></p>';
+      }
+    } else if (vs) {
+      html += '<span class="verdict verdict--maybe">Not reached from a public route</span>';
+    } else {
+      html += '<span class="verdict verdict--maybe">No findings matched</span>';
+    }
+    html += traceEp
+      ? '<button type="button" class="btn-trace" data-ep="' + esc(traceEp) + '">Light the reaching trace</button>'
+      : '<button type="button" class="btn-trace" disabled>No reachable trace</button>';
+    html += '</section>';
+
+    html += '<section class="dsec"><h2 class="dsec__h">Advisories <span class="dsec__count">' + depFindings.length + '</span></h2>';
+    if (!depFindings.length) {
+      html += '<p class="dim-note">No known vulnerabilities matched this version.</p>';
+    } else {
+      html += '<ul class="cvelist">';
+      depFindings.forEach(function (f) {
+        var cve = (f.cve_ids && f.cve_ids.length) ? f.cve_ids.join(", ") : (f.vuln_id || "");
+        html += '<li class="cve"><div class="cve__id">' + esc(cve) + '</div>' +
+          (f.summary ? '<div class="cve__sum">' + esc(f.summary) + '</div>' : "") +
+          '<div class="vuln__tags">' + sevTag(f) +
+          (f.kev ? '<span class="tag tag--kev">KEV</span>' : "") +
+          (f.epss != null ? '<span class="tag tag--epss">EPSS ' + Number(f.epss).toFixed(3) + '</span>' : "") +
+          (f.reachable ? '<span class="tag tag--reach">reachable</span>' : "") +
+          '</div>' +
+          (f.fixed_versions && f.fixed_versions.length ? '<div class="cve__fix">Fixed in <b>' + esc(f.fixed_versions.join(", ")) + '</b></div>' : "") +
+          '</li>';
+      });
+      html += '</ul>';
+    }
+    html += '</section>';
+    return html + '</div>';
+  }
+
+  function detailGeneric(n) {
+    var a = n.attrs || {};
+    var html = detailHead(n.kind, n.name || n.id) + '<div class="detail__body">';
+    html += '<section class="dsec"><h2 class="dsec__h">' + esc(KIND_EYEBROW[n.kind] || n.kind) + '</h2><dl class="kv">' +
+      '<dt>Name</dt><dd>' + esc(n.name || n.id) + '</dd>' +
+      (a.relpath ? '<dt>Path</dt><dd>' + esc(a.relpath) + '</dd>' : "") +
+      (a.language ? '<dt>Language</dt><dd>' + esc(a.language) + '</dd>' : "") +
+      (a.role ? '<dt>Role</dt><dd>' + esc(a.role) + '</dd>' : "") +
+      (a.size != null ? '<dt>Size</dt><dd>' + esc(a.size) + ' B</dd>' : "") +
+      '</dl></section>';
+    if (a.docstring) html += '<section class="dsec"><h2 class="dsec__h">Docstring</h2><p class="prose clamp">' + esc(a.docstring) + '</p>' + moreBtn() + '</section>';
+    if (a.excerpt) html += '<section class="dsec"><h2 class="dsec__h">Excerpt</h2><div class="snip__text clamp">' + esc(String(a.excerpt).trim()) + '</div>' + moreBtn() + '</section>';
+    return html + '</div>';
+  }
+
+  function renderDetailInitial() {
+    selectedNodeId = null;
+    if (cy) cy.nodes().removeClass("selected");
+    el.detailInner.innerHTML =
+      '<div class="detail__empty"><span class="d-mark" aria-hidden="true"></span>' +
+      '<h2>Nothing selected</h2>' +
+      '<p>Click any node in the diagram to inspect it — an entry point’s exposure and advisory context, a function’s source and docstring, or a dependency’s advisories.</p></div>';
+  }
+  function clearDetail() { renderDetailInitial(); }
+
+  function showDetail(n) {
+    if (!n) { clearDetail(); return; }
+    var html;
+    if (n.kind === "entrypoint") html = detailEntrypoint(n);
+    else if (n.kind === "function") html = detailFunction(n);
+    else if (n.kind === "dependency") html = detailDependency(n);
+    else html = detailGeneric(n);
+    el.detailInner.innerHTML = html;
+    markSelected(n.id);
+    wireDetail();
+    if (el.detail) el.detail.scrollTop = 0;
+  }
+
+  function wireDetail() {
+    var root = el.detailInner;
+    var close = root.querySelector("#detail-close");
+    if (close) close.addEventListener("click", function () { resetView(); });
+    var tr = root.querySelector(".btn-trace[data-ep]");
+    if (tr) tr.addEventListener("click", function () {
+      var keepId = selectedNodeId;              // keep the open datasheet after lighting
+      lightTrace(tr.getAttribute("data-ep"), false);
+      if (keepId && model.index[keepId]) showDetail(model.index[keepId]);
+    });
+    // Expand/collapse clamped snippets and docstrings (only when truly overflowing).
+    Array.prototype.forEach.call(root.querySelectorAll(".more[data-clamp]"), function (btn) {
+      var target = btn.previousElementSibling;
+      if (!target || !target.classList.contains("clamp") || target.scrollHeight - target.clientHeight < 2) { btn.remove(); return; }
+      btn.addEventListener("click", function () {
+        var clamped = target.classList.toggle("clamp");
+        btn.textContent = clamped ? "Show more" : "Show less";
+      });
+    });
+  }
+
   function renderFilters() {
     el.filters.innerHTML = "";
     kindsPresent().forEach(function (kind) {
@@ -775,14 +1128,16 @@
         if (selectedEp === node.id()) resetView(); else lightTrace(node.id(), false);
         return;
       }
+      var mNode = model.index[node.id()];
       // A reachable vulnerable dep is the demo payoff: clicking it lights the
-      // path from the public route that reaches it, as an entry point would.
+      // path from the public route that reaches it, then shows the dep datasheet.
       var vs = vulnByDep[node.id()];
       if (vs && vs.reachable && vs.entrypoints.length) {
         var epId = epIdForLabel(vs.entrypoints[0]);
-        if (epId) { lightTrace(epId, false); return; }
+        if (epId) { lightTrace(epId, false); showDetail(mNode); return; }
       }
       focusNeighborhood(node);
+      showDetail(mNode);
     });
     cy.on("tap", function (evt) { if (evt.target === cy) resetView(); });
 
@@ -844,6 +1199,7 @@
     renderEntryPoints();
     renderFilters();
     renderReachInitial();
+    renderDetailInitial();
     renderVulns();
     renderGraph();
     document.body.classList.toggle("has-vulns", !!(bundleMeta && findings.length));
@@ -931,6 +1287,7 @@
     vulnByDep = {};
     bundleMeta = null;
     bundleReach = null;
+    assessments = [];
     installGraph(graph, name);
   }
 
@@ -945,6 +1302,7 @@
       notices: bundle.notices || []
     };
     bundleReach = bundle.reachability || null;
+    assessments = Array.isArray(bundle.assessments) ? bundle.assessments : [];
     computeVulnState();
     installGraph(bundle.graph || {}, name);
   }
@@ -978,6 +1336,24 @@
   });
 
   window.addEventListener("resize", function () { if (cy) cy.resize(); });
+
+  /* ---------------------------------------------------------------- zoom controls */
+  // The wheel does the real, continuous zooming; these are discrete nudges and a
+  // one-tap "fit", animated toward the viewport centre so the focus stays put.
+  function zoomBy(factor) {
+    if (!cy) return;
+    var next = Math.max(cy.minZoom(), Math.min(cy.maxZoom(), cy.zoom() * factor));
+    var centre = { x: cy.width() / 2, y: cy.height() / 2 };
+    if (REDUCED) cy.zoom({ level: next, renderedPosition: centre });
+    else cy.animate({ zoom: { level: next, renderedPosition: centre } }, { duration: 180, easing: "ease-out" });
+  }
+  if (el.zoomIn) el.zoomIn.addEventListener("click", function () { zoomBy(1.3); });
+  if (el.zoomOut) el.zoomOut.addEventListener("click", function () { zoomBy(1 / 1.3); });
+  if (el.zoomFit) el.zoomFit.addEventListener("click", function () {
+    if (!cy) return;
+    if (REDUCED) cy.fit(undefined, 44);
+    else cy.animate({ fit: { eles: cy.elements(":visible"), padding: 44 } }, { duration: 220, easing: "ease-out" });
+  });
 
   /* ---------------------------------------------------------------- views */
   function setActiveView(which) {
