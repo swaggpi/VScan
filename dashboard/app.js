@@ -242,8 +242,10 @@
         "background-fill": "linear-gradient",
         "background-gradient-direction": "to-bottom-right",
         "background-gradient-stop-colors":
+          "#F2654E #F2654E #6FB8E0 #6FB8E0 #F2654E #F2654E #6FB8E0 #6FB8E0 " +
           "#F2654E #F2654E #6FB8E0 #6FB8E0 #F2654E #F2654E #6FB8E0 #6FB8E0",
-        "background-gradient-stop-positions": "0 25 25 50 50 75 75 100",
+        "background-gradient-stop-positions":
+          "0 12.5 12.5 25 25 37.5 37.5 50 50 62.5 62.5 75 75 87.5 87.5 100",
         "border-color": ALERT, "border-width": 3.5, "color": "#F79885"
       }},
       { selector: 'node[tainted = 1]', style: {
