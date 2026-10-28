@@ -24,30 +24,39 @@ repo ──► scanner ──► reachability ──► correlator ──► age
    typed, JSON-serializable knowledge graph. Deterministic and offline.
    * Dependency manifests: Python (`requirements*.txt`, `pyproject.toml`), npm
      (`package.json`, plus exact versions from `package-lock.json` /
-     `pnpm-lock.yaml` when present), PHP (`composer.json`), Go (`go.mod`).
+     `pnpm-lock.yaml` when present), PHP (`composer.json`), Go (`go.mod`). The
+     resolved tree is also enumerated for **transitive** dependencies — npm
+     (`package-lock.json` / `pnpm-lock.yaml`), Go (`// indirect` requires),
+     Python (`poetry.lock` / `Pipfile.lock`), PHP (`composer.lock`) — tagged
+     `direct=false`. A plain `requirements.txt` carries no direct/transitive
+     signal, so every entry there is treated as direct.
    * Code analysis: **Python is deep** (stdlib `ast`, cross-file call resolution
      and single-hop method resolution with a proven receiver). **JavaScript and
      Go resolve calls across files** (JS module imports, Go cross-package);
      **PHP is single-file**. JS/PHP/Go are built on tree-sitter.
    * Entry points: decorator routes (`@app.route`, `@app.get`, `@router.get` ...),
-     Django `urlpatterns`, and registry-style Python routes (Flask-RESTful
-     `add_resource`, `add_url_rule`, blueprint/router prefixes). JS (Express /
-     Koa / Fastify), PHP (Laravel / Slim / Symfony attributes) and Go (gin /
-     echo / chi / mux / `net/http`) routes are detected; JS and Go link handlers
-     and calls across files, PHP within a single file.
+     Django `urlpatterns`, registry-style Python routes (Flask-RESTful
+     `add_resource`, `add_url_rule`, FastAPI `add_api_route`, blueprint /
+     `APIRouter` + `include_router` prefixes), and Starlette (`Route` list +
+     `Mount` + `add_route` + the deprecated `@app.route`). JS (Express / Koa /
+     Fastify), PHP (Laravel / Slim / Symfony `#[Route]` attributes) and Go
+     (`net/http`, gin, echo, chi, gorilla/mux `HandleFunc().Methods()`, fiber)
+     routes are detected; JS and Go link handlers and calls across files, PHP
+     within a single file. See the support matrix below.
    * Documentation: README / Markdown / reST / `docs/` / OpenAPI files become
      `doc` nodes, linked to routes and symbols they mention.
 2. **Reachability engine** (`scanner/reachability.py`): a pure, deterministic
    BFS from every entry point over `route_to_handler` and `calls` edges. Reports
    which functions and dependencies each entry point reaches, with an example
-   path, and gives every declared dependency a three-way verdict (below).
+   path, and gives every dependency (direct or transitive) a three-way verdict
+   (below).
 3. **Correlator** (`scanner/correlate/`): the only network-touching layer of the
-   scanner. Matches dependencies against **OSV**, flags actively exploited CVEs
-   with **CISA KEV**, adds **EPSS** exploit probability, and optionally fetches
-   numeric CVSS from **NVD**. Findings are joined with reachability and ranked:
-   KEV, then EPSS, then reachability, then severity. Results are cached outside
-   the repo (`~/.cache/vulnreach`, overridable with `VULNREACH_CACHE_DIR` /
-   `XDG_CACHE_HOME`).
+   scanner. Matches dependencies (direct **and** transitive) against **OSV**,
+   flags actively exploited CVEs with **CISA KEV**, adds **EPSS** exploit
+   probability, and optionally fetches numeric CVSS from **NVD**. Findings are
+   joined with reachability and ranked: KEV, then EPSS, then reachability, then
+   severity. Results are cached outside the repo (`~/.cache/vulnreach`,
+   overridable with `VULNREACH_CACHE_DIR` / `XDG_CACHE_HOME`).
 4. **Agent layer** (`scanner/agent/`, opt-in): for findings already proven
    reachable, reads the documentation and route context and writes an
    *advisory* exposure assessment (internet-facing vs. internal, authenticated
@@ -73,6 +82,26 @@ repo ──► scanner ──► reachability ──► correlator ──► age
 * **Language analyzers** (`scanner/analyzers/`) implement the
   `LanguageAnalyzer` interface. A language without an analyzer degrades
   gracefully: its files still appear as `file` nodes.
+
+## Language & framework support
+
+Route detection finds public entry points; taint decides whether attacker
+input provably reaches a vulnerable call (see *Finding signals* below). Both
+are accurate to the analyzers in `scanner/analyzers/` and `scanner/taint/`.
+
+| Language | Route / framework detection | Taint sources |
+|---|---|---|
+| **Python** | Flask (`@route`/`@get`, `add_url_rule`, Blueprint prefixes, Flask-RESTful `add_resource`), FastAPI (`@get` …, `APIRouter` + `include_router` prefix, `add_api_route`), Django (`urls.py` `path` / `re_path` / `url`), Starlette (`Route` list + `Mount` + `add_route` + the deprecated `@app.route`) | `request` (Flask / Django), the FastAPI `Request` parameter, and Starlette request reads incl. `await request.json()` / `.form()` / `.body()` |
+| **JavaScript** | Express, Koa, Fastify | Express `req` (`req.query` / `.body` / `.params` …), Koa `ctx` (`ctx.query`, `ctx.request.body` …) |
+| **Go** | `net/http` (`HandleFunc`), gin, echo, chi, gorilla/mux (`HandleFunc().Methods()`), fiber | `*http.Request` (`FormValue`, `.Form` / `.Header` / `.Body`, `URL.Query()`), `*gin.Context`, `echo.Context`, chi handlers (via `*http.Request`), `mux.Vars`, `*fiber.Ctx` |
+| **PHP** | Laravel (`Route::verb`), Slim (`$app->verb`), Symfony (`#[Route]` PHP-8 attribute) | *none* — the PHP analyzer emits no dependency call edges, so there is no sink for taint to reach |
+
+**Call resolution scope:** Python resolves calls across files plus single-hop
+method dispatch with a proven receiver; JavaScript resolves across module
+imports; Go resolves across packages, including same-package cross-file bare
+calls and handlers; PHP is single-file. Every taint verdict is `tainted` or
+`not_proven`, and `not_proven` never means "safe" — see *Finding signals* and
+*Limitations*.
 
 ## Install & usage
 
@@ -151,7 +180,7 @@ All tools take a `repo_path` and return compact JSON. The first call scans the
 repo; the graph is cached per path and reused (pass `refresh=true` to re-scan).
 The advisory tiers behind `audit` / `finding_detail` work with no API key via
 the offline heuristic, and honour the same `LLM_*` env vars as the CLI when a
-model is configured. The ten tools, grouped by capability:
+model is configured. The twelve tools, grouped by capability:
 
 **Navigate** (replace manual file reading)
 - `vulnreach_scan_overview` — scan + structural map: counts, languages, entry points, top modules/files. The "understand this repo" entry point.
@@ -168,6 +197,13 @@ model is configured. The ten tools, grouped by capability:
 **Fix**
 - `vulnreach_remediation` — for one dependency or all vulnerable ones: current version, smallest fixed version that clears the CVEs, the manifest file and pin to change, reachability priority, and the entry points/paths to re-test after upgrading.
 - `vulnreach_apply_upgrade` — surgically re-pin one dependency in its manifest and return a unified diff (`dry_run=true` by default previews only). Refuses when the pin is ambiguous or a range, pointing at the file/line to edit manually.
+- `vulnreach_verify_fix` — **prove** an upgrade before committing it, without touching the repo. Clears the CVEs by version-math against each advisory's own `fixed_versions`, then applies the upgrade to a throwaway **copy**, re-audits it, and confirms nothing new became reachable/tainted and no existing finding escalated. Needs a successful networked baseline (offline → nothing can be proven). Returns a six-value `verdict`: `unverified_no_baseline`, `no_known_cves`, `cve_not_cleared`, `cve_cleared_regressions_unknown`, `fix_introduces_new_exposure`, or `fix_verified`.
+- `vulnreach_diff` — compare two checkouts (e.g. PR base vs. head) through the identical reachability-/taint-aware pipeline and report which findings a change **resolved**, **introduced**, or **shifted** (reachability / verdict / `symbol_match` / `taint` / version transitions).
+
+An MCP prompt, `audit_and_fix`, scripts the full audit → remediate → preview →
+prove loop (`vulnreach_audit` → `vulnreach_remediation` → `vulnreach_apply_upgrade`
+dry-run → `vulnreach_verify_fix`) prioritising `tainted` > `confirmed` >
+`reachable`.
 
 ## Example output
 
@@ -282,7 +318,7 @@ here.
 
 ## Reachability verdicts and the soundness rule
 
-Every declared dependency gets one of three verdicts:
+Every dependency gets one of three verdicts:
 
 * **`reachable`**: a path of *resolved* `route_to_handler` / `calls` edges runs
   from a public entry point to the dependency.
@@ -293,10 +329,13 @@ Every declared dependency gets one of three verdicts:
   unresolved call exists on the reachable region, so an unseen edge might lead
   there. We refuse to rule it out.
 
-Precisely: a non-reached dependency is `unreachable` if and only if the sum of
-unresolved-call counts over every function reachable from any entry point is
-zero. Otherwise it is `potentially_reachable`. The per-entry-point verdict
-applies the same rule to that entry point's reachable set.
+Precisely: a non-reached **direct** dependency is `unreachable` if and only if
+the sum of unresolved-call counts over every function reachable from any entry
+point is zero. Otherwise it is `potentially_reachable`. The per-entry-point
+verdict applies the same rule to that entry point's reachable set. A **transitive**
+dependency is the one exception: when not reached by a resolved path it is
+*always* `potentially_reachable`, never `unreachable`, because we do not analyse
+a dependency's internals and so cannot prove it unused.
 
 ## Finding signals: symbol_match, taint, and the impact funnel
 
@@ -315,16 +354,18 @@ advisory's named vulnerable function against the reachable call paths:
 
 **`taint`** (Python, JavaScript, and Go) asks whether attacker-controlled input
 provably reaches the vulnerable call. `tainted` means web input — Python
-(Flask / FastAPI / Django `request`), JavaScript (Express / Koa `req`/`ctx`), or
-Go (net/http `*http.Request`, gin / echo) — flows into that call; otherwise
-`not_proven`. `not_proven` is
-**not** "safe": it means no flow was proven. It is a strict refinement:
-`tainted` implies `symbol_match: confirmed`, which implies `reachable`. Known
-misses (reported as `not_proven`, never guessed): flows laundered through a
-return value, `*args` forwarding, and instance methods called across files.
+(Flask / FastAPI / Django `request`, Starlette request), JavaScript
+(Express / Koa `req`/`ctx`), or Go (net/http `*http.Request`, gin, echo, chi,
+gorilla/mux `mux.Vars`, fiber) — flows into that call; otherwise `not_proven`.
+`not_proven` is **not** "safe": it means no flow was proven. It is a strict
+refinement: `tainted` implies `symbol_match: confirmed`, which implies
+`reachable`. Known misses (reported as `not_proven`, never guessed): flows
+laundered through a return value, `*args` forwarding, computed/dynamic member
+access, callback bodies, and instance methods called across files in Python.
 
 **Impact funnel**: `audit` prints one summary line, and the dashboard shows it
-as a funnel, narrowing from everything declared to what is actually exploitable:
+as a funnel, narrowing from every dependency (direct + transitive) to what is
+actually exploitable:
 
 ```
 Funnel: N deps · M known CVEs · R reachable · C vulnerable-function confirmed · T exploitable (attacker input reaches the call)
@@ -406,11 +447,17 @@ recorded as `unresolved_calls`.
   are queried; ranges such as `>=2.20.0` (e.g. `requests` in the sample) are
   skipped rather than guessed. Python and PHP versions are as *declared*; npm
   uses the lockfile's resolved version when one exists.
-* **Transitive dependencies are not over-claimed.** The graph contains the
-  dependencies *declared* in manifests (lockfiles only supply exact versions for
-  those). Transitive packages are not graph nodes, so they are neither matched
-  against OSV nor reported as reachable, and reachability is never inferred
-  through a dependency's internals.
+* **Transitive dependencies are enumerated but never ruled out.** The resolved
+  tree from lockfiles / `// indirect` requires is walked (npm, Go, Python
+  `poetry.lock` / `Pipfile.lock`, PHP `composer.lock`) and those packages become
+  graph nodes tagged `direct=false`, so they *are* correlated against OSV. But a
+  transitive dep that no resolved path reaches is always `potentially_reachable`,
+  **never** `unreachable`: we do not analyse a dependency's internals, so we
+  cannot prove which of its own transitive edges a direct dependency exercises
+  (the soundness rule). A plain `requirements.txt` carries no direct/transitive
+  signal, so its entries are all treated as direct and cannot be split. The
+  summary object exposes `direct_dependencies` / `transitive_dependencies`
+  counts, and the dashboard has a transitive toggle.
 * **Taint covers Python, JavaScript, and Go, and is conservative.** PHP findings
   always get `taint: not_proven` (the PHP analyzer is single-file and emits no
   dependency call edges, so there is no sink for taint to reach). In the three
@@ -433,7 +480,9 @@ recorded as `unresolved_calls`.
 browser (it pulls Cytoscape and fonts from a CDN), pick an entry point to
 highlight the path to the dependencies it reaches, or use "Load a scan" to open
 a graph JSON produced by `vulnreach scan -o`. A bundled sample graph loads by
-default.
+default. Fed an `audit --bundle` JSON it additionally shows the ranked findings
+overlaid on the graph, the per-finding `symbol_match` / `taint` **escalation
+view**, the **impact funnel**, and a **transitive-dependency toggle**.
 
 <!-- integration / credits section added separately -->
 

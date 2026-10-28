@@ -9,7 +9,7 @@ scans a repo, builds a 4-language knowledge graph, computes three-way reachabili
 (which entry point reaches which functions and dependencies), correlates the deps
 against real CVE data (OSV + CISA KEV + EPSS), reports coverage/confidence, and —
 with `--explain` — runs an agent pass over the docs to assess exposure. The
-dashboard overlays the reachable-vulnerable findings on the graph. **508 tests pass**.
+dashboard overlays the reachable-vulnerable findings on the graph. **516 tests pass**.
 Every finding now escalates: reachable -> vulnerable-function confirmed (symbol_match)
 -> exploitable (taint, Python/JS/Go); transitive dependencies across the full lockfile
 tree (npm/Go/poetry/Pipenv/composer) are correlated; and the scanner is exposed as 12
