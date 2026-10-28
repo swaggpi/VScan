@@ -89,11 +89,27 @@ from .core import (
 # data. ``requests`` (the HTTP client) is deliberately excluded: it is matched
 # by resolved dependency symbols, never by this name.
 _REQUEST_SOURCE_ATTRS: frozenset[str] = frozenset(
-    {"args", "form", "values", "json", "data", "files", "headers", "cookies"}
+    {
+        "args",
+        "form",
+        "values",
+        "json",
+        "data",
+        "files",
+        "headers",
+        "cookies",
+        # Starlette (ASGI) request attributes carrying attacker input.
+        "query_params",
+        "path_params",
+    }
 )
 
-# ``request`` method-call sources (``request.get_json(...)`` / ``get_data(...)``).
-_REQUEST_SOURCE_METHODS: frozenset[str] = frozenset({"get_json", "get_data"})
+# ``request`` method-call sources: Flask ``request.get_json(...)`` /
+# ``get_data(...)``, and Starlette ``await request.json()`` / ``.form()`` /
+# ``.body()`` (the ``await`` is made transparent in ``_taint_of_expr``).
+_REQUEST_SOURCE_METHODS: frozenset[str] = frozenset(
+    {"get_json", "get_data", "json", "form", "body"}
+)
 
 # The one name that denotes the Flask/Django request object (and, by convention,
 # the FastAPI ``Request`` parameter -- see ``_handler_param_sources``).
@@ -266,6 +282,11 @@ def _taint_of_expr(node: ast.AST | None, env: _Env) -> set[str]:
         return _taint_of_expr(node.value, env)
 
     if isinstance(node, ast.Starred):
+        return _taint_of_expr(node.value, env)
+
+    # ``await X`` is transparent to taint: Starlette sources are awaited, e.g.
+    # ``data = await request.json()`` -- taint(await X) == taint(X).
+    if isinstance(node, ast.Await):
         return _taint_of_expr(node.value, env)
 
     # String concat / `%` / arithmetic: taint of either operand.

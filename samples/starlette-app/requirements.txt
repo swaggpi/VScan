@@ -1,0 +1,4 @@
+# Starlette ASGI demo. PyYAML is pinned old on purpose so the taint pass has a
+# well-known advisory sink to flow attacker input into.
+starlette==0.14.2
+PyYAML==5.3.1
