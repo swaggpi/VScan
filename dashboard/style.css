@@ -262,7 +262,7 @@ body {
      the space; it opens to --detail-w when a datasheet is shown. */
   grid-template-columns: var(--rail-w) minmax(0, 1fr) 0;
   min-height: 0;
-  transition: grid-template-columns 0.24s ease;
+  transition: grid-template-columns 0.18s ease;
 }
 .layout.has-detail {
   grid-template-columns: var(--rail-w) minmax(0, 1fr) var(--detail-w);
@@ -412,7 +412,6 @@ body {
   box-shadow: 0 0 8px var(--alert-glow);
   animation: kevpulse 2.4s ease-in-out infinite;
 }
-.tag--epss { color: var(--ink-mut); }
 .tag--reach { border-color: var(--signal); color: var(--signal); }
 
 @keyframes kevpulse {
@@ -798,7 +797,7 @@ body.has-transitive .legend__item--transitive { display: flex; }
   min-height: 0;
   transform: translateX(14px);
   opacity: 0;
-  transition: transform 0.24s ease, opacity 0.2s ease;
+  transition: transform 0.18s ease, opacity 0.16s ease;
 }
 .layout.has-detail .detail { transform: none; opacity: 1; }
 .detail__inner { display: flex; flex-direction: column; min-height: 100%; }
@@ -1066,6 +1065,21 @@ details[open] > summary .disc__chev { transform: rotate(90deg); }
 .disc__sum:hover { color: var(--ink); }
 .disc__sum .disc__chev { border-left-color: var(--signal); }
 .disc__body { display: flex; flex-direction: column; gap: 0.7rem; margin-top: 0.7rem; }
+
+/* Minimal dependency drawer: Status badges on one line, a condensed attacker-flow
+   line, and collapsed per-CVE disclosures (CVE id + severity badge in the row). */
+.statusline { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; }
+.status-flow { margin: 0.5rem 0 0; font: 400 0.74rem/1.5 var(--f-body); color: var(--ink-dim); }
+.status-flow code { font: 500 0.68rem/1 var(--f-mono); color: var(--alert-ink); }
+.cve-disc { border-top: 1px solid var(--hair); padding-top: 0.55rem; }
+.cve-disc .disc__sum { justify-content: flex-start; gap: 0.5rem; text-transform: none; letter-spacing: 0; }
+.cve-disc__id {
+  flex: 1 1 auto;
+  font: 600 0.72rem/1.2 var(--f-mono);
+  letter-spacing: 0; text-transform: none;
+  color: var(--ink); word-break: break-all;
+}
+.kv--cve { margin-top: 0.1rem; }
 
 /* ---------------------------------------------------------------- dependency groups (findings) */
 .deplist--vuln { gap: 0.4rem; }

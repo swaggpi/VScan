@@ -1071,22 +1071,6 @@
     });
   }
 
-  // Advisory dynamic-usage kind -> { label, cls } for a compact badge.
-  var USAGE_META = {
-    config_or_infra:        { label: "config / infra",  cls: "use use--infra" },
-    dynamic_import:         { label: "dynamic import",   cls: "use use--dynamic" },
-    dev_or_build_only:      { label: "dev / build only", cls: "use use--dev" },
-    transitive_or_indirect: { label: "transitive",       cls: "use use--transitive" },
-    not_found:              { label: "no references",     cls: "use use--none" },
-    uncertain:              { label: "usage unclear",     cls: "use use--uncertain" }
-  };
-  function usageBadge(u) {
-    if (!u || !u.usage_kind) return "";
-    var m = USAGE_META[u.usage_kind] || USAGE_META.uncertain;
-    return '<span class="' + m.cls + '" title="Advisory dynamic-usage investigation">' +
-      esc(m.label) + '</span>';
-  }
-
   // The triage entry matching a finding's CVE within its dependency, if any:
   // a triage row covers a (dependency, CVE) pair via its `cve`/`cves` fields.
   function triageForFinding(f) {
@@ -1120,68 +1104,6 @@
   }
   var TRIAGE_RANK = { affected: 3, uncertain: 2, likely_unaffected: 1 };
   function triageRank(v) { return TRIAGE_RANK[v] || 0; }
-
-  // Symbol-level reachability -> { label, cls }. DETERMINISTIC (derived from the
-  // resolved call graph vs. the advisory's vulnerable symbols), NOT advisory — so
-  // it carries no "Advisory" flag, unlike triage/usage. Mirrors usageBadge.
-  var SYMBOL_MATCH_META = {
-    confirmed:         { label: "vulnerable function reached",             cls: "sym sym--confirmed" },
-    package_reachable: { label: "package reachable, function unconfirmed",  cls: "sym sym--package" },
-    no_path:           { label: "not reachable",                           cls: "sym sym--none" }
-  };
-  function symbolBadge(f) {
-    if (!f || !f.symbol_match) return "";
-    var m = SYMBOL_MATCH_META[f.symbol_match];
-    if (!m) return "";
-    return '<span class="' + m.cls + '" title="Symbol-level reachability (deterministic)">' +
-      esc(m.label) + '</span>';
-  }
-
-  // Taint -> { label, cls }. DETERMINISTIC (a proven data-flow from an attacker
-  // source to the vulnerable call), NOT advisory. "tainted" is the strongest
-  // escalation; "not_proven" is a dim note. Mirrors triageBadge.
-  var TAINT_META = {
-    tainted:    { label: "exploitable — attacker input reaches the call", cls: "taint taint--tainted" },
-    not_proven: { label: "no proven attacker-input flow",                 cls: "taint taint--none" }
-  };
-  function taintBadge(f) {
-    if (!f || !f.taint) return "";
-    var m = TAINT_META[f.taint];
-    if (!m) return "";
-    return '<span class="' + m.cls + '" title="Taint analysis (deterministic)">' +
-      esc(m.label) + '</span>';
-  }
-
-  // One rung of the deterministic escalation ladder: a status dot (lit in its
-  // tone when reached, dim otherwise) + the stage name + a detail badge.
-  function escalStep(label, on, tone, detail) {
-    return '<li class="escal__step' + (on ? " is-on escal__step--" + tone : "") + '">' +
-      '<span class="escal__dot" aria-hidden="true"></span>' +
-      '<div class="escal__text"><span class="escal__label">' + esc(label) + '</span>' +
-      (detail ? '<span class="escal__detail">' + detail + '</span>' : '') +
-      '</div></li>';
-  }
-
-  // The taint evidence trail: attacker source -> the resolved node path -> the
-  // vulnerable sink symbol. Mirrors the example-path rendering (path-steps).
-  function taintEvidenceHtml(ev) {
-    if (!ev) return "";
-    var chain = (ev.path || []).map(function (id) {
-      var m = model.index[id]; return m ? (m.name || m.id) : id;
-    });
-    var flow = '<span class="taint-ev__src">' + esc(ev.source || "source") + '</span>' +
-      (chain.length
-        ? ' <span class="taint-ev__arrow">→</span> <span class="path-steps">' + esc(chain.join(" → ")) + '</span>'
-        : '') +
-      ' <span class="taint-ev__arrow">→</span> ' +
-      '<span class="taint-ev__sink">' + esc(ev.sink_symbol || "sink") + '</span>';
-    return '<div class="taint-ev">' +
-      '<div class="taint-ev__h">Attacker-input flow</div>' +
-      '<div class="taint-ev__flow">' + flow + '</div>' +
-      (ev.entrypoint ? '<p class="dim-note">Via entry point ' + esc(ev.entrypoint) + '.</p>' : '') +
-      '</div>';
-  }
-
 
   function sevTag(f) {
     var label = (f.severity || "UNKNOWN").toUpperCase();
@@ -1310,7 +1232,6 @@
         (f.summary ? '<div class="cve__sum">' + esc(f.summary) + '</div>' : "") +
         '<div class="vuln__tags">' + sevTag(f) +
         (f.kev ? '<span class="tag tag--kev">KEV</span>' : "") +
-        (f.epss != null ? '<span class="tag tag--epss">EPSS ' + Number(f.epss).toFixed(3) + '</span>' : "") +
         (f.reachable ? '<span class="tag tag--reach">reachable</span>' : "") +
         (f.symbol_match === "confirmed" ? '<span class="sym sym--confirmed">confirmed</span>' : "") +
         (f.taint === "tainted" ? '<span class="taint taint--tainted">tainted</span>' : "") +
@@ -1387,8 +1308,8 @@
       if (!eles || !eles.length) eles = cy.nodes(":visible");
       if (!eles.length) return;
       if (REDUCED) cy.fit(eles, GRAPH_PAD);
-      else cy.animate({ fit: { eles: eles, padding: GRAPH_PAD } }, { duration: 220, easing: "ease-out" });
-    }, 260);
+      else cy.animate({ fit: { eles: eles, padding: GRAPH_PAD } }, { duration: 140, easing: "ease-out" });
+    }, 190);
   }
 
   // Assessments whose reaching_entrypoints include this endpoint's label
@@ -1541,7 +1462,7 @@
     } else {
       html += '<p class="dim-note">This route resolves no call into a declared dependency.</p>';
     }
-    html += '<button type="button" class="btn-trace" data-ep="' + esc(n.id) + '">Light this trace</button></section>';
+    html += '</section>';
 
     // One primary block — the integrated agent summary + Sources line — with all
     // the depth (badges, rationale, context groups, doc excerpts) tucked one
@@ -1599,160 +1520,110 @@
     return html + '</div>';
   }
 
+  // The MINIMAL dependency drawer: exactly four sections — Package details,
+  // Status (escalation verdict as compact badges + one condensed line), Quick
+  // summary (the dep-level agent reasoning synthesised from triage + usage), and
+  // one collapsed <details> per CVE. Selecting the node already lights its
+  // reaching subgraph (the tap handler calls lightReverseTrace), so there is no
+  // "light this trace" button here.
   function detailDependency(n) {
     var a = n.attrs || {};
     var vs = vulnByDep[n.id];
     var depFindings = findings.filter(function (f) { return f.dependency_id === n.id; });
     var html = detailHead("dependency", n.name || n.id) + '<div class="detail__body">';
 
-    html += '<section class="dsec"><h2 class="dsec__h">Package' +
-      (a.direct === false ? ' <span class="use use--transitive">transitive</span>' : '') +
-      '</h2><dl class="kv">' +
+    // (a) Package details — one tidy key/value block.
+    html += '<section class="dsec"><h2 class="dsec__h">Package details</h2><dl class="kv">' +
       '<dt>Name</dt><dd>' + esc(n.name || n.id) + '</dd>' +
       (a.version ? '<dt>Version</dt><dd class="is-signal">' + esc(a.version) + '</dd>' : "") +
       (a.ecosystem ? '<dt>Ecosystem</dt><dd>' + esc(a.ecosystem) + '</dd>' : "") +
       (a.source_file ? '<dt>Declared in</dt><dd>' + esc(a.source_file) + '</dd>' : "") +
+      '<dt>Scope</dt><dd>' + (a.direct === false ? 'transitive' : 'direct') + '</dd>' +
       '</dl></section>';
 
-    // Lead key fact: is it reached, and by what path. The button lights the FULL
-    // reaching subgraph (reverse BFS), enabled whenever anything reaches this dep.
-    var canReverse = (model.inByDst[n.id] || []).some(function (e) { return TRACE_EDGES[e.kind]; });
-    html += '<section class="dsec"><h2 class="dsec__h">Reachability</h2>';
-    if (vs && vs.reachable && vs.entrypoints.length) {
-      html += '<span class="verdict verdict--reach">Reachable from a public route</span>' +
-        '<p class="dim-note">Via ' + vs.entrypoints.map(esc).join(", ") + '.</p>';
-      var withPath = depFindings.filter(function (f) { return f.example_path && f.example_path.length; })[0];
-      if (withPath) {
-        var steps = withPath.example_path.map(function (id) { var m = model.index[id]; return m ? (m.name || m.id) : id; });
-        html += '<p class="vuln__path"><span class="path-steps">' + esc(steps.join(" → ")) + '</span></p>';
+    // (b) Status — the escalation verdict as compact badges, then ONE short line:
+    // the condensed attacker-input path when exploitable, else the reaching route.
+    html += '<section class="dsec"><h2 class="dsec__h">Status</h2>';
+    if (vs) {
+      var ef = vs.escFinding || depFindings[0] || {};
+      var reachOk = !!vs.reachable;
+      var symOk = ef.symbol_match === "confirmed" || !!vs.symbolConfirmed;
+      var taintOk = ef.taint === "tainted" || !!vs.tainted;
+      html += '<div class="statusline">' +
+        (reachOk
+          ? '<span class="tag tag--reach">reachable</span>'
+          : '<span class="verdict verdict--maybe">not reached</span>') +
+        (symOk ? '<span class="sym sym--confirmed">vulnerable function confirmed</span>' : "") +
+        (taintOk ? '<span class="taint taint--tainted">exploitable</span>' : "") +
+        '</div>';
+      if (taintOk) {
+        var tf = depFindings.filter(function (f) { return f.taint === "tainted" && f.taint_evidence; })[0] || ef;
+        var ev = tf.taint_evidence;
+        if (ev) {
+          html += '<p class="status-flow">Exploitable via ' + esc(ev.entrypoint || "a public route") +
+            ' — <code>' + esc(ev.source || "source") + '</code> → <code>' + esc(ev.sink_symbol || "sink") + '</code></p>';
+        }
+      } else if (reachOk && vs.entrypoints.length) {
+        html += '<p class="status-flow">Reachable via ' + esc(vs.entrypoints.join(", ")) + '.</p>';
+      } else if (!reachOk) {
+        var dv = (depFindings[0] && depFindings[0].verdict) || "";
+        html += '<p class="dim-note">' + esc(verdictText({ verdict: dv })) + '</p>';
       }
-    } else if (vs) {
-      // Surface the three-way verdict, not a flat "not reached": a confident
-      // "unreachable" (call graph fully resolved) reads differently from a
-      // "potentially reachable" dep whose region still has unresolved calls.
-      var dv = (depFindings[0] && depFindings[0].verdict) || "";
-      var vcls = dv === "unreachable" ? "verdict verdict--safe" : "verdict verdict--maybe";
-      var vlabel = dv === "unreachable" ? "Unreachable"
-        : (dv === "potentially_reachable" ? "Potentially reachable" : "Not reached");
-      html += '<span class="' + vcls + '">' + vlabel + ' from a public route</span>' +
-        '<p class="dim-note">' + esc(verdictText({ verdict: dv })) + '</p>';
     } else {
       html += '<span class="verdict verdict--maybe">No findings matched</span>';
     }
-    html += canReverse
-      ? '<button type="button" class="btn-trace" data-dep="' + esc(n.id) + '">Light the reaching subgraph</button>'
-      : '<button type="button" class="btn-trace" disabled>Nothing reaches this</button>';
     html += '</section>';
 
-    // Deterministic escalation (NOT advisory, so no Advisory flag): reachable ->
-    // vulnerable function reached (symbol_match) -> exploitable (taint). Each rung
-    // lights in its tone when proven, dim otherwise; the tainted rung shows the
-    // attacker-input evidence trail.
-    if (vs) {
-      var ef = vs.escFinding || depFindings[0] || {};
-      var symOk = ef.symbol_match === "confirmed";
-      var taintOk = ef.taint === "tainted";
-      html += '<section class="dsec"><h2 class="dsec__h">Escalation</h2>' +
-        '<ol class="escal">' +
-          escalStep("Reachable from a public route", !!vs.reachable, "reach",
-            vs.reachable ? '' : '<span class="escal__none">not reached</span>') +
-          escalStep("Vulnerable function reached", symOk, "sym", symbolBadge(ef)) +
-          escalStep("Exploitable", taintOk, "taint", taintBadge(ef)) +
-        '</ol>';
-      if (taintOk && ef.taint_evidence) html += taintEvidenceHtml(ef.taint_evidence);
-      html += '</section>';
-    }
-
-    // Advisory exploitability triage: does the code actually call the vulnerable
-    // surface? Leads with the strongest verdict; per-CVE rationale sits below.
+    // (c) Quick summary — the dep-level AGENT REASONING: the triage rationale(s)
+    // (strongest verdict first) plus the dynamic-usage summary, synthesised into a
+    // short note. Flagged Advisory (heuristic until a model is configured).
     var trows = triageByDep[n.id] || [];
-    if (trows.length) {
-      var ranked = trows.slice().sort(function (a, b) {
-        return triageRank(b.affected) - triageRank(a.affected);
-      });
-      var top = ranked[0];
-      var symbols = uniq([].concat.apply([], trows.map(function (t) {
-        return (t.called_symbols || []);
-      })));
-      html += '<section class="dsec"><h2 class="dsec__h">Exploitability ' +
-        '<span class="advisory-flag">Advisory</span></h2>' +
-        '<div class="tri-lead">' + triageBadge(top) +
-        (top.confidence ? '<span class="tri-conf">' + esc(top.confidence) + ' confidence</span>' : "") +
-        '</div>' +
-        (symbols.length
-          ? '<p class="dim-note">Called into this package: <code>' +
-            symbols.map(esc).join('</code>, <code>') + '</code></p>'
-          : '<p class="dim-note">No resolved calls into this package.</p>');
-      var triBody = '<ul class="cvelist">';
-      ranked.forEach(function (t) {
-        var tcve = (t.cves && t.cves.length) ? t.cves.join(", ") : (t.cve || t.vuln_id || "");
-        triBody += '<li class="cve"><div class="cve__id">' + esc(tcve) + ' ' + triageBadge(t) + '</div>' +
-          (t.rationale ? '<div class="cve__sum">' + esc(t.rationale) + '</div>' : "") + '</li>';
-      });
-      triBody += '</ul>';
-      html += '<div class="tri-detail">' + disclosure("Per-CVE reasoning", triBody, false) + '</div>';
-      html += '<p class="advisory-foot">Advisory only — compares called symbols to the advisory text; it never changes the reachability verdict or the call graph.</p>';
-      html += '</section>';
-    }
-
-    // Advisory dynamic-usage investigation: for a vulnerable dep with NO static
-    // call into it, where/how is it actually used (dynamic import, config/infra,
-    // dev-only, transitive)? Fills the gap static analysis can't reach.
     var u = usageByDep[n.id];
-    if (u) {
-      html += '<section class="dsec"><h2 class="dsec__h">Usage ' +
-        '<span class="advisory-flag">Advisory</span></h2>' +
-        '<div class="tri-lead">' + usageBadge(u) +
-        (u.confidence ? '<span class="tri-conf">' + esc(u.confidence) + ' confidence</span>' : "") +
-        '</div>' +
-        (u.summary ? '<p class="prose clamp">' + esc(u.summary) + '</p>' + moreBtn() : "");
-      var ev = Array.isArray(u.evidence) ? u.evidence : [];
-      if (ev.length) {
-        var evBody = '<ul class="evlist">';
-        ev.forEach(function (h) {
-          var loc = esc(String(h.source || "")) + (h.line ? ":" + esc(String(h.line)) : "");
-          evBody += '<li class="ev"><div class="ev__loc">' + loc + '</div>' +
-            (h.snippet ? '<div class="snip__text clamp">' + esc(String(h.snippet).trim()) + '</div>' + moreBtn() : "") +
-            '</li>';
-        });
-        evBody += '</ul>';
-        html += '<div class="tri-detail">' + disclosure(ev.length + " evidence " + (ev.length === 1 ? "reference" : "references"), evBody, false) + '</div>';
-      }
-      html += '<p class="advisory-foot">Advisory only — describes where/how the dependency is referenced; absence of a call edge is a lower bound, never a clean bill of health.</p>';
-      html += '</section>';
-    }
+    var reasons = [];
+    trows.slice().sort(function (x, y) { return triageRank(y.affected) - triageRank(x.affected); })
+      .forEach(function (t) { if (t.rationale && reasons.indexOf(t.rationale) < 0) reasons.push(t.rationale); });
+    if (u && u.summary && reasons.indexOf(u.summary) < 0) reasons.push(u.summary);
+    var summaryText = reasons.slice(0, 2).join(" ");
+    html += '<section class="dsec"><h2 class="dsec__h">Summary ' +
+      '<span class="advisory-flag">Advisory</span></h2>' +
+      (summaryText
+        ? '<p class="prose clamp">' + esc(summaryText) + '</p>' + moreBtn()
+        : '<p class="dim-note">No advisory context.</p>') +
+      '</section>';
 
-    // Its CVEs — the dependency's reason to care. Inline when few; one click away
-    // when there are many, so a 7-CVE package doesn't flood the panel.
+    // (d) CVEs — one collapsed <details> per CVE. The summary row is just the CVE
+    // id + a severity badge; expanding reveals title, bounded advisory text, the
+    // CVSS score+label and the fixed version(s). No EPSS / vector fine print.
+    html += '<section class="dsec"><h2 class="dsec__h">CVEs' +
+      (depFindings.length ? ' <span class="dsec__count">' + depFindings.length + '</span>' : '') + '</h2>';
     if (!depFindings.length) {
-      html += '<section class="dsec"><h2 class="dsec__h">Advisories</h2>' +
-        '<p class="dim-note">No known vulnerabilities matched this version.</p></section>';
+      html += '<p class="dim-note">No known vulnerabilities matched this version.</p>';
     } else {
-      var cveHtml = '<ul class="cvelist">';
-      depFindings.forEach(function (f) {
+      depFindings.slice().sort(function (x, y) {
+        return (y.reachable - x.reachable) ||
+          ((SEV_RANK[(y.severity || "").toUpperCase()] || 0) - (SEV_RANK[(x.severity || "").toUpperCase()] || 0));
+      }).forEach(function (f) {
         var cve = (f.cve_ids && f.cve_ids.length) ? f.cve_ids.join(", ") : (f.vuln_id || "");
-        cveHtml += '<li class="cve"><div class="cve__id">' + esc(cve) + '</div>' +
-          (f.summary ? '<div class="cve__sum">' + esc(f.summary) + '</div>' : "") +
-          '<div class="vuln__tags">' + sevTag(f) +
-          (f.kev ? '<span class="tag tag--kev">KEV</span>' : "") +
-          (f.epss != null ? '<span class="tag tag--epss">EPSS ' + Number(f.epss).toFixed(3) + '</span>' : "") +
-          (f.reachable ? '<span class="tag tag--reach">reachable</span>' : "") +
-          (f.symbol_match === "confirmed" ? '<span class="sym sym--confirmed">confirmed</span>' : "") +
-          (f.taint === "tainted" ? '<span class="taint taint--tainted">tainted</span>' : "") +
-          triageBadge(triageForFinding(f)) +
-          '</div>' +
-          (f.fixed_versions && f.fixed_versions.length ? '<div class="cve__fix">Fixed in <b>' + esc(f.fixed_versions.join(", ")) + '</b></div>' : "") +
-          '</li>';
+        var sevLabel = (f.severity || "UNKNOWN").toUpperCase();
+        var sevCls = "tag tag--sev" + (sevLabel === "CRITICAL" ? " tag--sev-critical" : "");
+        var cvssTxt = sevLabel + (f.cvss_score != null ? " · CVSS " + Number(f.cvss_score).toFixed(1) : "");
+        var body =
+          (f.summary ? '<p class="cve__sum">' + esc(f.summary) + '</p>' : "") +
+          (f.details ? '<p class="prose prose--quote clamp">' + esc(f.details) + '</p>' + moreBtn() : "") +
+          '<dl class="kv kv--cve">' +
+            '<dt>CVSS</dt><dd>' + esc(cvssTxt) + '</dd>' +
+            (f.fixed_versions && f.fixed_versions.length
+              ? '<dt>Fixed in</dt><dd class="is-signal">' + esc(f.fixed_versions.join(", ")) + '</dd>' : '') +
+          '</dl>';
+        html += '<details class="disc cve-disc"><summary class="disc__sum">' +
+          '<span class="disc__chev" aria-hidden="true"></span>' +
+          '<span class="cve-disc__id">' + esc(cve) + '</span>' +
+          '<span class="' + sevCls + '">' + esc(sevLabel) + '</span>' +
+          '</summary><div class="disc__body">' + body + '</div></details>';
       });
-      cveHtml += '</ul>';
-      if (depFindings.length > 4) {
-        html += '<section class="dsec">' +
-          disclosure(depFindings.length + " advisories", cveHtml, false) + '</section>';
-      } else {
-        html += '<section class="dsec"><h2 class="dsec__h">Advisories ' +
-          '<span class="dsec__count">' + depFindings.length + '</span></h2>' + cveHtml + '</section>';
-      }
     }
+    html += '</section>';
+
     return html + '</div>';
   }
 
@@ -1800,17 +1671,9 @@
     var root = el.detailInner;
     var close = root.querySelector("#detail-close");
     if (close) close.addEventListener("click", function () { resetView(); });
-    var tr = root.querySelector(".btn-trace[data-ep]");
-    if (tr) tr.addEventListener("click", function () {
-      var keepId = selectedNodeId;              // keep the open datasheet after lighting
-      lightTrace(tr.getAttribute("data-ep"), false);
-      if (keepId && model.index[keepId]) showDetail(model.index[keepId]);
-    });
-    // A dependency's trace button lights its full reverse-reachability subgraph.
-    var rtr = root.querySelector(".btn-trace[data-dep]");
-    if (rtr) rtr.addEventListener("click", function () {
-      lightReverseTrace(rtr.getAttribute("data-dep"), false);
-    });
+    // Selecting a node already lights its reaching subgraph (the graph tap and the
+    // entry-point list both route through lightTrace / lightReverseTrace), so the
+    // drawer no longer carries a "light this trace" button.
     // Expand/collapse clamped snippets and docstrings (only when truly overflowing).
     Array.prototype.forEach.call(root.querySelectorAll(".more[data-clamp]"), function (btn) {
       var target = btn.previousElementSibling;
@@ -2105,14 +1968,14 @@
     var next = Math.max(cy.minZoom(), Math.min(cy.maxZoom(), cy.zoom() * factor));
     var centre = { x: cy.width() / 2, y: cy.height() / 2 };
     if (REDUCED) cy.zoom({ level: next, renderedPosition: centre });
-    else cy.animate({ zoom: { level: next, renderedPosition: centre } }, { duration: 180, easing: "ease-out" });
+    else cy.animate({ zoom: { level: next, renderedPosition: centre } }, { duration: 140, easing: "ease-out" });
   }
   if (el.zoomIn) el.zoomIn.addEventListener("click", function () { zoomBy(1.3); });
   if (el.zoomOut) el.zoomOut.addEventListener("click", function () { zoomBy(1 / 1.3); });
   if (el.zoomFit) el.zoomFit.addEventListener("click", function () {
     if (!cy) return;
     if (REDUCED) cy.fit(undefined, 44);
-    else cy.animate({ fit: { eles: cy.elements(":visible"), padding: 44 } }, { duration: 220, easing: "ease-out" });
+    else cy.animate({ fit: { eles: cy.elements(":visible"), padding: 44 } }, { duration: 140, easing: "ease-out" });
   });
 
   /* ---------------------------------------------------------------- views */
