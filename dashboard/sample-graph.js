@@ -1,5 +1,5 @@
 // Bundled copy of sample-graph.json so the viewer renders on open (file:// cannot fetch local JSON).
-// Regenerate: vulnreach scan samples/vulnerable-app -o dashboard/sample-graph.json, then re-embed.
+// Regenerate: vscan scan samples/vulnerable-app -o dashboard/sample-graph.json, then re-embed.
 window.SAMPLE_GRAPH = {
   "version": 1,
   "nodes": [
@@ -154,7 +154,7 @@ window.SAMPLE_GRAPH = {
       "attrs": {
         "relpath": "README.md",
         "kind_hint": "prose",
-        "excerpt": "# demo app\n\nA small, multi-ecosystem demo target for the vulnreach scanner. It pins old\ndependencies on purpose and keeps a short, resolvable call chain.\n\n## Endpoints\n\nThe `/import` endpoint accepts uploads from any user and passes the body into\n`load_config`, which parses it as YAML. The `/health`"
+        "excerpt": "# demo app\n\nA small, multi-ecosystem demo target for the VScan scanner. It pins old\ndependencies on purpose and keeps a short, resolvable call chain.\n\n## Endpoints\n\nThe `/import` endpoint accepts uploads from any user and passes the body into\n`load_config`, which parses it as YAML. The `/health`"
       }
     },
     {

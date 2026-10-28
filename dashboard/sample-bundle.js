@@ -1,6 +1,6 @@
 // Bundled copy of sample-bundle.json so the viewer shows the vulnerability
 // overlay on open (file:// cannot fetch local JSON).
-// Regenerate: vulnreach audit samples/vulnerable-app --bundle dashboard/sample-bundle.json,
+// Regenerate: vscan audit samples/vulnerable-app --bundle dashboard/sample-bundle.json,
 // then re-embed as window.SAMPLE_BUNDLE.
 window.SAMPLE_BUNDLE = {
   "graph": {
@@ -157,7 +157,7 @@ window.SAMPLE_BUNDLE = {
         "attrs": {
           "relpath": "README.md",
           "kind_hint": "prose",
-          "excerpt": "# demo app\n\nA small, multi-ecosystem demo target for the vulnreach scanner. It pins old\ndependencies on purpose and keeps a short, resolvable call chain.\n\n## Endpoints\n\nThe `/import` endpoint accepts uploads from any user and passes the body into\n`load_config`, which parses it as YAML. The `/health`"
+          "excerpt": "# demo app\n\nA small, multi-ecosystem demo target for the VScan scanner. It pins old\ndependencies on purpose and keeps a short, resolvable call chain.\n\n## Endpoints\n\nThe `/import` endpoint accepts uploads from any user and passes the body into\n`load_config`, which parses it as YAML. The `/health`"
         }
       },
       {

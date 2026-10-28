@@ -1,5 +1,5 @@
 /* ===========================================================================
-   vulnreach · reachability viewer
+   VScan · reachability viewer
    Shape-agnostic: renders whatever node/edge kinds are present. The one
    orchestrated moment is the reachability trace lighting up from an entry
    point down to each dependency it reaches.
@@ -36,6 +36,8 @@
   var ALERT = "#F2654E";
 
   var cy = null;
+  var graphFitEles = null;  // the collection runLayout framed, reused on refit
+  var GRAPH_PAD = 56;       // viewport padding when fitting the diagram
   var model = { nodes: [], edges: [], index: {}, outByKind: {} };
   var visibleKinds = {};
   // Transitive (lockfile-only) dependencies are hidden by default — the
@@ -70,6 +72,7 @@
 
   var el = {
     counts: document.getElementById("counts"),
+    layout: document.querySelector(".layout"),
     funnel: document.getElementById("funnel"),
     eplist: document.getElementById("eplist"),
     epNote: document.getElementById("ep-note"),
@@ -180,11 +183,11 @@
       // read from fill and outline, never shape, so the layers stay uniform.
       { selector: "node", style: {
         "label": "data(label)", "font-family": "JetBrains Mono, monospace",
-        "font-size": 9, "color": "#A9CAE2", "text-opacity": 0.82, "text-valign": "bottom",
-        "text-margin-y": 7, "text-wrap": "ellipsis", "text-max-width": 108,
+        "font-size": 12, "color": "#BFDCF0", "text-opacity": 0.9, "text-valign": "bottom",
+        "text-margin-y": 9, "text-wrap": "ellipsis", "text-max-width": 150,
         // A dark halo lifts labels off the grid, edges and overlapping nodes.
-        "text-outline-color": "#081A2C", "text-outline-width": 2.6, "text-outline-opacity": 0.95,
-        "shape": "ellipse", "width": 20, "height": 20, "border-width": 1.5,
+        "text-outline-color": "#081A2C", "text-outline-width": 3, "text-outline-opacity": 0.95,
+        "shape": "ellipse", "width": 26, "height": 26, "border-width": 2,
         "background-color": "#4E7493", "border-color": "#6E93B2",
         "transition-property": "background-color, border-color, opacity, width, height, line-color",
         "transition-duration": REDUCED ? "0s" : "260ms"
@@ -192,24 +195,24 @@
       // Dependencies — the output layer. A solid cyan neuron, a touch larger.
       { selector: 'node[kind = "dependency"]', style: {
         "background-color": "#6FB8E0", "background-opacity": 0.95,
-        "border-color": "#C4E3F6", "border-width": 1.5,
-        "width": 30, "height": 30, "color": "#D7ECF9"
+        "border-color": "#C4E3F6", "border-width": 2,
+        "width": 42, "height": 42, "color": "#D7ECF9"
       }},
       // Functions — the hidden layers. A hollow, pale ring over the dark ground.
       { selector: 'node[kind = "function"]', style: {
         "background-color": "#0C2237", "background-opacity": 0.55,
-        "border-color": "#9FC6E0", "border-width": 1.5,
-        "width": 20, "height": 20
+        "border-color": "#9FC6E0", "border-width": 2,
+        "width": 30, "height": 30
       }},
       // Structural kinds (off by default) stay circles too, just small and muted.
-      { selector: 'node[kind = "module"]', style: { "background-color": "#2C4660", "border-color": "#4E7493", "width": 16, "height": 16 }},
-      { selector: 'node[kind = "file"]', style: { "background-color": "rgba(78,116,147,0.28)", "border-color": "#4E7493", "width": 15, "height": 15 }},
-      { selector: 'node[kind = "doc"]', style: { "background-color": "rgba(78,116,147,0.28)", "border-color": "#4E7493", "width": 16, "height": 16 }},
-      // Entry points — the input layer. A solid amber neuron at the base of the flow.
+      { selector: 'node[kind = "module"]', style: { "background-color": "#2C4660", "border-color": "#4E7493", "width": 24, "height": 24 }},
+      { selector: 'node[kind = "file"]', style: { "background-color": "rgba(78,116,147,0.28)", "border-color": "#4E7493", "width": 22, "height": 22 }},
+      { selector: 'node[kind = "doc"]', style: { "background-color": "rgba(78,116,147,0.28)", "border-color": "#4E7493", "width": 24, "height": 24 }},
+      // Entry points — the input layer. A solid amber neuron at the start of the flow.
       { selector: 'node[kind = "entrypoint"]', style: {
         "background-color": "#F2B134", "background-opacity": 0.95,
-        "border-color": "#F7CE78", "border-width": 2,
-        "width": 30, "height": 30, "color": "#F2B134", "font-weight": 600
+        "border-color": "#F7CE78", "border-width": 2.5,
+        "width": 42, "height": 42, "color": "#F7CE78", "font-weight": 600
       }},
 
       /* focused-view only: the compact stand-in for the entry points that reach
@@ -217,35 +220,35 @@
       { selector: 'node[kind = "epcluster"]', style: {
         "background-color": "rgba(78,116,147,0.18)", "border-color": "#4E7493",
         "border-width": 1.5, "border-style": "dashed", "shape": "round-rectangle",
-        "width": 150, "height": 42, "color": "#8FB2CE", "font-size": 9,
+        "width": 184, "height": 54, "color": "#8FB2CE", "font-size": 11,
         "text-valign": "center", "text-margin-y": 0, "text-wrap": "wrap",
-        "text-max-width": 134, "font-weight": 600
+        "text-max-width": 164, "font-weight": 600
       }},
 
       /* vulnerability overlay — a red ring marks a dependency with findings */
       { selector: 'node[vuln = 1]', style: {
-        "border-color": ALERT, "border-width": 3, "color": "#F79885",
-        "overlay-color": ALERT, "overlay-opacity": 0.12, "overlay-padding": 5
+        "border-color": ALERT, "border-width": 3.5, "color": "#F79885",
+        "overlay-color": ALERT, "overlay-opacity": 0.12, "overlay-padding": 6
       }},
       /* vulnerable AND reachable from a public route — the top visual signal.
          Kept a circle, just enlarged, so the network stays uniform. */
       { selector: 'node[vreach = 1]', style: {
-        "width": 38, "height": 38, "border-width": 3.5, "font-weight": 600,
-        "overlay-opacity": 0.2, "overlay-padding": 8
+        "width": 52, "height": 52, "border-width": 4, "font-weight": 600,
+        "overlay-opacity": 0.2, "overlay-padding": 9
       }},
       /* actively exploited (KEV) — strongest ring */
-      { selector: 'node[kev = 1]', style: { "border-width": 4, "overlay-opacity": 0.26 } },
+      { selector: 'node[kev = 1]', style: { "border-width": 4.5, "overlay-opacity": 0.26 } },
       /* the vulnerable FUNCTION was reached (symbol_match=confirmed) — amber ring
          layered over the red vuln ring: the call graph resolves into the flaw. */
       { selector: 'node[confirmed = 1]', style: {
-        "border-color": "#F2B134", "border-width": 4, "width": 40, "height": 40,
-        "overlay-color": "#F2B134", "overlay-opacity": 0.26, "overlay-padding": 9
+        "border-color": "#F2B134", "border-width": 4.5, "width": 54, "height": 54,
+        "overlay-color": "#F2B134", "overlay-opacity": 0.26, "overlay-padding": 10
       }},
       /* EXPLOITABLE (taint=tainted) — the top problem on the canvas: attacker
          input reaches the call. Strongest emphasis: a thick red ring, largest. */
       { selector: 'node[tainted = 1]', style: {
-        "border-color": ALERT, "border-width": 5, "width": 44, "height": 44,
-        "color": "#F79885", "overlay-color": ALERT, "overlay-opacity": 0.34, "overlay-padding": 12
+        "border-color": ALERT, "border-width": 5.5, "width": 60, "height": 60,
+        "color": "#F79885", "overlay-color": ALERT, "overlay-opacity": 0.34, "overlay-padding": 13
       }},
 
       // Connections are thin, straight lines between layers — like the synapses
@@ -272,7 +275,7 @@
       /* off the call-flow spine (unreached functions, module/file/doc) — kept
          visible but visually secondary. Declared before .dim so an active trace
          still dims these further; .lit/.focus come later and override it. */
-      { selector: "node.offspine", style: { "opacity": 0.4, "font-size": 9, "text-opacity": 0.75 } },
+      { selector: "node.offspine", style: { "opacity": 0.4, "font-size": 11, "text-opacity": 0.75 } },
 
       /* dimmed (something else is selected) */
       { selector: ".dim", style: { "opacity": 0.12 } },
@@ -285,7 +288,7 @@
         "overlay-color": "#F2B134", "overlay-opacity": 0.22, "overlay-padding": 7
       }},
       { selector: 'node.lit[kind = "function"]', style: { "background-color": "#F2B134", "background-opacity": 0.9 } },
-      { selector: 'node.lit[kind = "entrypoint"]', style: { "background-color": "#F2B134", "width": 34, "height": 34, "overlay-padding": 9 } },
+      { selector: 'node.lit[kind = "entrypoint"]', style: { "background-color": "#F2B134", "width": 46, "height": 46, "overlay-padding": 9 } },
       // The lit trace is a bright amber straight line climbing the layers, with a
       // small arrowhead to show the direction of the call chain.
       { selector: "edge.lit", style: {
@@ -414,25 +417,32 @@
     return depth;
   }
 
-  // Explicit LAYERED top-down placement (a preset layout we compute, not a
-  // force/breadthfirst layout), so the diagram reads bottom-to-top as the call
-  // chain: an entry point at the BOTTOM flows UP through call layers to the
-  // vulnerable dependency at the TOP. Rows, from top (smallest y) down:
-  //   • TOP band:  all `dependency` nodes (reachable or disconnected alike).
-  //   • MIDDLE:    `function` nodes in horizontal layers by call depth — DEEPER
-  //                functions (closer to a dependency) sit HIGHER, shallower ones
-  //                (called straight from a handler) sit LOWER. So going up the
-  //                screen follows the call chain toward the dependency.
-  //   • BOTTOM band: all `entrypoint` nodes (and the focused-view "+N" cluster).
-  // Unreached functions are hidden by default (see applyFilter), so the spine is
-  // all that remains in the middle. Any module/file/doc toggled back on is not
-  // part of the call-flow spine: those go on a dim shelf off to the right,
-  // visually secondary, never interleaved with the layers. Only currently-visible
-  // nodes are distributed, so toggling a kind re-centers the rows cleanly.
-  var COL_W = 150;      // x-spacing within a row (neuron to neuron)
-  var ROW_H = 120;      // y-spacing between layers
+  // Explicit LAYERED left-to-right placement (a preset layout we compute, not a
+  // force/breadthfirst layout), so the diagram reads as a pipeline: a public
+  // entry point on the LEFT flows RIGHTWARD through call layers to the dependency
+  // it reaches on the RIGHT. Columns, left (x small) to right:
+  //   • LEFT band:   all `entrypoint` nodes (and the focused-view "+N" cluster).
+  //   • MIDDLE cols: `function` nodes in vertical layers by call depth — deeper
+  //                  functions (closer to a dependency) sit further RIGHT.
+  //   • RIGHT band:  all `dependency` nodes (reachable or disconnected alike).
+  // Within a column nodes stack vertically, barycentre-aligned to their
+  // neighbours so edges stay short and crossings are few. Unreached functions are
+  // hidden by default (see applyFilter), so the spine is all that remains. Any
+  // module/file/doc toggled back on is not part of the call-flow spine: those go
+  // on a dim shelf BELOW the pipeline, visually secondary. Only currently-visible
+  // nodes are distributed, so toggling a kind re-centers the columns cleanly.
+  var LAYER_W = 360;    // x-spacing between call-depth columns (left -> right)
+  var LANE_H = 84;      // y-spacing between stacked nodes within a column
   var OFF_COL_W = 150;  // off-spine shelf column width
-  var OFF_ROW_H = 46;   // off-spine shelf row height
+  var OFF_ROW_H = 52;   // off-spine shelf row height
+  // A single call-depth column with very many nodes (e.g. redash's ~50 entry
+  // points) would stack into one absurdly tall strip, so the whole diagram
+  // shrinks to a sliver when fitted. Past MAX_ROWS a layer wraps into a few
+  // vertical sub-columns — a tidy block that keeps the left-to-right layering
+  // while bringing the aspect ratio back toward the canvas. Small layers (the
+  // demo's handful) never trip this, so their barycentre alignment is preserved.
+  var MAX_ROWS = 8;     // wrap a layer taller than this into sub-columns
+  var SUB_W = 132;      // horizontal gap between a layer's wrapped sub-columns
 
   // Order-preserving 1D packing: given each node's desired x (already in layer
   // order), return positions that keep a minimum `gap` between neighbours while
@@ -465,15 +475,15 @@
     depth = depth || computeDepths();
     var vis = cy.nodes(":visible");
 
-    // Deepest visible reachable function sets where the dependency band sits.
+    // Deepest visible reachable function sets which column the dependency band
+    // sits in (always one past the deepest function so deps are furthest right).
     var maxFuncDepth = 0;
     vis.forEach(function (n) {
       if (n.data("kind") === "function" && (n.id() in depth)) {
         maxFuncDepth = Math.max(maxFuncDepth, depth[n.id()]);
       }
     });
-    var depsLayer = maxFuncDepth + 1; // dependency band always on top
-    var topLayer = depsLayer;
+    var depsLayer = maxFuncDepth + 1; // dependency band always rightmost
 
     var layers = {};     // layerIndex -> [nodes] on the call-flow spine
     var offspine = [];   // module/file/doc + unknowns, only if toggled on
@@ -487,18 +497,17 @@
     vis.forEach(function (n) {
       var k = n.data("kind");
       if (k === "entrypoint" || k === "epcluster") {
-        push(0, n);                       // bottom band — the input layer
+        push(0, n);                       // left band — the input layer
       } else if (k === "dependency") {
-        push(depsLayer, n);               // top band — the output layer
+        push(depsLayer, n);               // right band — the output layer
       } else if (k === "function" && (n.id() in depth)) {
-        push(depth[n.id()], n);           // hidden layers: deeper = higher
+        push(depth[n.id()], n);           // middle columns: deeper = further right
       } else {
         offspine.push(n);                 // off-spine shelf
       }
     });
 
     function sortKey(n) { return String(n.data("label") || n.data("name") || n.id()); }
-    function layerY(L) { return (topLayer - L) * ROW_H; }
     var layerKeys = Object.keys(layers).map(Number).sort(function (a, b) { return a - b; });
 
     // Adjacency among spine nodes (undirected), for barycentre alignment.
@@ -509,18 +518,19 @@
       if (inSpine[s] && inSpine[t]) { adj[s].push(t); adj[t].push(s); }
     });
 
-    // Start from an even, centred, deterministic order per layer.
-    var xpos = {};
+    // Start from an even, centred, deterministic order per column (the cross axis
+    // is now vertical: `ypos` positions nodes top-to-bottom within a column).
+    var ypos = {};
     layerKeys.forEach(function (k) {
       var arr = layers[k];
       arr.sort(function (a, b) { return sortKey(a).localeCompare(sortKey(b)); });
       var c = arr.length;
-      arr.forEach(function (n, i) { xpos[n.id()] = (i - (c - 1) / 2) * COL_W; });
+      arr.forEach(function (n, i) { ypos[n.id()] = (i - (c - 1) / 2) * LANE_H; });
     });
 
-    // Barycentre sweeps: pull each node toward the mean x of its neighbours, then
-    // repack the layer (min gap, least-squares to those targets). Alternating the
-    // sweep direction lets the alignment propagate across every layer, so edges
+    // Barycentre sweeps: pull each node toward the mean y of its neighbours, then
+    // repack the column (min gap, least-squares to those targets). Alternating the
+    // sweep direction lets the alignment propagate across every column, so edges
     // stay short overall and a node between two others lands near their midpoint —
     // trading a few big jumps for many small ones. Pure placement; verdicts/edges
     // are untouched.
@@ -532,21 +542,21 @@
         if (!arr.length) return;
         var desired = arr.map(function (n) {
           var nb = adj[n.id()];
-          if (!nb.length) return xpos[n.id()];
+          if (!nb.length) return ypos[n.id()];
           var sum = 0;
-          for (var i = 0; i < nb.length; i++) sum += xpos[nb[i]];
+          for (var i = 0; i < nb.length; i++) sum += ypos[nb[i]];
           return sum / nb.length;
         });
-        // Reorder by barycentre (reduces crossings); stable via current x then key.
+        // Reorder by barycentre (reduces crossings); stable via current y then key.
         var idx = arr.map(function (_, i) { return i; });
         idx.sort(function (a, b) {
           return (desired[a] - desired[b]) ||
-            (xpos[arr[a].id()] - xpos[arr[b].id()]) ||
+            (ypos[arr[a].id()] - ypos[arr[b].id()]) ||
             sortKey(arr[a]).localeCompare(sortKey(arr[b]));
         });
         var ordered = idx.map(function (i) { return arr[i]; });
-        var placed = packWithGap(idx.map(function (i) { return desired[i]; }), COL_W);
-        ordered.forEach(function (n, i) { xpos[n.id()] = placed[i]; });
+        var placed = packWithGap(idx.map(function (i) { return desired[i]; }), LANE_H);
+        ordered.forEach(function (n, i) { ypos[n.id()] = placed[i]; });
         layers[k] = ordered; // carry the improved order into the next sweep
       });
     }
@@ -554,35 +564,54 @@
     cy.batch(function () {
       cy.nodes().removeClass("offspine");
 
-      var maxAbsX = 0;
+      // Walk the layers left to right, advancing an x cursor. A normal layer is
+      // one column placed at its barycentre y; an over-tall layer wraps into a
+      // grid of sub-columns (column-major, so the barycentre order still reads
+      // top-to-bottom within each sub-column) and widens the cursor accordingly.
+      var maxAbsY = 0, cursorX = 0, spineWidth = 0;
       layerKeys.forEach(function (k) {
-        var y = layerY(k);
-        layers[k].forEach(function (n) {
-          var x = xpos[n.id()];
-          n.position({ x: x, y: y });
-          if (Math.abs(x) > maxAbsX) maxAbsX = Math.abs(x);
-        });
+        var arr = layers[k], c = arr.length;
+        var subCols = Math.max(1, Math.ceil(c / MAX_ROWS));
+        if (subCols === 1) {
+          arr.forEach(function (n) {
+            var y = ypos[n.id()];
+            n.position({ x: cursorX, y: y });
+            if (Math.abs(y) > maxAbsY) maxAbsY = Math.abs(y);
+          });
+          spineWidth = cursorX;
+          cursorX += LAYER_W;
+        } else {
+          var rows = Math.ceil(c / subCols);
+          arr.forEach(function (n, i) {
+            var col = Math.floor(i / rows), row = i % rows;
+            var y = (row - (rows - 1) / 2) * LANE_H;
+            n.position({ x: cursorX + col * SUB_W, y: y });
+            if (Math.abs(y) > maxAbsY) maxAbsY = Math.abs(y);
+          });
+          spineWidth = cursorX + (subCols - 1) * SUB_W;
+          cursorX = spineWidth + LAYER_W;
+        }
       });
 
       if (offspine.length) {
         offspine.sort(function (a, b) { return sortKey(a).localeCompare(sortKey(b)); });
         offspine.forEach(function (n) { n.addClass("offspine"); });
-        // A compact grid to the right of the spine, filling column by column so
-        // it stays a tidy band rather than one long run.
-        var spineHeight = topLayer * ROW_H;
-        var perCol = Math.max(1, Math.floor(spineHeight / OFF_ROW_H) + 1);
-        var offX0 = maxAbsX + COL_W * 1.8;
+        // A compact grid BELOW the pipeline, filling row by row so it stays a tidy
+        // band rather than one long run.
+        var perRow = Math.max(1, Math.floor((spineWidth || LAYER_W) / OFF_COL_W) + 1);
+        var offY0 = maxAbsY + LANE_H * 1.8;
         offspine.forEach(function (n, i) {
-          var col = Math.floor(i / perCol), row = i % perCol;
-          n.position({ x: offX0 + col * OFF_COL_W, y: row * OFF_ROW_H });
+          var row = Math.floor(i / perRow), col = i % perRow;
+          n.position({ x: (col - (perRow - 1) / 2) * OFF_COL_W, y: offY0 + row * OFF_ROW_H });
         });
       }
     });
 
-    // Frame the clean network itself: fit to the spine so the layers stay centred
-    // even when a dim off-spine shelf exists off to the side. The "fit everything"
+    // Frame the clean pipeline itself: fit to the spine so the columns stay
+    // centred even when a dim off-spine shelf exists below. The "fit everything"
     // zoom control still frames the shelf when the user wants it.
-    cy.fit(spine.length ? spine : cy.nodes(":visible"), 48);
+    graphFitEles = spine.length ? spine : cy.nodes(":visible");
+    cy.fit(graphFitEles, GRAPH_PAD);
   }
 
   // A dependency declared only in a lockfile (attrs.direct === false) — pulled in
@@ -712,6 +741,9 @@
 
   /* ---------------------------------------------------------------- panels */
   function renderCounts() {
+    // The slim topbar no longer carries stat tiles (the funnel strip is the
+    // headline value), so this is a no-op unless a counts element is present.
+    if (!el.counts) return;
     // Full-repo totals, so the header reads as "Repository totals" even when the
     // canvas shows only the focused subgraph.
     var counts = repoCounts;
@@ -1335,6 +1367,30 @@
     if (id) { var n = cy.getElementById(id); if (n && n.length) n.addClass("selected"); }
   }
 
+  // Open or collapse the detail drawer. The grid column animates from 0 to
+  // --detail-w, so when the width actually changes we resize + re-fit the graph
+  // once the transition settles, keeping the pipeline centred in the new space.
+  function setDrawer(open) {
+    if (!el.layout) return;
+    var was = el.layout.classList.contains("has-detail");
+    el.layout.classList.toggle("has-detail", open);
+    if (was !== open) resizeGraph();
+  }
+
+  function resizeGraph() {
+    if (!cy) return;
+    if (window.requestAnimationFrame) window.requestAnimationFrame(function () { cy.resize(); });
+    setTimeout(function () {
+      if (!cy) return;
+      cy.resize();
+      var eles = (graphFitEles && graphFitEles.length) ? graphFitEles.filter(":visible") : null;
+      if (!eles || !eles.length) eles = cy.nodes(":visible");
+      if (!eles.length) return;
+      if (REDUCED) cy.fit(eles, GRAPH_PAD);
+      else cy.animate({ fit: { eles: eles, padding: GRAPH_PAD } }, { duration: 220, easing: "ease-out" });
+    }, 260);
+  }
+
   // Assessments whose reaching_entrypoints include this endpoint's label
   // ("METHOD /path"), which is exactly how the bundle records them.
   function assessmentsForEpLabel(label) {
@@ -1718,6 +1774,7 @@
   function renderDetailInitial() {
     selectedNodeId = null;
     if (cy) cy.nodes().removeClass("selected");
+    setDrawer(false);
     el.detailInner.innerHTML =
       '<div class="detail__empty"><span class="d-mark" aria-hidden="true"></span>' +
       '<h2>Nothing selected</h2>' +
@@ -1734,6 +1791,7 @@
     else html = detailGeneric(n);
     el.detailInner.innerHTML = html;
     markSelected(n.id);
+    setDrawer(true);
     wireDetail();
     if (el.detail) el.detail.scrollTop = 0;
   }

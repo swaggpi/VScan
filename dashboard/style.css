@@ -1,5 +1,5 @@
 /* ===========================================================================
-   vulnreach · reachability viewer
+   VScan · reachability viewer
    Aesthetic: engineering schematic / blueprint. The repo is drawn as a wiring
    diagram of code paths; one hot signal marks live reachability only.
    =========================================================================== */
@@ -88,12 +88,15 @@ body {
 }
 
 /* ---------------------------------------------------------------- title block */
+/* One slim bar: the mark on the left, the scan selector on the right. The stat
+   tiles and the instructional paragraph are gone — the funnel strip below is the
+   headline value. */
 .titleblock {
-  display: grid;
-  grid-template-columns: auto 1fr auto auto;
+  display: flex;
   align-items: center;
-  gap: 1.5rem 2rem;
-  padding: 0.95rem 1.4rem;
+  justify-content: space-between;
+  gap: 1.5rem;
+  padding: 0.6rem 1.4rem;
   border-bottom: 1px solid var(--panel-edge);
   background: linear-gradient(180deg, rgba(14,42,69,0.92), rgba(11,34,57,0.92));
   backdrop-filter: blur(2px);
@@ -101,13 +104,11 @@ body {
 
 .titleblock__id {
   display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
-  padding-right: 1.5rem;
-  border-right: 1px solid var(--hair);
+  align-items: baseline;
+  gap: 0.65rem;
 }
 .wordmark {
-  font: 700 1.35rem/1 var(--f-display);
+  font: 700 1.3rem/1 var(--f-display);
   letter-spacing: -0.02em;
   color: var(--ink);
 }
@@ -122,44 +123,13 @@ body {
   vertical-align: 0.1em;
 }
 .eyebrow {
-  font: 500 0.66rem/1 var(--f-mono);
-  letter-spacing: 0.28em;
+  font: 500 0.6rem/1 var(--f-mono);
+  letter-spacing: 0.26em;
   text-transform: uppercase;
   color: var(--signal);
 }
 
-.titleblock__thesis {
-  margin: 0;
-  max-width: 34ch;
-  font-size: 0.9rem;
-  line-height: 1.4;
-  color: var(--ink-dim);
-}
-
-.counts {
-  display: flex;
-  gap: 1.4rem;
-  margin: 0;
-}
-.counts > div { display: flex; flex-direction: column; gap: 0.1rem; }
-.counts dt {
-  font: 500 0.6rem/1 var(--f-mono);
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--ink-mut);
-}
-.counts dd {
-  margin: 0;
-  font: 500 1.4rem/1 var(--f-display);
-  font-variant-numeric: tabular-nums;
-  color: var(--ink);
-}
-.counts dd.is-signal { color: var(--signal); }
-.counts dd.is-alert { color: var(--alert-ink); }
-/* Separator before the vulnerability counts so they read as a second group. */
-.counts > div.counts__vuln-lead { border-left: 1px solid var(--hair); padding-left: 1.4rem; margin-left: -0.3rem; }
-
-.titleblock__load { display: flex; flex-direction: column; align-items: flex-end; gap: 0.4rem; }
+.titleblock__load { display: flex; align-items: center; gap: 0.9rem; }
 
 /* Segmented control: the three ways in. A schematic selector switch — one
    throw lit amber, the rest quiet. */
@@ -201,10 +171,11 @@ body {
 .seg--file input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 .seg--file:focus-within { outline: 2px solid var(--signal); outline-offset: -2px; }
 .scanname {
+  order: -1; /* a quiet descriptive label, to the left of the selector */
   font: 400 0.68rem/1.2 var(--f-mono);
   color: var(--ink-mut);
   text-align: right;
-  max-width: 24ch;
+  max-width: 30ch;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -287,8 +258,14 @@ body {
 .layout {
   flex: 1;
   display: grid;
-  grid-template-columns: var(--rail-w) minmax(0, 1fr) var(--detail-w);
+  /* The detail column is zero-width until a node is selected, so the graph fills
+     the space; it opens to --detail-w when a datasheet is shown. */
+  grid-template-columns: var(--rail-w) minmax(0, 1fr) 0;
   min-height: 0;
+  transition: grid-template-columns 0.24s ease;
+}
+.layout.has-detail {
+  grid-template-columns: var(--rail-w) minmax(0, 1fr) var(--detail-w);
 }
 
 .rail {
@@ -711,31 +688,35 @@ body {
 }
 #graph { position: absolute; inset: 0; }
 
-.stage__hint {
+/* A quiet left-to-right flow caption in the top-left of the canvas, naming the
+   three layers so the diagram reads as a pipeline without a heavy legend box. */
+.stage__flow {
   position: absolute;
-  left: 1rem; bottom: 1rem;
-  font: 400 0.68rem/1 var(--f-mono);
+  left: 1rem; top: 0.85rem;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font: 500 0.64rem/1 var(--f-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
   color: var(--ink-mut);
   pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.2s;
 }
-.stage.is-traced .stage__hint { opacity: 1; }
+.stage__flow span { color: var(--signal); opacity: 0.8; }
 
+/* Legend: a slim footer strip under the canvas — off the graph, always legible,
+   never overlapping. Wraps to a second row only on a narrow viewport. */
 .legend {
-  position: absolute;
-  right: 1rem; top: 1rem;
   display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  padding: 0.65rem 0.8rem;
-  border: 1px solid var(--hair);
-  border-radius: var(--radius);
-  background: rgba(8, 26, 44, 0.78);
-  backdrop-filter: blur(3px);
-  pointer-events: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 1.1rem;
+  padding: 0.5rem 1.1rem;
+  border-top: 1px solid var(--hair);
+  background: rgba(8, 26, 44, 0.6);
 }
-.legend__item { display: flex; align-items: center; gap: 0.5rem; font: 400 0.68rem/1 var(--f-mono); color: var(--ink-dim); }
+.legend__item { display: flex; align-items: center; gap: 0.45rem; font: 400 0.66rem/1 var(--f-mono); color: var(--ink-dim); white-space: nowrap; }
 .dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
 .dot--ep  { background: transparent; border: 2px solid var(--signal); }
 .dot--dep { background: var(--dep); }
@@ -806,12 +787,20 @@ body.has-transitive .legend__item--transitive { display: flex; }
 /* ---------------------------------------------------------------- detail panel */
 /* The spec sheet. A title-block callout for whichever node is selected: the
    engineering-drawing metaphor extended to a single part's datasheet. */
+/* The datasheet drawer. Collapsed to zero and hidden until a node is selected,
+   then it slides in from the right. */
 .detail {
   border-left: 1px solid var(--panel-edge);
   background: var(--panel);
+  overflow-x: hidden;
   overflow-y: auto;
+  min-width: 0;
   min-height: 0;
+  transform: translateX(14px);
+  opacity: 0;
+  transition: transform 0.24s ease, opacity 0.2s ease;
 }
+.layout.has-detail .detail { transform: none; opacity: 1; }
 .detail__inner { display: flex; flex-direction: column; min-height: 100%; }
 
 /* Empty state — an invitation, in the interface's voice. */
@@ -1211,14 +1200,9 @@ details[open] > summary .disc__chev { transform: rotate(90deg); }
 
 /* ---------------------------------------------------------------- responsive */
 @media (max-width: 860px) {
-  .titleblock {
-    grid-template-columns: 1fr 1fr;
-    gap: 0.9rem 1rem;
-  }
-  .titleblock__id { border-right: none; padding-right: 0; }
-  .titleblock__thesis { grid-column: 1 / -1; order: 4; max-width: none; }
-  .counts { gap: 1rem; flex-wrap: wrap; }
-  .titleblock__load { align-items: flex-end; }
+  .titleblock { flex-wrap: wrap; gap: 0.6rem 1rem; }
+  .titleblock__load { flex-wrap: wrap; }
+  .viewswitch { flex-wrap: wrap; }
 
   /* Funnel wraps to two rows rather than squashing; arrows drop out when wrapped. */
   .funnel { flex-wrap: wrap; gap: 0.4rem; padding: 0.6rem 1rem; }
@@ -1226,7 +1210,8 @@ details[open] > summary .disc__chev { transform: rotate(90deg); }
   .funnel__arrow { display: none; }
   .funnel__num { font-size: 1.4rem; }
 
-  .layout { grid-template-columns: 1fr; }
+  /* Stack the three panes; the detail drawer becomes a full-width row. */
+  .layout, .layout.has-detail { grid-template-columns: 1fr; }
   .rail {
     border-right: none;
     border-bottom: 1px solid var(--panel-edge);
@@ -1239,16 +1224,14 @@ details[open] > summary .disc__chev { transform: rotate(90deg); }
     border-left: none;
     border-top: 1px solid var(--panel-edge);
     overflow: visible;
+    transform: none;
+    opacity: 1;
   }
+  .layout:not(.has-detail) .detail { display: none; }
   .detail__head { position: static; }
-  .legend { position: static; margin: 0; }
-  .stage .legend { display: none; } /* keep canvas uncluttered on small screens */
 }
 
 @media (max-width: 520px) {
-  .counts dd { font-size: 1.15rem; }
-  .titleblock { grid-template-columns: 1fr; }
-  .titleblock__load { align-items: flex-start; }
   .funnel__stage { flex: 1 1 6rem; }
   .funnel__num { font-size: 1.2rem; }
 }
