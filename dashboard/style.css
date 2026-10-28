@@ -699,9 +699,7 @@ body {
 .dot--mut { background: var(--muted); }
 .dot--sig { background: var(--signal); box-shadow: 0 0 7px var(--signal-glow); }
 .dot--vuln { background: var(--dep); border: 2px solid var(--alert); }
-.dot--vulnhot { background: var(--signal); border: 2px solid var(--alert); box-shadow: 0 0 7px var(--alert-glow); }
-.dot--confirmed { background: var(--dep); border: 2px solid var(--signal); box-shadow: 0 0 7px var(--signal-glow); }
-.dot--tainted { background: var(--alert); border: 2px solid var(--alert); box-shadow: 0 0 9px var(--alert-glow); }
+.dot--tainted { background: var(--alert); border: 2px solid var(--alert); }
 
 /* Vulnerability legend rows appear only once an audit bundle is loaded. */
 .dot--trans { background: transparent; border: 1.5px solid var(--dep); }

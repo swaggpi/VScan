@@ -225,30 +225,17 @@
         "text-max-width": 164, "font-weight": 600
       }},
 
-      /* vulnerability overlay — a red ring marks a dependency with findings */
+      /* Dependency risk — three states:
+         no CVE = the base blue node; has a CVE but not exploitable = blue + a red
+         ring; exploitable (attacker input reaches the call) = a fully red node. */
       { selector: 'node[vuln = 1]', style: {
-        "border-color": ALERT, "border-width": 3.5, "color": "#F79885",
-        "overlay-color": ALERT, "overlay-opacity": 0.12, "overlay-padding": 6
+        "border-color": ALERT, "border-width": 3.5, "color": "#F79885"
       }},
-      /* vulnerable AND reachable from a public route — the top visual signal.
-         Kept a circle, just enlarged, so the network stays uniform. */
-      { selector: 'node[vreach = 1]', style: {
-        "width": 52, "height": 52, "border-width": 4, "font-weight": 600,
-        "overlay-opacity": 0.2, "overlay-padding": 9
-      }},
-      /* actively exploited (KEV) — strongest ring */
-      { selector: 'node[kev = 1]', style: { "border-width": 4.5, "overlay-opacity": 0.26 } },
-      /* the vulnerable FUNCTION was reached (symbol_match=confirmed) — amber ring
-         layered over the red vuln ring: the call graph resolves into the flaw. */
-      { selector: 'node[confirmed = 1]', style: {
-        "border-color": "#F2B134", "border-width": 4.5, "width": 54, "height": 54,
-        "overlay-color": "#F2B134", "overlay-opacity": 0.26, "overlay-padding": 10
-      }},
-      /* EXPLOITABLE (taint=tainted) — the top problem on the canvas: attacker
-         input reaches the call. Strongest emphasis: a thick red ring, largest. */
       { selector: 'node[tainted = 1]', style: {
-        "border-color": ALERT, "border-width": 5.5, "width": 60, "height": 60,
-        "color": "#F79885", "overlay-color": ALERT, "overlay-opacity": 0.34, "overlay-padding": 13
+        "background-color": ALERT, "background-opacity": 1,
+        "border-color": "#F79885", "border-width": 2.5,
+        "width": 44, "height": 44, "font-weight": 600,
+        "overlay-color": ALERT, "overlay-opacity": 0.22, "overlay-padding": 8
       }},
 
       // Connections are thin, straight lines between layers — like the synapses
