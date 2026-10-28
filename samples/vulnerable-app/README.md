@@ -1,6 +1,6 @@
 # demo app
 
-A small, multi-ecosystem demo target for the vulnreach scanner. It pins old
+A small, multi-ecosystem demo target for the VScan scanner. It pins old
 dependencies on purpose and keeps a short, resolvable call chain.
 
 ## Endpoints

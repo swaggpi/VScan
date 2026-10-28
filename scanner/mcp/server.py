@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""MCP server exposing the ``vulnreach`` scanner as AI tools.
+"""MCP server exposing the ``vscan`` scanner as AI tools.
 
-This server wraps the ``vulnreach`` library *in process* (no HTTP, no shelling
+This server wraps the ``vscan`` library *in process* (no HTTP, no shelling
 to the CLI) and speaks MCP over **stdio**. It gives an LLM agent three
 capabilities over a local source repository:
 
 1. **Navigate** the repo through its knowledge graph instead of reading files
-   (``vulnreach_scan_overview``, ``vulnreach_find``, ``vulnreach_describe``,
-   ``vulnreach_call_graph``, ``vulnreach_trace_entrypoint``,
-   ``vulnreach_dep_reachers``).
+   (``vscan_scan_overview``, ``vscan_find``, ``vscan_describe``,
+   ``vscan_call_graph``, ``vscan_trace_entrypoint``,
+   ``vscan_dep_reachers``).
 2. **Discuss problems** -- reachability-aware vulnerability findings
-   (``vulnreach_audit``, ``vulnreach_finding_detail``).
+   (``vscan_audit``, ``vscan_finding_detail``).
 3. **Fix** -- compute remediations and surgically rewrite a manifest pin
-   (``vulnreach_remediation``, ``vulnreach_apply_upgrade``).
+   (``vscan_remediation``, ``vscan_apply_upgrade``).
 
 Every tool returns a compact JSON string so the agent reasons over structured
 facts rather than raw file contents. Tools never raise: errors come back as a
@@ -39,7 +39,7 @@ from scanner.taint import compute_taint
 from . import serialize, state, upgrade
 from .state import ToolError
 
-mcp = FastMCP("vulnreach_mcp")
+mcp = FastMCP("vscan")
 
 # How many list rows a navigation tool inlines before reporting just a total.
 _DEFAULT_LIMIT = 30
@@ -76,7 +76,7 @@ def _require_node(graph: Any, node_id: str, *, kind: str | None = None) -> Any:
     node = graph.get_node(node_id)
     if node is None:
         raise ToolError(
-            f"node not found: {node_id!r}. Use vulnreach_find to look up the "
+            f"node not found: {node_id!r}. Use vscan_find to look up the "
             "correct id (ids look like 'fn:app.py:submit', 'dep:PyPI:PyYAML', "
             "'ep:POST:/submit')."
         )
@@ -234,13 +234,13 @@ class DiffInput(_Base):
 # -- Capability 1: NAVIGATE ---------------------------------------------------
 
 
-@mcp.tool(name="vulnreach_scan_overview", annotations={"title": "Scan overview", **_READ_ONLY})
-def vulnreach_scan_overview(params: ScanOverviewInput) -> str:
+@mcp.tool(name="vscan_scan_overview", annotations={"title": "Scan overview", **_READ_ONLY})
+def vscan_scan_overview(params: ScanOverviewInput) -> str:
     """Scan a repository and return a structural map -- the "understand this repo" entry point.
 
     Replaces blindly opening files: one call gives you the shape of the codebase
     (counts, languages, entry points) so you can decide where to look next with
-    vulnreach_find / vulnreach_describe.
+    vscan_find / vscan_describe.
 
     Args:
         params.repo_path (str): Local repo root.
@@ -261,7 +261,7 @@ def vulnreach_scan_overview(params: ScanOverviewInput) -> str:
         }
 
     Use when: starting on an unfamiliar repo, or to get entrypoint/dependency counts.
-    Don't use when: you already have a node id (use vulnreach_describe).
+    Don't use when: you already have a node id (use vscan_describe).
     """
     def impl() -> dict[str, Any]:
         key, graph = state.get_graph(params.repo_path, refresh=params.refresh)
@@ -320,8 +320,8 @@ def vulnreach_scan_overview(params: ScanOverviewInput) -> str:
     return _safe(impl)
 
 
-@mcp.tool(name="vulnreach_find", annotations={"title": "Find nodes", **_READ_ONLY})
-def vulnreach_find(params: FindInput) -> str:
+@mcp.tool(name="vscan_find", annotations={"title": "Find nodes", **_READ_ONLY})
+def vscan_find(params: FindInput) -> str:
     """Substring-search the knowledge graph for nodes by name, id or path.
 
     The fast way to turn a human name ("submit", "yaml", "/api/items") into the
@@ -337,7 +337,7 @@ def vulnreach_find(params: FindInput) -> str:
         {"query": str, "matches": {"items":[{"id","kind","label"}],"total":int,"truncated":bool}}
 
     Use when: you know a name but not the node id.
-    Don't use when: you already have an id (use vulnreach_describe).
+    Don't use when: you already have an id (use vscan_describe).
     """
     def impl() -> dict[str, Any]:
         _, graph = state.get_graph(params.repo_path)
@@ -357,8 +357,8 @@ def vulnreach_find(params: FindInput) -> str:
     return _safe(impl)
 
 
-@mcp.tool(name="vulnreach_describe", annotations={"title": "Describe node", **_READ_ONLY})
-def vulnreach_describe(params: DescribeInput) -> str:
+@mcp.tool(name="vscan_describe", annotations={"title": "Describe node", **_READ_ONLY})
+def vscan_describe(params: DescribeInput) -> str:
     """Full datasheet for one node -- replaces opening the file.
 
     Args:
@@ -375,7 +375,7 @@ def vulnreach_describe(params: DescribeInput) -> str:
         module/file-> {id,kind,name,relpath,functions:[id],imports:[id],...}
 
     Use when: you have a node id and need its details, callers/callees, or reachability.
-    Don't use when: you don't know the id yet (use vulnreach_find).
+    Don't use when: you don't know the id yet (use vscan_find).
     """
     def impl() -> dict[str, Any]:
         graph, reach = state.get_reachability(params.repo_path)
@@ -395,8 +395,8 @@ def vulnreach_describe(params: DescribeInput) -> str:
     return _safe(impl)
 
 
-@mcp.tool(name="vulnreach_call_graph", annotations={"title": "Call graph", **_READ_ONLY})
-def vulnreach_call_graph(params: CallGraphInput) -> str:
+@mcp.tool(name="vscan_call_graph", annotations={"title": "Call graph", **_READ_ONLY})
+def vscan_call_graph(params: CallGraphInput) -> str:
     """Expand the call graph around a function, inward (callers) or outward (callees).
 
     Args:
@@ -411,7 +411,7 @@ def vulnreach_call_graph(params: CallGraphInput) -> str:
          "edges": [{"src","dst","symbol"}]}
 
     Use when: tracing how execution flows to/from a function across hops.
-    Don't use when: you only need the immediate callers/callees (vulnreach_describe gives those).
+    Don't use when: you only need the immediate callers/callees (vscan_describe gives those).
     """
     def impl() -> dict[str, Any]:
         _, graph = state.get_graph(params.repo_path)
@@ -457,8 +457,8 @@ def vulnreach_call_graph(params: CallGraphInput) -> str:
     return _safe(impl)
 
 
-@mcp.tool(name="vulnreach_trace_entrypoint", annotations={"title": "Trace entrypoint", **_READ_ONLY})
-def vulnreach_trace_entrypoint(params: TraceEntrypointInput) -> str:
+@mcp.tool(name="vscan_trace_entrypoint", annotations={"title": "Trace entrypoint", **_READ_ONLY})
+def vscan_trace_entrypoint(params: TraceEntrypointInput) -> str:
     """Forward reachability: the functions and dependencies a route can reach.
 
     Args:
@@ -471,7 +471,7 @@ def vulnreach_trace_entrypoint(params: TraceEntrypointInput) -> str:
          "reachable_dependencies":[{"id","name","symbols":[str],"verdict","example_path":[id]}]}
 
     Use when: assessing what one public route exposes.
-    Don't use when: you want to know who reaches a dependency (use vulnreach_dep_reachers).
+    Don't use when: you want to know who reaches a dependency (use vscan_dep_reachers).
     """
     def impl() -> dict[str, Any]:
         graph, reach = state.get_reachability(params.repo_path)
@@ -504,8 +504,8 @@ def vulnreach_trace_entrypoint(params: TraceEntrypointInput) -> str:
     return _safe(impl)
 
 
-@mcp.tool(name="vulnreach_dep_reachers", annotations={"title": "Dependency reachers", **_READ_ONLY})
-def vulnreach_dep_reachers(params: DepReachersInput) -> str:
+@mcp.tool(name="vscan_dep_reachers", annotations={"title": "Dependency reachers", **_READ_ONLY})
+def vscan_dep_reachers(params: DepReachersInput) -> str:
     """Reverse reachability: which entrypoints can reach a dependency ("who can hit this").
 
     Args:
@@ -517,7 +517,7 @@ def vulnreach_dep_reachers(params: DepReachersInput) -> str:
          "entrypoints":[{"entrypoint","label","symbols":[str],"example_path":[id]}]}
 
     Use when: judging whether a vulnerable dependency is actually exposed.
-    Don't use when: you want a route's outgoing reach (use vulnreach_trace_entrypoint).
+    Don't use when: you want a route's outgoing reach (use vscan_trace_entrypoint).
     """
     def impl() -> dict[str, Any]:
         graph, reach = state.get_reachability(params.repo_path)
@@ -554,8 +554,8 @@ def _run_advisory(repo_abspath: str, graph: Any, findings: list[Any], reach: Any
     return triage, usage
 
 
-@mcp.tool(name="vulnreach_audit", annotations={"title": "Audit (ranked findings)", **_READ_ONLY_NETWORK})
-def vulnreach_audit(params: AuditInput) -> str:
+@mcp.tool(name="vscan_audit", annotations={"title": "Audit (ranked findings)", **_READ_ONLY_NETWORK})
+def vscan_audit(params: AuditInput) -> str:
     """The headline "what's wrong" tool: ranked, reachability-aware vulnerability findings.
 
     Correlates dependencies against public advisory data (OSV/KEV/EPSS), joins
@@ -579,7 +579,7 @@ def vulnreach_audit(params: AuditInput) -> str:
             "usage":{"usage_kind","summary"}?}]}
 
     Use when: you want the prioritized vulnerability list for a repo.
-    Don't use when: you need one dep's full CVE text (use vulnreach_finding_detail).
+    Don't use when: you need one dep's full CVE text (use vscan_finding_detail).
     """
     def impl() -> dict[str, Any]:
         key = state.resolve_repo(params.repo_path)
@@ -643,8 +643,8 @@ def vulnreach_audit(params: AuditInput) -> str:
     return _safe(impl)
 
 
-@mcp.tool(name="vulnreach_finding_detail", annotations={"title": "Finding detail", **_READ_ONLY_NETWORK})
-def vulnreach_finding_detail(params: FindingDetailInput) -> str:
+@mcp.tool(name="vscan_finding_detail", annotations={"title": "Finding detail", **_READ_ONLY_NETWORK})
+def vscan_finding_detail(params: FindingDetailInput) -> str:
     """Deep dive on ONE vulnerable dependency -- "discuss this problem".
 
     Args:
@@ -661,7 +661,7 @@ def vulnreach_finding_detail(params: FindingDetailInput) -> str:
          "usage":{"usage_kind","summary","confidence","evidence":[...]}}
 
     Use when: reasoning about or explaining one dependency's vulnerabilities in depth.
-    Don't use when: you want the whole repo's ranked list (use vulnreach_audit).
+    Don't use when: you want the whole repo's ranked list (use vscan_audit).
     """
     def impl() -> dict[str, Any]:
         key = state.resolve_repo(params.repo_path)
@@ -682,7 +682,7 @@ def vulnreach_finding_detail(params: FindingDetailInput) -> str:
             raise ToolError(
                 f"dependency {params.dep_id!r} has no findings "
                 f"({'offline mode returns none' if corr.offline else 'no known advisories'}). "
-                "Run vulnreach_audit to see which deps have findings."
+                "Run vscan_audit to see which deps have findings."
             )
         triage, usage = _run_advisory(key, graph, dep_findings, reach, offline=params.offline)
         usage_row = next((u for u in usage if u.dependency_id == params.dep_id), None)
@@ -768,13 +768,13 @@ def _remediation_for_dep(graph: Any, reach: Any, dep_findings: list[Any], dep_id
         "next_step": (
             None
             if recommended is None
-            else f"vulnreach_apply_upgrade(dep_id='{dep_id}', version='{recommended}')"
+            else f"vscan_apply_upgrade(dep_id='{dep_id}', version='{recommended}')"
         ),
     }
 
 
-@mcp.tool(name="vulnreach_remediation", annotations={"title": "Remediation plan", **_READ_ONLY_NETWORK})
-def vulnreach_remediation(params: RemediationInput) -> str:
+@mcp.tool(name="vscan_remediation", annotations={"title": "Remediation plan", **_READ_ONLY_NETWORK})
+def vscan_remediation(params: RemediationInput) -> str:
     """Everything needed to fix a vulnerable dependency without reading files.
 
     For one dep (dep_id) or ALL vulnerable deps: current version, the smallest
@@ -794,8 +794,8 @@ def vulnreach_remediation(params: RemediationInput) -> str:
             "cve_ids":[str],"kev":bool,"reachable":bool,"verdict",
             "reaching_entrypoints":[{"entrypoint","label","example_path"}],"next_step"}]}
 
-    Use when: planning upgrades; feed next_step into vulnreach_apply_upgrade.
-    Don't use when: you only want to discuss severity (use vulnreach_finding_detail).
+    Use when: planning upgrades; feed next_step into vscan_apply_upgrade.
+    Don't use when: you only want to discuss severity (use vscan_finding_detail).
     """
     def impl() -> dict[str, Any]:
         key = state.resolve_repo(params.repo_path)
@@ -832,7 +832,7 @@ def vulnreach_remediation(params: RemediationInput) -> str:
 
 
 @mcp.tool(
-    name="vulnreach_apply_upgrade",
+    name="vscan_apply_upgrade",
     annotations={
         "title": "Apply manifest upgrade",
         "readOnlyHint": False,
@@ -841,7 +841,7 @@ def vulnreach_remediation(params: RemediationInput) -> str:
         "openWorldHint": False,
     },
 )
-def vulnreach_apply_upgrade(params: ApplyUpgradeInput) -> str:
+def vscan_apply_upgrade(params: ApplyUpgradeInput) -> str:
     """Surgically re-pin ONE dependency in its manifest; returns a unified diff.
 
     Locates the single, unambiguous pin for the dependency in its declared
@@ -861,7 +861,7 @@ def vulnreach_apply_upgrade(params: ApplyUpgradeInput) -> str:
         {"dependency_id","source_file","line":int,"version","dry_run":bool,
          "applied":bool,"diff":str}
 
-    Use when: applying a remediation (after vulnreach_remediation).
+    Use when: applying a remediation (after vscan_remediation).
     Don't use when: the pin is a range or ambiguous -- the tool will tell you to edit by hand.
     """
     def impl() -> dict[str, Any]:
@@ -903,7 +903,7 @@ _SCRATCH_IGNORE = shutil.ignore_patterns(
 def _run_audit_pipeline(
     repo_path: str, *, offline: bool, use_nvd: bool = False, refresh: bool = False
 ) -> tuple[str, Any, Any, Any]:
-    """Run the exact audit pipeline used by ``vulnreach_audit`` and return
+    """Run the exact audit pipeline used by ``vscan_audit`` and return
     ``(key, graph, correlation, reachability)`` with reachability joined and the
     derived taint signal applied to ``correlation.findings``.
 
@@ -972,7 +972,7 @@ def _is_prerelease(version: str) -> bool:
 
 
 @mcp.tool(
-    name="vulnreach_verify_fix",
+    name="vscan_verify_fix",
     annotations={
         "title": "Verify a dependency fix",
         "readOnlyHint": True,
@@ -981,7 +981,7 @@ def _is_prerelease(version: str) -> bool:
         "openWorldHint": True,
     },
 )
-def vulnreach_verify_fix(params: VerifyFixInput) -> str:
+def vscan_verify_fix(params: VerifyFixInput) -> str:
     """PROVE that upgrading one dependency clears its CVE(s) and introduces no
     new reachable/exploitable exposure -- without touching the user's tree.
 
@@ -1033,7 +1033,7 @@ def vulnreach_verify_fix(params: VerifyFixInput) -> str:
             re-scan available, nothing introduced AND nothing escalated.
 
     Use when: an agent wants to prove a remediation before applying it for real.
-    Don't use when: you only want the recommended version (use vulnreach_remediation).
+    Don't use when: you only want the recommended version (use vscan_remediation).
     """
     def impl() -> dict[str, Any]:
         # 1. Audit the ORIGINAL repo (never mutated) -- the "before" picture.
@@ -1110,7 +1110,7 @@ def vulnreach_verify_fix(params: VerifyFixInput) -> str:
 
         # 2. Copy the repo to a scratch dir. EVERYTHING after the copy is wrapped
         # in try/finally so the scratch tree is always cleaned up.
-        scratch = tempfile.mkdtemp(prefix="vulnreach-verify-")
+        scratch = tempfile.mkdtemp(prefix="vscan-verify-")
         dst = os.path.join(scratch, "repo")
         try:
             shutil.copytree(key, dst, ignore=_SCRATCH_IGNORE, dirs_exist_ok=False)
@@ -1233,8 +1233,8 @@ def vulnreach_verify_fix(params: VerifyFixInput) -> str:
     return _safe(impl)
 
 
-@mcp.tool(name="vulnreach_diff", annotations={"title": "Diff exposure of two repos", **_READ_ONLY_NETWORK})
-def vulnreach_diff(params: DiffInput) -> str:
+@mcp.tool(name="vscan_diff", annotations={"title": "Diff exposure of two repos", **_READ_ONLY_NETWORK})
+def vscan_diff(params: DiffInput) -> str:
     """Compare two repo checkouts' vulnerability exposure (e.g. base vs. a PR head).
 
     Audits both repos with the identical reachability- and taint-aware pipeline,
@@ -1257,7 +1257,7 @@ def vulnreach_diff(params: DiffInput) -> str:
                      reachable,verdict,symbol_match,taint}.
 
     Use when: judging whether a diff improved or worsened exploitability.
-    Don't use when: you want to prove one specific upgrade (use vulnreach_verify_fix).
+    Don't use when: you want to prove one specific upgrade (use vscan_verify_fix).
     """
     def impl() -> dict[str, Any]:
         bkey, _bgraph, bcorr, breach = _run_audit_pipeline(
@@ -1313,44 +1313,44 @@ def vulnreach_diff(params: DiffInput) -> str:
 
 @mcp.prompt(
     name="audit_and_fix",
-    description="Drive the vulnreach audit -> fix -> prove loop with the right tools.",
+    description="Drive the vscan audit -> fix -> prove loop with the right tools.",
 )
 def audit_and_fix() -> str:
     """Return the workflow instruction string for the fix-and-prove loop."""
     return (
         "Goal: find exploitable, reachable CVEs in a local repo and prove each fix "
-        "before applying it. Drive it with the vulnreach MCP tools:\n\n"
-        "1. Map the exposure: call vulnreach_audit(repo_path=...) for the ranked, "
-        "reachability-aware findings (or vulnreach_remediation for the fix-oriented "
+        "before applying it. Drive it with the vscan MCP tools:\n\n"
+        "1. Map the exposure: call vscan_audit(repo_path=...) for the ranked, "
+        "reachability-aware findings (or vscan_remediation for the fix-oriented "
         "view). Prioritize strictly: taint=='tainted' (attacker input reaches the "
         "vulnerable call) > symbol_match=='confirmed' (the vulnerable function is "
         "reached) > reachable==true > the rest.\n"
-        "2. For each priority finding, call vulnreach_remediation(repo_path=..., "
+        "2. For each priority finding, call vscan_remediation(repo_path=..., "
         "dep_id=...) to get the smallest version that clears every CVE on that dep.\n"
-        "3. Preview the edit: vulnreach_apply_upgrade(repo_path=..., dep_id=..., "
+        "3. Preview the edit: vscan_apply_upgrade(repo_path=..., dep_id=..., "
         "version=..., dry_run=true) to see the exact manifest diff.\n"
-        "4. PROVE it: vulnreach_verify_fix(repo_path=..., dep_id=..., version=...). "
+        "4. PROVE it: vscan_verify_fix(repo_path=..., dep_id=..., version=...). "
         "This clears the CVE via the advisory's own fixed_versions AND re-scans a "
         "throwaway copy to confirm nothing new becomes reachable/tainted. Act only on "
         "verdict=='fix_verified'. If verdict=='fix_introduces_new_exposure', pick a "
         "different version. Offline you get 'cve_cleared_regressions_unknown_offline' "
         "-- re-run networked before trusting the regression half.\n"
-        "5. Only then apply for real: vulnreach_apply_upgrade(..., dry_run=false).\n"
-        "6. Optionally confirm the net change with vulnreach_diff(repo_path_base=..., "
+        "5. Only then apply for real: vscan_apply_upgrade(..., dry_run=false).\n"
+        "6. Optionally confirm the net change with vscan_diff(repo_path_base=..., "
         "repo_path_head=...) to see resolved vs. introduced findings.\n\n"
-        "Every tool is non-destructive except vulnreach_apply_upgrade with "
+        "Every tool is non-destructive except vscan_apply_upgrade with "
         "dry_run=false; verify_fix never touches the real repo."
     )
 
 
 def main(argv: list[str] | None = None) -> None:
-    """Console entry point: run the vulnreach MCP server over stdio."""
+    """Console entry point: run the vscan MCP server over stdio."""
     import argparse
 
     parser = argparse.ArgumentParser(
-        prog="vulnreach-mcp",
-        description="Run the vulnreach MCP server (stdio transport). "
-        "Wire it into an MCP client, e.g. `claude mcp add vulnreach -- vulnreach-mcp`.",
+        prog="vscan-mcp",
+        description="Run the vscan MCP server (stdio transport). "
+        "Wire it into an MCP client, e.g. `claude mcp add vscan -- vscan-mcp`.",
     )
     parser.parse_args(argv)
     mcp.run()

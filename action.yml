@@ -1,4 +1,4 @@
-name: vulnreach
+name: VScan
 description: >-
   Reachability-aware dependency vulnerability scan. Uploads SARIF to GitHub code
   scanning and posts a PR comment with the reachable-vulnerability funnel.
@@ -32,7 +32,7 @@ inputs:
     required: false
     default: "true"
   python-version:
-    description: Python version used to install and run vulnreach.
+    description: Python version used to install and run vscan.
     required: false
     default: "3.12"
 
@@ -44,23 +44,23 @@ runs:
       with:
         python-version: ${{ inputs.python-version }}
 
-    - name: Install vulnreach
+    - name: Install vscan
       shell: bash
       run: pip install "${{ github.action_path }}"
 
-    - name: Run vulnreach audit
+    - name: Run vscan audit
       id: scan
       shell: bash
       run: |
         set +e
-        vulnreach audit "${{ inputs.path }}" ${{ inputs.offline == 'true' && '--offline' || '' }} --sarif "$RUNNER_TEMP/vulnreach.sarif" --markdown "$RUNNER_TEMP/vulnreach.md" --fail-on "${{ inputs.fail-on }}"
+        vscan audit "${{ inputs.path }}" ${{ inputs.offline == 'true' && '--offline' || '' }} --sarif "$RUNNER_TEMP/vscan.sarif" --markdown "$RUNNER_TEMP/vscan.md" --fail-on "${{ inputs.fail-on }}"
         echo "code=$?" >> "$GITHUB_OUTPUT"
 
     - name: Upload SARIF to code scanning
       if: always() && inputs.upload-sarif == 'true'
       uses: github/codeql-action/upload-sarif@v3
       with:
-        sarif_file: ${{ runner.temp }}/vulnreach.sarif
+        sarif_file: ${{ runner.temp }}/vscan.sarif
 
     - name: Post or update PR comment
       if: always() && inputs.comment == 'true' && github.event_name == 'pull_request'
@@ -68,14 +68,14 @@ runs:
       with:
         script: |
           const fs = require('fs');
-          const marker = '<!-- vulnreach-report -->';
-          const path = `${process.env.RUNNER_TEMP}/vulnreach.md`;
+          const marker = '<!-- vscan-report -->';
+          const path = `${process.env.RUNNER_TEMP}/vscan.md`;
 
           let report;
           try {
             report = fs.readFileSync(path, 'utf8');
           } catch (err) {
-            report = '_vulnreach produced no report (the scan may have failed before writing one)._';
+            report = '_vscan produced no report (the scan may have failed before writing one)._';
           }
 
           const body = `${marker}\n${report}`;
@@ -101,6 +101,6 @@ runs:
       shell: bash
       run: |
         if [ "${{ steps.scan.outputs.code }}" != "0" ]; then
-          echo "vulnreach found findings at or above fail-on=${{ inputs.fail-on }}"
+          echo "vscan found findings at or above fail-on=${{ inputs.fail-on }}"
           exit 1
         fi

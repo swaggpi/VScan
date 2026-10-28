@@ -21,7 +21,7 @@ from scanner.correlate import enrich
 @pytest.fixture(autouse=True)
 def _isolated_cache(tmp_path, monkeypatch):
     """Redirect the on-disk cache so fetch_* helpers never touch the real one."""
-    monkeypatch.setenv("VULNREACH_CACHE_DIR", str(tmp_path / "vulnreach-cache"))
+    monkeypatch.setenv("VSCAN_CACHE_DIR", str(tmp_path / "vscan-cache"))
 
 
 def _stub_get(monkeypatch, payload):

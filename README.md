@@ -1,8 +1,8 @@
-# vulnreach
+# VScan
 
 A reachability-aware dependency vulnerability scanner.
 
-Most SCA tools tell you *"you depend on a package with a known CVE."* `vulnreach`
+Most SCA tools tell you *"you depend on a package with a known CVE."* VScan
 goes further: it builds a **knowledge graph** of your repository (files,
 dependencies, functions, call edges, public entry points and documentation),
 computes which public entry points actually **reach** which dependencies,
@@ -55,8 +55,8 @@ repo ──► scanner ──► reachability ──► correlator ──► age
    flags actively exploited CVEs with **CISA KEV**, adds **EPSS** exploit
    probability, and optionally fetches numeric CVSS from **NVD**. Findings are
    joined with reachability and ranked: KEV, then EPSS, then reachability, then
-   severity. Results are cached outside the repo (`~/.cache/vulnreach`,
-   overridable with `VULNREACH_CACHE_DIR` / `XDG_CACHE_HOME`).
+   severity. Results are cached outside the repo (`~/.cache/vscan`,
+   overridable with `VSCAN_CACHE_DIR` / `XDG_CACHE_HOME`).
 4. **Agent layer** (`scanner/agent/`, opt-in): for findings already proven
    reachable, reads the documentation and route context and writes an
    *advisory* exposure assessment (internet-facing vs. internal, authenticated
@@ -118,13 +118,13 @@ Three subcommands:
 
 ```bash
 # 1. Build the knowledge graph (JSON) + a summary on stderr.
-vulnreach scan <repo> [-o graph.json]          # default: vulnreach-graph.json
+vscan scan <repo> [-o graph.json]          # default: vscan-graph.json
 
 # 2. Which entry points reach which functions and dependencies.
-vulnreach reachability <repo> [-o result.json] [--json]
+vscan reachability <repo> [-o result.json] [--json]
 
 # 3. Full scan: correlate against vuln databases, join with reachability, rank.
-vulnreach audit <repo> [-o audit.json] [--json] [--offline] [--nvd] [--explain] [--bundle bundle.json]
+vscan audit <repo> [-o audit.json] [--json] [--offline] [--nvd] [--explain] [--bundle bundle.json]
                                   [--sarif out.sarif] [--markdown comment.md] [--fail-on LEVEL]
 ```
 
@@ -146,7 +146,7 @@ vulnreach audit <repo> [-o audit.json] [--json] [--offline] [--nvd] [--explain] 
 |---|---|
 | `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL` | Enable the LLM for the three advisory tiers (`--explain`, and the `--bundle` payload). Any OpenAI-compatible chat-completions endpoint; nothing is hardcoded to a provider. If unset, or on any client error, the offline heuristic runs instead. |
 | `NVD_API_KEY` | Optional; read by `--nvd` for better NVD rate limits. |
-| `VULNREACH_CACHE_DIR` | Optional; override the correlator cache location. |
+| `VSCAN_CACHE_DIR` | Optional; override the correlator cache location. |
 
 ## MCP server / AI tool
 
@@ -156,8 +156,8 @@ of reading files), reason over the vulnerability findings, and drive fixes. The
 server wraps the library in process and speaks MCP over stdio.
 
 ```bash
-pip install -e ".[mcp]"      # or: pip install "vulnreach[mcp]"
-vulnreach-mcp                # run the stdio server (also: python -m scanner.mcp)
+pip install -e ".[mcp]"      # or: pip install "vscan[mcp]"
+vscan-mcp                # run the stdio server (also: python -m scanner.mcp)
 ```
 
 Wire it into an MCP client either via a `.mcp.json` entry:
@@ -165,7 +165,7 @@ Wire it into an MCP client either via a `.mcp.json` entry:
 ```json
 {
   "mcpServers": {
-    "vulnreach": { "command": "vulnreach-mcp" }
+    "vscan": { "command": "vscan-mcp" }
   }
 }
 ```
@@ -173,7 +173,7 @@ Wire it into an MCP client either via a `.mcp.json` entry:
 or, for clients with a CLI:
 
 ```bash
-claude mcp add vulnreach -- vulnreach-mcp
+claude mcp add vscan -- vscan-mcp
 ```
 
 All tools take a `repo_path` and return compact JSON. The first call scans the
@@ -183,26 +183,26 @@ the offline heuristic, and honour the same `LLM_*` env vars as the CLI when a
 model is configured. The twelve tools, grouped by capability:
 
 **Navigate** (replace manual file reading)
-- `vulnreach_scan_overview` — scan + structural map: counts, languages, entry points, top modules/files. The "understand this repo" entry point.
-- `vulnreach_find` — substring search over node name/id/path → node ids.
-- `vulnreach_describe` — full datasheet for a node (function signature/docstring/callers/callees, dependency version/reachability, entry-point reach), replacing opening the file.
-- `vulnreach_call_graph` — expand callers (`in`) or callees (`out`) of a function to N hops.
-- `vulnreach_trace_entrypoint` — forward: the functions and dependencies a route reaches, with example paths.
-- `vulnreach_dep_reachers` — reverse: which entry points reach a dependency, with the three-way verdict ("who can hit this").
+- `vscan_scan_overview` — scan + structural map: counts, languages, entry points, top modules/files. The "understand this repo" entry point.
+- `vscan_find` — substring search over node name/id/path → node ids.
+- `vscan_describe` — full datasheet for a node (function signature/docstring/callers/callees, dependency version/reachability, entry-point reach), replacing opening the file.
+- `vscan_call_graph` — expand callers (`in`) or callees (`out`) of a function to N hops.
+- `vscan_trace_entrypoint` — forward: the functions and dependencies a route reaches, with example paths.
+- `vscan_dep_reachers` — reverse: which entry points reach a dependency, with the three-way verdict ("who can hit this").
 
 **Discuss problems** (reachability-aware findings)
-- `vulnreach_audit` — the headline "what's wrong" tool: ranked findings (reachable + actively-exploited first) with severity/CVSS/KEV/EPSS, verdict, and optional advisory triage + usage.
-- `vulnreach_finding_detail` — deep dive on one vulnerable dependency: every CVE's full text, reachable paths, triage reasoning, usage evidence.
+- `vscan_audit` — the headline "what's wrong" tool: ranked findings (reachable + actively-exploited first) with severity/CVSS/KEV/EPSS, verdict, and optional advisory triage + usage.
+- `vscan_finding_detail` — deep dive on one vulnerable dependency: every CVE's full text, reachable paths, triage reasoning, usage evidence.
 
 **Fix**
-- `vulnreach_remediation` — for one dependency or all vulnerable ones: current version, smallest fixed version that clears the CVEs, the manifest file and pin to change, reachability priority, and the entry points/paths to re-test after upgrading.
-- `vulnreach_apply_upgrade` — surgically re-pin one dependency in its manifest and return a unified diff (`dry_run=true` by default previews only). Refuses when the pin is ambiguous or a range, pointing at the file/line to edit manually.
-- `vulnreach_verify_fix` — **prove** an upgrade before committing it, without touching the repo. Clears the CVEs by version-math against each advisory's own `fixed_versions`, then applies the upgrade to a throwaway **copy**, re-audits it, and confirms nothing new became reachable/tainted and no existing finding escalated. Needs a successful networked baseline (offline → nothing can be proven). Returns a six-value `verdict`: `unverified_no_baseline`, `no_known_cves`, `cve_not_cleared`, `cve_cleared_regressions_unknown`, `fix_introduces_new_exposure`, or `fix_verified`.
-- `vulnreach_diff` — compare two checkouts (e.g. PR base vs. head) through the identical reachability-/taint-aware pipeline and report which findings a change **resolved**, **introduced**, or **shifted** (reachability / verdict / `symbol_match` / `taint` / version transitions).
+- `vscan_remediation` — for one dependency or all vulnerable ones: current version, smallest fixed version that clears the CVEs, the manifest file and pin to change, reachability priority, and the entry points/paths to re-test after upgrading.
+- `vscan_apply_upgrade` — surgically re-pin one dependency in its manifest and return a unified diff (`dry_run=true` by default previews only). Refuses when the pin is ambiguous or a range, pointing at the file/line to edit manually.
+- `vscan_verify_fix` — **prove** an upgrade before committing it, without touching the repo. Clears the CVEs by version-math against each advisory's own `fixed_versions`, then applies the upgrade to a throwaway **copy**, re-audits it, and confirms nothing new became reachable/tainted and no existing finding escalated. Needs a successful networked baseline (offline → nothing can be proven). Returns a six-value `verdict`: `unverified_no_baseline`, `no_known_cves`, `cve_not_cleared`, `cve_cleared_regressions_unknown`, `fix_introduces_new_exposure`, or `fix_verified`.
+- `vscan_diff` — compare two checkouts (e.g. PR base vs. head) through the identical reachability-/taint-aware pipeline and report which findings a change **resolved**, **introduced**, or **shifted** (reachability / verdict / `symbol_match` / `taint` / version transitions).
 
 An MCP prompt, `audit_and_fix`, scripts the full audit → remediate → preview →
-prove loop (`vulnreach_audit` → `vulnreach_remediation` → `vulnreach_apply_upgrade`
-dry-run → `vulnreach_verify_fix`) prioritising `tainted` > `confirmed` >
+prove loop (`vscan_audit` → `vscan_remediation` → `vscan_apply_upgrade`
+dry-run → `vscan_verify_fix`) prioritising `tainted` > `confirmed` >
 `reachable`.
 
 ## Example output
@@ -210,10 +210,10 @@ dry-run → `vulnreach_verify_fix`) prioritising `tainted` > `confirmed` >
 Captured from `samples/vulnerable-app` (a deliberately outdated Python + npm +
 PHP + Go sample). Output below is verbatim except for trimming.
 
-`vulnreach scan samples/vulnerable-app -o graph.json` (summary goes to stderr):
+`vscan scan samples/vulnerable-app -o graph.json` (summary goes to stderr):
 
 ```
-vulnreach scan: samples/vulnerable-app
+vscan scan: samples/vulnerable-app
   files:        11
   modules:      3
   functions:    3
@@ -233,7 +233,7 @@ vulnreach scan: samples/vulnerable-app
     - POST /import -> import_data
 ```
 
-`vulnreach reachability samples/vulnerable-app`:
+`vscan reachability samples/vulnerable-app`:
 
 ```
 GET /health -> fn:app.py:health
@@ -262,10 +262,10 @@ Declared but not reachable from any entry point:
   ...                                  (10 listed in the real output)
 ```
 
-`vulnreach audit samples/vulnerable-app --offline` (deterministic, no network):
+`vscan audit samples/vulnerable-app --offline` (deterministic, no network):
 
 ```
-vulnreach audit: samples/vulnerable-app
+vscan audit: samples/vulnerable-app
 ========================================================================
 ! Offline mode: no vulnerability database was queried.
 
@@ -479,7 +479,7 @@ recorded as `unresolved_calls`.
 `dashboard/index.html` is a static, no-build reachability viewer: open it in a
 browser (it pulls Cytoscape and fonts from a CDN), pick an entry point to
 highlight the path to the dependencies it reaches, or use "Load a scan" to open
-a graph JSON produced by `vulnreach scan -o`. A bundled sample graph loads by
+a graph JSON produced by `vscan scan -o`. A bundled sample graph loads by
 default. Fed an `audit --bundle` JSON it additionally shows the ranked findings
 overlaid on the graph, the per-finding `symbol_match` / `taint` **escalation
 view**, the **impact funnel**, and a **transitive-dependency toggle**.
@@ -492,8 +492,8 @@ A composite action runs the scan in CI, uploads the findings to GitHub code
 scanning, and posts a reachability funnel as a PR comment. Minimal usage:
 
 ```yaml
-# .github/workflows/vulnreach.yml
-name: vulnreach
+# .github/workflows/vscan.yml
+name: VScan
 on:
   pull_request: {}
   push:
@@ -505,11 +505,11 @@ permissions:
   pull-requests: write      # post/update the PR comment
 
 jobs:
-  vulnreach:
+  vscan:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: swaggpi/vulnreach@main
+      - uses: swaggpi/VScan@main
         with:
           path: .
           fail-on: reachable      # never | reachable | confirmed | tainted | any

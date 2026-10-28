@@ -124,7 +124,7 @@ def build_client(offline: bool) -> LLMClient:
     Otherwise a model is used *iff* ``LLM_BASE_URL`` / ``LLM_API_KEY`` /
     ``LLM_MODEL`` are configured; with no key the client is simply unavailable
     and every agent tier falls back to its offline heuristic -- so the tools
-    work with no API key, just like ``vulnreach audit``.
+    work with no API key, just like ``vscan audit``.
     """
     return LLMClient.disabled() if offline else LLMClient()
 

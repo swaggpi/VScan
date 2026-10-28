@@ -1,4 +1,4 @@
-"""vulnreach scanner (layer 1).
+"""vscan scanner (layer 1).
 
 A deterministic, offline pass that walks a target repository and builds a typed,
 JSON-serializable knowledge graph of its structure: files, dependencies,

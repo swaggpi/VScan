@@ -1,7 +1,7 @@
-"""MCP server package exposing the vulnreach scanner as AI tools.
+"""MCP server package exposing the vscan scanner as AI tools.
 
-The server (``scanner.mcp.server``) wraps the vulnreach library in process and
-speaks MCP over stdio. Run it with the ``vulnreach-mcp`` console script or
+The server (``scanner.mcp.server``) wraps the vscan library in process and
+speaks MCP over stdio. Run it with the ``vscan-mcp`` console script or
 ``python -m scanner.mcp``.
 
 ``mcp`` is an optional dependency; importing :func:`main` lazily keeps the core

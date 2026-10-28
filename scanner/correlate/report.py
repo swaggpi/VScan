@@ -396,7 +396,7 @@ def format_report(
     summary = build_summary(graph, ranked)
 
     lines: list[str] = []
-    lines.append(f"vulnreach audit: {repo_path}")
+    lines.append(f"vscan audit: {repo_path}")
     lines.append("=" * 72)
 
     # Degraded-mode banner (offline or network failure).

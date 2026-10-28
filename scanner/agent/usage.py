@@ -2,7 +2,7 @@
 
 This is layer 3's third *advisory* capability, a sibling of
 :mod:`scanner.agent.triage` and :mod:`scanner.agent.assess`. Reachability in
-vulnreach is a deliberate LOWER BOUND: a ``calls`` edge into a dependency is
+vscan is a deliberate LOWER BOUND: a ``calls`` edge into a dependency is
 drawn only when a call is *statically* resolved. On real repositories many
 vulnerable dependencies therefore have NO resolved call edge at all -- they are
 loaded DYNAMICALLY (``importlib``/plugin registries/entry points), driven by

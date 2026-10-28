@@ -2,8 +2,8 @@
 
 These helpers are the single source of truth for turning knowledge-graph
 nodes/edges into the compact JSON the AI tools return. Keeping them here (rather
-than inline in each tool) is what lets ``vulnreach_describe``,
-``vulnreach_call_graph``, ``vulnreach_trace_entrypoint`` and friends agree on
+than inline in each tool) is what lets ``vscan_describe``,
+``vscan_call_graph``, ``vscan_trace_entrypoint`` and friends agree on
 exactly how a function, dependency, entrypoint or module is represented, with no
 copy-paste.
 

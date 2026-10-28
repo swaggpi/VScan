@@ -10,7 +10,7 @@ on those dependencies, and an agent pass that reads the docs to assess exposure.
 reconstruct from here + `git log`. Keep it updated as tasks complete.
 
 ## Morning deliverable (what must demo)
-Run `vulnreach scan <repo>` (+ a report command) and get:
+Run `vscan scan <repo>` (+ a report command) and get:
 1. Knowledge + dependency graph (all 4 languages) — DONE in layer 1.
 2. **Per-endpoint reachability**: for each public entry point, the functions it
    reaches and the dependencies those reach. (endpoint -> functions -> deps)
@@ -56,7 +56,7 @@ Run `vulnreach scan <repo>` (+ a report command) and get:
 - [ ] B1 `scanner/reachability.py`: from the graph, compute per-entrypoint the
       reachable functions and reachable dependencies (BFS over route_to_handler +
       calls), with the path. Tests on the sample apps.
-- [ ] B2 CLI: `vulnreach reachability <repo>` (or `scan --reachability`) emitting
+- [ ] B2 CLI: `vscan reachability <repo>` (or `scan --reachability`) emitting
       the endpoint -> functions -> deps report (text + JSON).
 
 ### C. Correlator (network, isolated; no key needed)
@@ -94,7 +94,7 @@ Run `vulnreach scan <repo>` (+ a report command) and get:
 
 ## Progress log (overnight)
 - DONE: A1/A2/A3 research (notes in .research/). B reachability engine (committed:
-  `vulnreach reachability`, 77 tests). 
+  `vscan reachability`, 77 tests). 
 - IN PROGRESS: C correlator (OSV+KEV+EPSS + `audit` + reachability join);
   E3a Python registry routes (Flask-RESTful add_resource -> fixes redash 0-entrypoints,
   add_url_rule/add_api_route, blueprint/APIRouter prefix composition).
@@ -136,14 +136,14 @@ Non-negotiable: never fabricate an edge/verdict to look more complete.
 All core layers done + committed on branch worktree-scanner-layer1:
 - Scanner/graph (4 langs) + registry routes (redash 0->121 entrypoints). 
 - Three-way reachability (endpoint->functions->deps, reachable/potentially/unreachable).
-- Correlator: OSV+CISA KEV+EPSS, `vulnreach audit` (live-verified: PyYAML 3.13 ->
+- Correlator: OSV+CISA KEV+EPSS, `vscan audit` (live-verified: PyYAML 3.13 ->
   CVE-2020-14343 reachable via POST /import). Offline-safe.
 - Agent layer: `audit --explain` docs-exposure assessment (advisory tier, guardrailed,
   offline heuristic now; set LLM_BASE_URL/LLM_API_KEY/LLM_MODEL for the real model).
 - Dashboard viewer (reachability trace).
 - 111 tests pass.
 
-CLI: `vulnreach scan|reachability|audit [--explain] [--offline] [--nvd] [-o] [--json]`.
+CLI: `vscan scan|reachability|audit [--explain] [--offline] [--nvd] [-o] [--json]`.
 
 ## In progress (stretch + wrap-up)
 - E4 fresh adversarial review of the new core (registry routes, three-way, correlator,

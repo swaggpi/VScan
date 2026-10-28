@@ -415,7 +415,7 @@ def mocked_vuln_db(tmp_path, monkeypatch):
     client is forced unavailable so the triage tier uses its deterministic
     offline heuristic. No request is ever issued.
     """
-    monkeypatch.setenv("VULNREACH_CACHE_DIR", str(tmp_path / "vulnreach-cache"))
+    monkeypatch.setenv("VSCAN_CACHE_DIR", str(tmp_path / "vscan-cache"))
     monkeypatch.setattr(
         osv,
         "query_batch",

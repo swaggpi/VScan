@@ -31,7 +31,7 @@ from . import cache
 
 _QUERYBATCH_URL = "https://api.osv.dev/v1/querybatch"
 _VULN_URL = "https://api.osv.dev/v1/vulns/"
-_USER_AGENT = "vulnreach/0.1 (defensive dependency scanner)"
+_USER_AGENT = "vscan/0.1 (defensive dependency scanner)"
 _TIMEOUT = 20.0
 # Research verified 1000 is the hard cap; 500 keeps us well under response caps.
 _BATCH_CAP = 500

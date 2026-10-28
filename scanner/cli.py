@@ -27,7 +27,7 @@ from .reachability import ReachabilityResult, compute_reachability
 from .scan import scan_repo
 from .taint import TaintResult, compute_taint
 
-_DEFAULT_OUTPUT = "vulnreach-graph.json"
+_DEFAULT_OUTPUT = "vscan-graph.json"
 
 
 def _compute_exit_code(fail_on: str, findings: list[Finding]) -> int:
@@ -54,7 +54,7 @@ def _print_summary(graph: KnowledgeGraph, repo_path: str, output_path: str) -> N
     deps = summary["dependencies"]
 
     out = sys.stderr
-    print(f"vulnreach scan: {repo_path}", file=out)
+    print(f"vscan scan: {repo_path}", file=out)
     print(f"  files:        {node_counts.get('file', 0)}", file=out)
     print(f"  modules:      {node_counts.get('module', 0)}", file=out)
     print(f"  functions:    {node_counts.get('function', 0)}", file=out)
@@ -104,7 +104,7 @@ def _print_summary(graph: KnowledgeGraph, repo_path: str, output_path: str) -> N
 def _format_reachability(result: ReachabilityResult, repo_path: str) -> str:
     """Render a reachability result as a human-readable text report."""
     lines: list[str] = []
-    lines.append(f"vulnreach reachability: {repo_path}")
+    lines.append(f"vscan reachability: {repo_path}")
     lines.append("")
 
     if not result.entrypoints:
@@ -457,7 +457,7 @@ def _build_bundle(
 def main(argv: Sequence[str] | None = None) -> int:
     load_dotenv()
     parser = argparse.ArgumentParser(
-        prog="vulnreach",
+        prog="vscan",
         description="Reachability-aware dependency scanner (layer 1: structure graph).",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)

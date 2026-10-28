@@ -184,7 +184,7 @@ class LLMClient:
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}",
-            "User-Agent": "vulnreach-agent/0.1",
+            "User-Agent": "vscan-agent/0.1",
         }
         request = urllib.request.Request(
             f"{self.base_url}/chat/completions",

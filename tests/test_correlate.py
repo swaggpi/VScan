@@ -98,11 +98,11 @@ def _isolated_cache(tmp_path, monkeypatch):
     """Point the on-disk cache at a fresh temp dir for every test.
 
     OSV vuln records are now cached (``osv-vuln:<id>``, 7-day TTL). Without this
-    redirect the suite would read/write the user's real ``~/.cache/vulnreach``,
+    redirect the suite would read/write the user's real ``~/.cache/vscan``,
     leaking fixtures across runs and making call-count assertions non-hermetic.
-    Tests that set ``VULNREACH_CACHE_DIR`` themselves simply override this.
+    Tests that set ``VSCAN_CACHE_DIR`` themselves simply override this.
     """
-    monkeypatch.setenv("VULNREACH_CACHE_DIR", str(tmp_path / "vulnreach-cache"))
+    monkeypatch.setenv("VSCAN_CACHE_DIR", str(tmp_path / "vscan-cache"))
 
 
 @pytest.fixture
@@ -415,7 +415,7 @@ def test_correlate_full_degrades_on_non_dict_batch(graph, monkeypatch):
 
 
 def test_kev_rejects_non_dict(tmp_path, monkeypatch):
-    monkeypatch.setenv("VULNREACH_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setenv("VSCAN_CACHE_DIR", str(tmp_path / "cache"))
     monkeypatch.setattr(enrich, "_get", lambda url, headers=None: b"[]")
     with pytest.raises(enrich.EnrichNetworkError):
         enrich.fetch_kev_catalog()
@@ -424,7 +424,7 @@ def test_kev_rejects_non_dict(tmp_path, monkeypatch):
 def test_enrich_findings_never_raises_on_non_dict(tmp_path, monkeypatch):
     # Both KEV and EPSS returning a non-dict JSON must degrade to notices, never
     # raise out of enrich_findings.
-    monkeypatch.setenv("VULNREACH_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setenv("VSCAN_CACHE_DIR", str(tmp_path / "cache"))
     monkeypatch.setattr(enrich, "_get", lambda url, headers=None: b"[]")
     finding = Finding(
         dependency_id="d",
@@ -484,7 +484,7 @@ def test_fixed_versions_reads_matching_version_range():
 def test_cache_fails_soft_on_uncreatable_dir(tmp_path, monkeypatch):
     blocker = tmp_path / "blocker"
     blocker.write_text("not a directory")
-    monkeypatch.setenv("VULNREACH_CACHE_DIR", str(blocker / "sub"))
+    monkeypatch.setenv("VSCAN_CACHE_DIR", str(blocker / "sub"))
     assert cache.get("some-key") is None  # no raise
     cache.set("some-key", {"value": 1}, ttl=100)  # no raise
     assert cache.get("some-key") is None
@@ -681,7 +681,7 @@ def test_audit_verdict_defaults_to_potentially_reachable_when_absent():
 
 # #15 -- T2: cache round-trip, TTL expiry (with stale-file cleanup) and fail-soft
 # on a corrupt entry. The autouse ``_isolated_cache`` fixture already points
-# VULNREACH_CACHE_DIR at a fresh temp dir for every test.
+# VSCAN_CACHE_DIR at a fresh temp dir for every test.
 
 
 def test_cache_round_trip_returns_stored_value():

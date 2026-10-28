@@ -4,7 +4,7 @@ Status as of the overnight run. **Everything below is committed on branch
 `worktree-scanner-layer1` and passing — but NOT pushed** (see "Action needed").
 
 ## TL;DR
-The full pipeline works end to end and is live-verified. `vulnreach audit <repo>`
+The full pipeline works end to end and is live-verified. `vscan audit <repo>`
 scans a repo, builds a 4-language knowledge graph, computes three-way reachability
 (which entry point reaches which functions and dependencies), correlates the deps
 against real CVE data (OSV + CISA KEV + EPSS), reports coverage/confidence, and —
@@ -13,24 +13,24 @@ dashboard overlays the reachable-vulnerable findings on the graph. **516 tests p
 Every finding now escalates: reachable -> vulnerable-function confirmed (symbol_match)
 -> exploitable (taint, Python/JS/Go); transitive dependencies across the full lockfile
 tree (npm/Go/poetry/Pipenv/composer) are correlated; and the scanner is exposed as 12
-MCP tools incl. a fix-and-prove loop (vulnreach_verify_fix / _diff + an audit_and_fix prompt).
+MCP tools incl. a fix-and-prove loop (vscan_verify_fix / _diff + an audit_and_fix prompt).
 
 ## Action needed from you (1 thing)
 1. All work is committed AND pushed to `origin/worktree-scanner-layer1` (every
    overnight commit is up). Nothing to push.
 2. **Activate the real agent model** (optional; offline heuristic works without it):
    claim your API credits, then set `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`.
-   Then `vulnreach audit <repo> --explain` uses the model (else an offline heuristic).
+   Then `vscan audit <repo> --explain` uses the model (else an offline heuristic).
    The branded "built with ..." section still needs adding to the README (left as a
    placeholder) — do that last, before submission, since the repo is public.
 
 ## Demo it
 ```
 cd <repo>/.claude/worktrees/scanner-layer1   # or wherever the branch is checked out
-./.venv/bin/vulnreach scan          samples/vulnerable-app
-./.venv/bin/vulnreach reachability  samples/vulnerable-app
-./.venv/bin/vulnreach audit         samples/vulnerable-app            # live: real CVEs
-./.venv/bin/vulnreach audit         samples/vulnerable-app --explain  # + docs exposure
+./.venv/bin/vscan scan          samples/vulnerable-app
+./.venv/bin/vscan reachability  samples/vulnerable-app
+./.venv/bin/vscan audit         samples/vulnerable-app            # live: real CVEs
+./.venv/bin/vscan audit         samples/vulnerable-app --explain  # + docs exposure
 ```
 Live `audit` on the sample surfaces e.g. **PyYAML 3.13 -> CVE-2020-14343 (arbitrary
 code execution), REACHABLE via POST /import** with the exact call path, while
@@ -41,10 +41,10 @@ Real-repo corpus to demo against: `scripts/fetch_test_corpus.sh` (gitignored
 `test-corpus/`). redash now yields **121 entry points** (Flask-RESTful routes).
 
 ## What got built overnight
-- Reachability engine (`vulnreach reachability`) — endpoint -> functions -> deps,
+- Reachability engine (`vscan reachability`) — endpoint -> functions -> deps,
   three-way verdict (reachable / potentially_reachable / unreachable) with a sound
   rule (unreachable only when the reachable region is fully resolved).
-- Correlator (`vulnreach audit`) — OSV batch + CISA KEV + EPSS (+ optional NVD),
+- Correlator (`vscan audit`) — OSV batch + CISA KEV + EPSS (+ optional NVD),
   ranked KEV -> EPSS -> reachable -> severity, reachability join. Network-isolated,
   offline-safe.
 - Agent layer (`--explain`) — docs-based exposure assessment, provider-neutral,
@@ -85,10 +85,10 @@ Real-repo corpus to demo against: `scripts/fetch_test_corpus.sh` (gitignored
   refreshed.
 
 ## Shipped overnight (2026-10-28, commits 0364dbc..5ce587e, all pushed)
-- MCP fix-and-prove loop: `vulnreach_verify_fix` (applies an upgrade to a scratch
+- MCP fix-and-prove loop: `vscan_verify_fix` (applies an upgrade to a scratch
   copy — never mutates your tree — re-scans, and PROVES the CVE is cleared by the
   advisory's own fixed-version AND that nothing new became reachable/tainted; a
-  7-value sound verdict taxonomy), `vulnreach_diff` (scan-vs-scan finding diff),
+  7-value sound verdict taxonomy), `vscan_diff` (scan-vs-scan finding diff),
   and an `audit_and_fix` prompt. 12 MCP tools total.
 - Transitive dependency CVEs across the full lockfile tree (npm package-lock/pnpm,
   Go indirect, Python poetry.lock/Pipfile.lock, PHP composer.lock). Sound: a

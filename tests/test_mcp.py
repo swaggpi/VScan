@@ -1,4 +1,4 @@
-"""Tests for the vulnreach MCP server.
+"""Tests for the vscan MCP server.
 
 The tool *functions* are imported and called directly (not over the wire), and
 exercised against ``samples/golden-app`` and ``samples/demo-app``. Navigation
@@ -81,7 +81,7 @@ _EPSS = {PYYAML_CVE: (0.92, 0.99), URLLIB3_CVE: (0.05, 0.30)}
 @pytest.fixture(autouse=True)
 def _isolated(tmp_path, monkeypatch):
     """Fresh on-disk cache and empty MCP caches for every test."""
-    monkeypatch.setenv("VULNREACH_CACHE_DIR", str(tmp_path / "vulnreach-cache"))
+    monkeypatch.setenv("VSCAN_CACHE_DIR", str(tmp_path / "vscan-cache"))
     state.clear_caches()
     yield
     state.clear_caches()
@@ -107,7 +107,7 @@ def _call(func, model_cls, **kwargs):
 
 
 def test_scan_overview_golden_counts():
-    ov = _call(S.vulnreach_scan_overview, S.ScanOverviewInput, repo_path=GOLDEN)
+    ov = _call(S.vscan_scan_overview, S.ScanOverviewInput, repo_path=GOLDEN)
     assert ov["entrypoints"] == 8
     assert ov["dependencies"]["total"] == 7
     assert ov["dependencies"]["pinned"] == 7
@@ -118,20 +118,20 @@ def test_scan_overview_golden_counts():
 
 
 def test_find_locates_symbol():
-    res = _call(S.vulnreach_find, S.FindInput, repo_path=GOLDEN, query="ingest")
+    res = _call(S.vscan_find, S.FindInput, repo_path=GOLDEN, query="ingest")
     ids = {m["id"] for m in res["matches"]["items"]}
     assert "fn:services.py:ingest" in ids
 
 
 def test_find_kind_filter():
-    res = _call(S.vulnreach_find, S.FindInput, repo_path=GOLDEN, query="yaml", kind="dependency")
+    res = _call(S.vscan_find, S.FindInput, repo_path=GOLDEN, query="yaml", kind="dependency")
     kinds = {m["kind"] for m in res["matches"]["items"]}
     assert kinds == {"dependency"}
     assert any(m["id"] == "dep:PyPI:PyYAML" for m in res["matches"]["items"])
 
 
 def test_describe_function_signature_and_callees():
-    d = _call(S.vulnreach_describe, S.DescribeInput, repo_path=GOLDEN, node_id="fn:services.py:ingest")
+    d = _call(S.vscan_describe, S.DescribeInput, repo_path=GOLDEN, node_id="fn:services.py:ingest")
     assert d["signature"] == "ingest(raw)"
     assert d["docstring"] and "load_yaml" in d["docstring"]
     assert "fn:services.py:load_yaml" in d["callees"]["functions"]
@@ -139,7 +139,7 @@ def test_describe_function_signature_and_callees():
 
 
 def test_describe_dependency_reachability():
-    d = _call(S.vulnreach_describe, S.DescribeInput, repo_path=GOLDEN, node_id="dep:PyPI:PyYAML")
+    d = _call(S.vscan_describe, S.DescribeInput, repo_path=GOLDEN, node_id="dep:PyPI:PyYAML")
     assert d["version"] == "5.3.1"
     assert d["reachable"] is True
     assert d["verdict"] == "reachable"
@@ -147,14 +147,14 @@ def test_describe_dependency_reachability():
 
 
 def test_describe_entrypoint_reaches():
-    d = _call(S.vulnreach_describe, S.DescribeInput, repo_path=GOLDEN, node_id="ep:POST:/submit")
+    d = _call(S.vscan_describe, S.DescribeInput, repo_path=GOLDEN, node_id="ep:POST:/submit")
     assert d["method"] == "POST" and d["path"] == "/submit"
     assert "dep:PyPI:PyYAML" in d["reaches"]["reachable_dependencies"]
 
 
 def test_call_graph_out_reaches_dependency():
     cg = _call(
-        S.vulnreach_call_graph, S.CallGraphInput,
+        S.vscan_call_graph, S.CallGraphInput,
         repo_path=GOLDEN, node_id="fn:services.py:ingest", direction="out", depth=3,
     )
     node_ids = {n["id"] for n in cg["nodes"]}
@@ -164,7 +164,7 @@ def test_call_graph_out_reaches_dependency():
 
 def test_call_graph_in_finds_caller():
     cg = _call(
-        S.vulnreach_call_graph, S.CallGraphInput,
+        S.vscan_call_graph, S.CallGraphInput,
         repo_path=GOLDEN, node_id="fn:services.py:ingest", direction="in", depth=1,
     )
     node_ids = {n["id"] for n in cg["nodes"]}
@@ -172,7 +172,7 @@ def test_call_graph_in_finds_caller():
 
 
 def test_trace_entrypoint_reaches_pyyaml():
-    t = _call(S.vulnreach_trace_entrypoint, S.TraceEntrypointInput,
+    t = _call(S.vscan_trace_entrypoint, S.TraceEntrypointInput,
               repo_path=GOLDEN, entrypoint_id="ep:POST:/submit")
     dep_ids = {rd["id"] for rd in t["reachable_dependencies"]}
     assert "dep:PyPI:PyYAML" in dep_ids
@@ -181,7 +181,7 @@ def test_trace_entrypoint_reaches_pyyaml():
 
 
 def test_dep_reachers_pyyaml_submit():
-    dr = _call(S.vulnreach_dep_reachers, S.DepReachersInput,
+    dr = _call(S.vscan_dep_reachers, S.DepReachersInput,
                repo_path=GOLDEN, dep_id="dep:PyPI:PyYAML")
     assert dr["verdict"] == "reachable"
     assert dr["reachable"] is True
@@ -190,11 +190,11 @@ def test_dep_reachers_pyyaml_submit():
 
 
 def test_demo_app_scan_overview_offline():
-    ov = _call(S.vulnreach_scan_overview, S.ScanOverviewInput, repo_path=DEMO)
+    ov = _call(S.vscan_scan_overview, S.ScanOverviewInput, repo_path=DEMO)
     assert ov["node_counts"].get("entrypoint", 0) >= 1
     assert ov["dependencies"]["total"] >= 1
     # a known demo-app dependency is discoverable
-    res = _call(S.vulnreach_find, S.FindInput, repo_path=DEMO, query="PyYAML", kind="dependency")
+    res = _call(S.vscan_find, S.FindInput, repo_path=DEMO, query="PyYAML", kind="dependency")
     assert any("PyYAML" in m["id"] for m in res["matches"]["items"])
 
 
@@ -202,7 +202,7 @@ def test_demo_app_scan_overview_offline():
 
 
 def test_audit_ranks_reachable_kev_first(mocked_db):
-    au = _call(S.vulnreach_audit, S.AuditInput, repo_path=GOLDEN)
+    au = _call(S.vscan_audit, S.AuditInput, repo_path=GOLDEN)
     assert au["network_ok"] is True
     assert au["counts"]["findings"] == 2
     assert au["counts"]["reachable"] == 1
@@ -223,18 +223,18 @@ def test_audit_ranks_reachable_kev_first(mocked_db):
 
 
 def test_audit_no_explain_omits_advisory(mocked_db):
-    au = _call(S.vulnreach_audit, S.AuditInput, repo_path=GOLDEN, explain=False)
+    au = _call(S.vscan_audit, S.AuditInput, repo_path=GOLDEN, explain=False)
     assert all("triage" not in f for f in au["findings"])
 
 
 def test_audit_offline_returns_no_findings():
-    au = _call(S.vulnreach_audit, S.AuditInput, repo_path=GOLDEN, offline=True)
+    au = _call(S.vscan_audit, S.AuditInput, repo_path=GOLDEN, offline=True)
     assert au["offline"] is True
     assert au["counts"]["findings"] == 0
 
 
 def test_finding_detail_pyyaml(mocked_db):
-    fd = _call(S.vulnreach_finding_detail, S.FindingDetailInput,
+    fd = _call(S.vscan_finding_detail, S.FindingDetailInput,
                repo_path=GOLDEN, dep_id="dep:PyPI:PyYAML")
     assert fd["reachable"] is True
     assert len(fd["cves"]) == 1
@@ -248,7 +248,7 @@ def test_finding_detail_pyyaml(mocked_db):
 
 def test_finding_detail_no_findings(mocked_db):
     # Flask has no mocked advisory -> graceful "no findings" error.
-    out = S.vulnreach_finding_detail(S.FindingDetailInput(repo_path=GOLDEN, dep_id="dep:PyPI:Flask"))
+    out = S.vscan_finding_detail(S.FindingDetailInput(repo_path=GOLDEN, dep_id="dep:PyPI:Flask"))
     assert out.startswith("Error:") and "no findings" in out
 
 
@@ -256,7 +256,7 @@ def test_finding_detail_no_findings(mocked_db):
 
 
 def test_remediation_recommends_smallest_clearing_version(mocked_db):
-    rem = _call(S.vulnreach_remediation, S.RemediationInput,
+    rem = _call(S.vscan_remediation, S.RemediationInput,
                 repo_path=GOLDEN, dep_id="dep:PyPI:PyYAML")
     assert rem["count"] == 1
     r = rem["remediations"][0]
@@ -264,11 +264,11 @@ def test_remediation_recommends_smallest_clearing_version(mocked_db):
     assert r["recommended_version"] == "5.4"
     assert r["source_file"] == "requirements.txt"
     assert r["reachable"] is True
-    assert "vulnreach_apply_upgrade" in r["next_step"]
+    assert "vscan_apply_upgrade" in r["next_step"]
 
 
 def test_remediation_all_vulnerable_deps_reachable_first(mocked_db):
-    rem = _call(S.vulnreach_remediation, S.RemediationInput, repo_path=GOLDEN)
+    rem = _call(S.vscan_remediation, S.RemediationInput, repo_path=GOLDEN)
     assert rem["count"] == 2
     # reachable PyYAML sorts before unreachable urllib3
     assert rem["remediations"][0]["dependency"] == "PyYAML"
@@ -280,7 +280,7 @@ def test_apply_upgrade_dry_run_diff_and_no_write(tmp_path):
     req = dst / "requirements.txt"
     before = req.read_text()
 
-    up = _call(S.vulnreach_apply_upgrade, S.ApplyUpgradeInput,
+    up = _call(S.vscan_apply_upgrade, S.ApplyUpgradeInput,
                repo_path=str(dst), dep_id="dep:PyPI:PyYAML", version="5.4", dry_run=True)
     assert up["applied"] is False
     assert up["source_file"] == "requirements.txt"
@@ -296,7 +296,7 @@ def test_apply_upgrade_writes_when_not_dry_run(tmp_path):
     shutil.copytree(GOLDEN, dst)
     req = dst / "requirements.txt"
 
-    up = _call(S.vulnreach_apply_upgrade, S.ApplyUpgradeInput,
+    up = _call(S.vscan_apply_upgrade, S.ApplyUpgradeInput,
                repo_path=str(dst), dep_id="dep:PyPI:PyYAML", version="5.4", dry_run=False)
     assert up["applied"] is True
     text = req.read_text()
@@ -314,7 +314,7 @@ def test_apply_upgrade_refuses_when_pin_absent(tmp_path):
     req = dst / "requirements.txt"
     req.write_text(req.read_text().replace("PyYAML==5.3.1", "PyYAML>=5.0"))
     state.clear_caches()
-    out = S.vulnreach_apply_upgrade(
+    out = S.vscan_apply_upgrade(
         S.ApplyUpgradeInput(repo_path=str(dst), dep_id="dep:PyPI:PyYAML", version="5.4")
     )
     assert out.startswith("Error:")
@@ -325,18 +325,18 @@ def test_apply_upgrade_refuses_when_pin_absent(tmp_path):
 
 
 def test_invalid_repo_path_is_graceful():
-    out = S.vulnreach_scan_overview(S.ScanOverviewInput(repo_path="/no/such/repo"))
+    out = S.vscan_scan_overview(S.ScanOverviewInput(repo_path="/no/such/repo"))
     assert out.startswith("Error:") and "does not exist" in out
 
 
 def test_unknown_node_is_graceful():
-    out = S.vulnreach_describe(S.DescribeInput(repo_path=GOLDEN, node_id="fn:does.not:exist"))
-    assert out.startswith("Error:") and "vulnreach_find" in out
+    out = S.vscan_describe(S.DescribeInput(repo_path=GOLDEN, node_id="fn:does.not:exist"))
+    assert out.startswith("Error:") and "vscan_find" in out
 
 
 def test_wrong_node_kind_is_graceful():
     # call_graph expects a function, not a dependency
-    out = S.vulnreach_call_graph(
+    out = S.vscan_call_graph(
         S.CallGraphInput(repo_path=GOLDEN, node_id="dep:PyPI:PyYAML", direction="out")
     )
     assert out.startswith("Error:") and "expects a function" in out
@@ -354,7 +354,7 @@ def test_verify_fix_proves_pyyaml_and_leaves_tree_untouched(mocked_db):
     req = os.path.join(GOLDEN, "requirements.txt")
     before = open(req, encoding="utf-8").read()
 
-    vf = _call(S.vulnreach_verify_fix, S.VerifyFixInput,
+    vf = _call(S.vscan_verify_fix, S.VerifyFixInput,
                repo_path=GOLDEN, dep_id="dep:PyPI:PyYAML", version="5.4")
 
     assert vf["cve_cleared"] is True
@@ -374,7 +374,7 @@ def test_verify_fix_proves_pyyaml_and_leaves_tree_untouched(mocked_db):
 
 
 def test_verify_fix_below_fix_not_cleared(mocked_db):
-    vf = _call(S.vulnreach_verify_fix, S.VerifyFixInput,
+    vf = _call(S.vscan_verify_fix, S.VerifyFixInput,
                repo_path=GOLDEN, dep_id="dep:PyPI:PyYAML", version="5.3.2")
     assert vf["cve_cleared"] is False
     assert vf["target_cves"][0]["cleared"] is False
@@ -385,7 +385,7 @@ def test_verify_fix_offline_has_no_baseline():
     # Offline the baseline scan sees NO findings, so verify_fix cannot know which
     # advisories apply -- it must NOT claim "cleared". (Regression: ``all([])``
     # used to make cve_cleared vacuously True.)
-    vf = _call(S.vulnreach_verify_fix, S.VerifyFixInput,
+    vf = _call(S.vscan_verify_fix, S.VerifyFixInput,
                repo_path=GOLDEN, dep_id="dep:PyPI:PyYAML", version="5.4", offline=True)
     assert vf["cve_cleared"] is False
     assert vf["target_cves"] == []
@@ -409,7 +409,7 @@ def test_verify_fix_baseline_outage_has_no_baseline(mocked_db, monkeypatch):
 
     monkeypatch.setattr(osv, "query_batch", _flaky)
 
-    vf = _call(S.vulnreach_verify_fix, S.VerifyFixInput,
+    vf = _call(S.vscan_verify_fix, S.VerifyFixInput,
                repo_path=GOLDEN, dep_id="dep:PyPI:urllib3", version="1.25.9")
     assert vf["cve_cleared"] is False
     assert vf["verdict"] == "unverified_no_baseline"
@@ -418,7 +418,7 @@ def test_verify_fix_baseline_outage_has_no_baseline(mocked_db, monkeypatch):
 def test_verify_fix_no_advisory_dep(mocked_db):
     # Flask has no mocked advisory, so the baseline finds no CVE on it: there is
     # nothing to clear, and we must not report it as cleared/verified.
-    vf = _call(S.vulnreach_verify_fix, S.VerifyFixInput,
+    vf = _call(S.vscan_verify_fix, S.VerifyFixInput,
                repo_path=GOLDEN, dep_id="dep:PyPI:Flask", version="2.0.2")
     assert vf["cve_cleared"] is False
     assert vf["target_cves"] == []
@@ -427,7 +427,7 @@ def test_verify_fix_no_advisory_dep(mocked_db):
 
 def test_verify_fix_prerelease_of_fixed_line_not_cleared(mocked_db):
     # Fix is 5.4; a pre-release of that same line (5.4b1) is NOT yet the fix.
-    vf = _call(S.vulnreach_verify_fix, S.VerifyFixInput,
+    vf = _call(S.vscan_verify_fix, S.VerifyFixInput,
                repo_path=GOLDEN, dep_id="dep:PyPI:PyYAML", version="5.4b1")
     assert vf["target_cves"][0]["cleared"] is False
     assert vf["cve_cleared"] is False
@@ -436,7 +436,7 @@ def test_verify_fix_prerelease_of_fixed_line_not_cleared(mocked_db):
 
 def test_verify_fix_prerelease_above_fixed_line_cleared(mocked_db):
     # A pre-release that is strictly above the fixed line (5.5b1 > 5.4) clears it.
-    vf = _call(S.vulnreach_verify_fix, S.VerifyFixInput,
+    vf = _call(S.vscan_verify_fix, S.VerifyFixInput,
                repo_path=GOLDEN, dep_id="dep:PyPI:PyYAML", version="5.5b1")
     assert vf["target_cves"][0]["cleared"] is True
     assert vf["cve_cleared"] is True
@@ -461,7 +461,7 @@ def test_verify_fix_escalation_blocks_verified(mocked_db, monkeypatch):
 
     monkeypatch.setattr(S, "_run_audit_pipeline", _escalating)
 
-    vf = _call(S.vulnreach_verify_fix, S.VerifyFixInput,
+    vf = _call(S.vscan_verify_fix, S.VerifyFixInput,
                repo_path=GOLDEN, dep_id="dep:PyPI:PyYAML", version="5.4")
     assert vf["cve_cleared"] is True          # version-math still clears the CVE
     assert vf["reanalysis"]["introduced"] == []  # escalation, not a new finding
@@ -493,7 +493,7 @@ def test_diff_pyyaml_upgrade_resolves_cve(mocked_db, monkeypatch, tmp_path):
 
     monkeypatch.setattr(osv, "query_batch", _versioned_query)
 
-    df = _call(S.vulnreach_diff, S.DiffInput,
+    df = _call(S.vscan_diff, S.DiffInput,
                repo_path_base=GOLDEN, repo_path_head=str(head))
     resolved_cves = {c for row in df["resolved"] for c in row["cve_ids"]}
     assert PYYAML_CVE in resolved_cves
@@ -507,4 +507,4 @@ def test_prompt_registered():
     assert "audit_and_fix" in names
     text = S.audit_and_fix()
     assert isinstance(text, str) and text.strip()
-    assert "vulnreach_verify_fix" in text
+    assert "vscan_verify_fix" in text

@@ -24,7 +24,7 @@ _SARIF_SCHEMA = (
     "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/"
     "sarif-schema-2.1.0.json"
 )
-_INFORMATION_URI = "https://github.com/swaggpi/vulnreach"
+_INFORMATION_URI = "https://github.com/swaggpi/VScan"
 
 # Repo-relative placeholder when a dependency carries no manifest source file.
 _NO_MANIFEST_URI = "dependency-manifest"
@@ -147,7 +147,7 @@ def to_sarif(payload: dict[str, Any], graph: KnowledgeGraph) -> dict[str, Any]:
                     }
                 ],
                 "partialFingerprints": {
-                    "vulnreach/v1": (
+                    "vscan/v1": (
                         f"{finding.get('dependency_id')}|{finding.get('vuln_id')}"
                     )
                 },
@@ -167,7 +167,7 @@ def to_sarif(payload: dict[str, Any], graph: KnowledgeGraph) -> dict[str, Any]:
             {
                 "tool": {
                     "driver": {
-                        "name": "vulnreach",
+                        "name": "VScan",
                         "informationUri": _INFORMATION_URI,
                         "rules": rules,
                     }
@@ -193,7 +193,7 @@ def to_markdown(payload: dict[str, Any]) -> str:
     summary = payload.get("summary", {})
     findings = payload.get("findings", [])
 
-    lines: list[str] = ["## vulnreach audit", ""]
+    lines: list[str] = ["## vscan audit", ""]
     lines.append(funnel_line(summary))
     lines.append("")
 

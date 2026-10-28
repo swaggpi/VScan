@@ -154,7 +154,7 @@ def test_sarif_top_level_shape():
     assert "$schema" in log and log["$schema"].endswith("sarif-schema-2.1.0.json")
     assert len(log["runs"]) == 1
     driver = log["runs"][0]["tool"]["driver"]
-    assert driver["name"] == "vulnreach"
+    assert driver["name"] == "VScan"
     assert driver["informationUri"].startswith("http")
     assert isinstance(driver["rules"], list)
     assert isinstance(log["runs"][0]["results"], list)
@@ -174,7 +174,7 @@ def test_sarif_level_mapping():
     payload, graph = _four_finding_payload()
     results = to_sarif(payload, graph)["runs"][0]["results"]
     by_fp = {
-        r["partialFingerprints"]["vulnreach/v1"]: r["level"] for r in results
+        r["partialFingerprints"]["vscan/v1"]: r["level"] for r in results
     }
 
     assert by_fp["dep:PyPI:alpha|GHSA-alpha"] == "error"  # tainted
@@ -187,7 +187,7 @@ def test_sarif_location_uri_is_the_manifest_file():
     payload, graph = _four_finding_payload()
     results = to_sarif(payload, graph)["runs"][0]["results"]
     uri_by_fp = {
-        r["partialFingerprints"]["vulnreach/v1"]: r["locations"][0][
+        r["partialFingerprints"]["vscan/v1"]: r["locations"][0][
             "physicalLocation"
         ]["artifactLocation"]["uri"]
         for r in results

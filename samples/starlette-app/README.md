@@ -1,6 +1,6 @@
 # starlette-app
 
-A small Starlette (ASGI) target for the vulnreach scanner. Starlette declares
+A small Starlette (ASGI) target for the VScan scanner. Starlette declares
 routes as a **list** of `Route`/`Mount` objects bound on the application
 (`Starlette(routes=...)`) rather than with decorators, so this fixture exercises
 the scanner's route-LIST detection and `Mount` prefix composition.
