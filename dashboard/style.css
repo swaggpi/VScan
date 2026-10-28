@@ -27,6 +27,7 @@
   --signal:      #F2B134;  /* amber/gold */
   --signal-soft: rgba(242, 177, 52, 0.16);
   --signal-glow: rgba(242, 177, 52, 0.55);
+  --signal-ink:  #F6D28A;  /* lighter amber for readable badge text */
 
   /* Severity accent — vulnerability only. A warm red-orange, held apart from
      the amber reachability signal so the two read as distinct facts: amber =
@@ -403,16 +404,16 @@ body {
   color: var(--ink-dim);
   text-transform: uppercase;
 }
-.tag--sev { border-color: var(--alert); color: var(--alert-ink); }
-.tag--sev-critical { background: var(--alert); color: var(--ground); border-color: var(--alert); }
+.tag--sev { background: var(--alert-soft); border-color: rgba(242,101,78,0.5); color: var(--alert-ink); }
+.tag--sev-critical { background: var(--alert-soft); color: var(--alert-ink); border-color: rgba(242,101,78,0.6); }
 .tag--kev {
-  background: var(--alert);
-  color: var(--ground);
-  border-color: var(--alert);
-  box-shadow: 0 0 8px var(--alert-glow);
+  background: var(--alert-soft);
+  color: var(--alert-ink);
+  border-color: rgba(242,101,78,0.6);
+  box-shadow: 0 0 6px var(--alert-glow);
   animation: kevpulse 2.4s ease-in-out infinite;
 }
-.tag--reach { border-color: var(--signal); color: var(--signal); }
+.tag--reach { background: var(--signal-soft); border-color: rgba(242,177,52,0.42); color: var(--signal-ink); }
 
 @keyframes kevpulse {
   0%, 100% { box-shadow: 0 0 6px var(--alert-glow); }
@@ -433,10 +434,10 @@ body {
   white-space: nowrap;
 }
 .tri--affected {
-  background: var(--alert);
-  color: var(--ground);
-  border-color: var(--alert);
-  box-shadow: 0 0 8px var(--alert-glow);
+  background: var(--alert-soft);
+  color: var(--alert-ink);
+  border-color: rgba(242,101,78,0.55);
+  box-shadow: 0 0 6px var(--alert-glow);
 }
 .tri--safe { border-color: var(--safe); color: var(--safe-ink); }
 .tri--uncertain { border-color: var(--ink-mut); color: var(--ink-mut); }
@@ -481,7 +482,7 @@ body {
   white-space: nowrap;
 }
 .use--infra      { border-color: var(--dep); color: var(--dep); }
-.use--dynamic    { border-color: var(--signal); color: var(--signal); }
+.use--dynamic    { background: var(--signal-soft); border-color: rgba(242,177,52,0.42); color: var(--signal-ink); }
 .use--dev        { border-color: var(--ink-mut); color: var(--ink-mut); }
 .use--transitive { border-color: var(--muted); color: var(--fn); }
 .use--none       { border-color: var(--ink-mut); color: var(--ink-mut); }
@@ -500,7 +501,7 @@ body {
   text-transform: uppercase;
   white-space: nowrap;
 }
-.sym--confirmed { border-color: var(--signal); color: var(--signal); }
+.sym--confirmed { background: var(--signal-soft); border-color: rgba(242,177,52,0.42); color: var(--signal-ink); }
 .sym--package   { border-color: var(--ink-mut); color: var(--ink-mut); }
 .sym--none      { border-color: var(--safe); color: var(--safe-ink); }
 
@@ -518,10 +519,10 @@ body {
   white-space: nowrap;
 }
 .taint--tainted {
-  background: var(--alert);
-  color: var(--ground);
-  border-color: var(--alert);
-  box-shadow: 0 0 8px var(--alert-glow);
+  background: var(--alert-soft);
+  color: var(--alert-ink);
+  border-color: rgba(242,101,78,0.55);
+  box-shadow: 0 0 6px var(--alert-glow);
 }
 .taint--none { border-color: var(--ink-mut); color: var(--ink-mut); }
 
@@ -1013,7 +1014,7 @@ body.has-transitive .legend__item--transitive { display: flex; }
   font: 500 0.76rem/1.3 var(--f-mono);
 }
 .verdict::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
-.verdict--reach { color: var(--signal); }
+.verdict--reach { color: var(--signal-ink); }
 .verdict--reach::before { background: var(--signal); box-shadow: 0 0 7px var(--signal-glow); }
 .verdict--maybe { color: var(--ink-dim); }
 .verdict--maybe::before { background: var(--dep); }
