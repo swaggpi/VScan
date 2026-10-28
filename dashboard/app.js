@@ -2140,8 +2140,8 @@
   // through the normal path; focused mode for big graphs is decided by the
   // existing node-count threshold, not by which bundle this is.
   var BUNDLES = {
-    demo:   { file: "demo-bundle.json",   label: "vulnerable-app · Flask demo · audit", btn: el.viewDemo,
-              hint: "Open the dashboard from a local web server to load the vulnerable-app demo bundle." },
+    demo:   { file: "demo-bundle.json",   label: "ACME API · layered Flask service · audit", btn: el.viewDemo,
+              hint: "Open the dashboard from a local web server to load the ACME API demo bundle." },
     redash: { file: "redash-bundle.json", label: "redash · real-world repo (200 deps) · audit", btn: el.viewRedash,
               hint: "Open the dashboard from a local web server to load the redash bundle." },
     transitive: { file: "transitive-bundle.json", label: "transitive-app · npm direct+transitive", btn: el.viewTransitive,
