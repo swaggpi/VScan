@@ -234,8 +234,7 @@
       { selector: 'node[tainted = 1]', style: {
         "background-color": ALERT, "background-opacity": 1,
         "border-color": "#F79885", "border-width": 2.5,
-        "width": 44, "height": 44, "font-weight": 600,
-        "overlay-color": ALERT, "overlay-opacity": 0.22, "overlay-padding": 8
+        "width": 44, "height": 44, "font-weight": 600
       }},
 
       // Connections are thin, straight lines between layers — like the synapses
@@ -1546,13 +1545,20 @@
       if (taintOk) {
         var tf = depFindings.filter(function (f) { return f.taint === "tainted" && f.taint_evidence; })[0] || ef;
         var ev = tf.taint_evidence;
-        if (ev) {
-          html += '<p class="status-flow">Exploitable via ' + esc(ev.entrypoint || "a public route") +
-            ' — <code>' + esc(ev.source || "source") + '</code> → <code>' + esc(ev.sink_symbol || "sink") + '</code></p>';
-        }
-      } else if (reachOk && vs.entrypoints.length) {
-        html += '<p class="status-flow">Reachable via ' + esc(vs.entrypoints.join(", ")) + '.</p>';
-      } else if (!reachOk) {
+        html += '<p class="status-flow"><strong>Exploitable (red).</strong> ' +
+          'Attacker input reaches the vulnerable call' +
+          (ev ? ' via ' + esc(ev.entrypoint || "a public route") +
+            ' — <code>' + esc(ev.source || "source") + '</code> → <code>' + esc(ev.sink_symbol || "sink") + '</code>' : '') +
+          '.</p>';
+      } else if (reachOk) {
+        // Reachable + vulnerable, but taint not proven -> blue node, red ring (not red).
+        // State this plainly: reaching the code is not the same as proving it exploitable.
+        var via = vs.entrypoints.length ? ' via ' + esc(vs.entrypoints.join(", ")) : '';
+        html += '<p class="status-flow"><strong>Not marked exploitable.</strong> ' +
+          (symOk ? 'The vulnerable code is reachable' : 'This package is reachable') + via + ', ' +
+          'but we did <strong>not</strong> prove that attacker-controlled input reaches the flaw — ' +
+          'so it stays a red ring, not a solid red node.</p>';
+      } else {
         var dv = (depFindings[0] && depFindings[0].verdict) || "";
         html += '<p class="dim-note">' + esc(verdictText({ verdict: dv })) + '</p>';
       }
