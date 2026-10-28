@@ -225,13 +225,29 @@
         "text-max-width": 164, "font-weight": 600
       }},
 
-      /* Dependency risk — three states:
-         no CVE = the base blue node; has a CVE but not exploitable = blue + a red
-         ring; exploitable (attacker input reaches the call) = a fully red node. */
+      /* Dependency risk — four states, graded by how sure we are it can be
+         attacked:
+           no CVE                     = the base blue node;
+           a CVE, code never reaches it = blue with a red ring;
+           reachable but we can't PROVE attacker input gets there (unsure)
+                                       = red/blue stripes;
+           attacker input provably reaches the call (exploitable)
+                                       = a solid red node.
+         Rules cascade: vreach overrides the ring with stripes, tainted
+         overrides the stripes with a solid fill (hence background-fill:solid). */
       { selector: 'node[vuln = 1]', style: {
         "border-color": ALERT, "border-width": 3.5, "color": "#F79885"
       }},
+      { selector: 'node[vreach = 1]', style: {
+        "background-fill": "linear-gradient",
+        "background-gradient-direction": "to-bottom-right",
+        "background-gradient-stop-colors":
+          "#F2654E #F2654E #6FB8E0 #6FB8E0 #F2654E #F2654E #6FB8E0 #6FB8E0",
+        "background-gradient-stop-positions": "0 25 25 50 50 75 75 100",
+        "border-color": ALERT, "border-width": 3.5, "color": "#F79885"
+      }},
       { selector: 'node[tainted = 1]', style: {
+        "background-fill": "solid",
         "background-color": ALERT, "background-opacity": 1,
         "border-color": "#F79885", "border-width": 2.5,
         "width": 44, "height": 44, "font-weight": 600
@@ -269,6 +285,7 @@
 
       /* live reachability trace — the one hot signal */
       { selector: "node.lit", style: {
+        "background-fill": "solid",
         "background-color": "#F2B134", "border-color": "#F2B134",
         "color": "#F6C96B", "border-width": 2.5, "opacity": 1,
         "overlay-color": "#F2B134", "overlay-opacity": 0.22, "overlay-padding": 7
@@ -1551,16 +1568,18 @@
             ' — <code>' + esc(ev.source || "source") + '</code> → <code>' + esc(ev.sink_symbol || "sink") + '</code>' : '') +
           '.</p>';
       } else if (reachOk) {
-        // Reachable + vulnerable, but taint not proven -> blue node, red ring (not red).
+        // Reachable + vulnerable, but taint not proven -> striped node (unsure).
         // State this plainly: reaching the code is not the same as proving it exploitable.
         var via = vs.entrypoints.length ? ' via ' + esc(vs.entrypoints.join(", ")) : '';
-        html += '<p class="status-flow"><strong>Not marked exploitable.</strong> ' +
+        html += '<p class="status-flow"><strong>Unsure — reachable, not proven exploitable.</strong> ' +
           (symOk ? 'The vulnerable code is reachable' : 'This package is reachable') + via + ', ' +
           'but we did <strong>not</strong> prove that attacker-controlled input reaches the flaw — ' +
-          'so it stays a red ring, not a solid red node.</p>';
+          'so it is shown with red stripes, not a solid red node.</p>';
       } else {
-        var dv = (depFindings[0] && depFindings[0].verdict) || "";
-        html += '<p class="dim-note">' + esc(verdictText({ verdict: dv })) + '</p>';
+        // Vulnerable, but no path from a public route reaches it -> blue + red ring.
+        html += '<p class="status-flow"><strong>Not reached.</strong> ' +
+          'A known CVE exists, but no public route reaches this package, so it is not ' +
+          'exploitable from the outside — shown as a blue node with a red ring.</p>';
       }
     } else {
       html += '<span class="verdict verdict--maybe">No findings matched</span>';
