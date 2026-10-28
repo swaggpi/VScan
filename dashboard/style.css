@@ -238,13 +238,9 @@ body {
   color: var(--ink-mut);
 }
 /* Tone: the two confirmed/exploitable stages carry the risk signal. */
-.funnel__stage--confirmed { border-color: var(--signal); }
-.funnel__stage--confirmed .funnel__num { color: var(--signal); }
-.funnel__stage--exploit {
-  border-color: var(--alert);
-  background: var(--alert-soft);
-  box-shadow: 0 0 12px var(--alert-glow);
-}
+.funnel__stage--confirmed { border-color: var(--hair); }
+.funnel__stage--confirmed .funnel__num { color: var(--signal-ink); }
+.funnel__stage--exploit { border-color: var(--hair); }
 .funnel__stage--exploit .funnel__num { color: var(--alert-ink); }
 /* A zero count still renders — neutral, never a false alarm (redash: 0 exploitable). */
 .funnel__stage.is-zero .funnel__num { color: var(--ink-mut); }
@@ -398,27 +394,16 @@ body {
 .tag {
   font: 500 0.6rem/1 var(--f-mono);
   letter-spacing: 0.04em;
-  padding: 0.22rem 0.4rem;
+  padding: 0.18rem 0;
   border-radius: 2px;
-  border: 1px solid var(--hair);
+  border: none;
   color: var(--ink-dim);
   text-transform: uppercase;
 }
-.tag--sev { background: var(--alert-soft); border-color: rgba(242,101,78,0.5); color: var(--alert-ink); }
-.tag--sev-critical { background: var(--alert-soft); color: var(--alert-ink); border-color: rgba(242,101,78,0.6); }
-.tag--kev {
-  background: var(--alert-soft);
-  color: var(--alert-ink);
-  border-color: rgba(242,101,78,0.6);
-  box-shadow: 0 0 6px var(--alert-glow);
-  animation: kevpulse 2.4s ease-in-out infinite;
-}
-.tag--reach { background: var(--signal-soft); border-color: rgba(242,177,52,0.42); color: var(--signal-ink); }
-
-@keyframes kevpulse {
-  0%, 100% { box-shadow: 0 0 6px var(--alert-glow); }
-  50% { box-shadow: 0 0 13px var(--alert-glow); }
-}
+.tag--sev { color: var(--alert-ink); }
+.tag--sev-critical { color: var(--alert-ink); font-weight: 700; }
+.tag--kev { color: var(--alert-ink); font-weight: 700; }
+.tag--reach { color: var(--signal-ink); }
 
 /* Advisory exploitability-triage badges — a verdict distinct from the severity
    and reachability tags: "exploitable" (the code calls the vulnerable surface),
@@ -426,21 +411,16 @@ body {
 .tri {
   font: 600 0.58rem/1 var(--f-mono);
   letter-spacing: 0.05em;
-  padding: 0.22rem 0.42rem;
+  padding: 0.18rem 0;
   border-radius: 2px;
-  border: 1px solid var(--hair);
+  border: none;
   color: var(--ink-dim);
   text-transform: uppercase;
   white-space: nowrap;
 }
-.tri--affected {
-  background: var(--alert-soft);
-  color: var(--alert-ink);
-  border-color: rgba(242,101,78,0.55);
-  box-shadow: 0 0 6px var(--alert-glow);
-}
-.tri--safe { border-color: var(--safe); color: var(--safe-ink); }
-.tri--uncertain { border-color: var(--ink-mut); color: var(--ink-mut); }
+.tri--affected { color: var(--alert-ink); font-weight: 700; }
+.tri--safe { color: var(--safe-ink); }
+.tri--uncertain { color: var(--ink-mut); }
 
 /* Per-CVE triage rationale under a finding row in the left rail. */
 .cve__triage {
@@ -474,19 +454,19 @@ body {
 .use {
   font: 600 0.58rem/1 var(--f-mono);
   letter-spacing: 0.05em;
-  padding: 0.22rem 0.42rem;
+  padding: 0.18rem 0;
   border-radius: 2px;
-  border: 1px solid var(--hair);
+  border: none;
   color: var(--ink-dim);
   text-transform: uppercase;
   white-space: nowrap;
 }
-.use--infra      { border-color: var(--dep); color: var(--dep); }
-.use--dynamic    { background: var(--signal-soft); border-color: rgba(242,177,52,0.42); color: var(--signal-ink); }
-.use--dev        { border-color: var(--ink-mut); color: var(--ink-mut); }
-.use--transitive { border-color: var(--muted); color: var(--fn); }
-.use--none       { border-color: var(--ink-mut); color: var(--ink-mut); }
-.use--uncertain  { border-color: var(--ink-mut); color: var(--ink-mut); }
+.use--infra      { color: var(--dep); }
+.use--dynamic    { color: var(--signal-ink); }
+.use--dev        { color: var(--ink-mut); }
+.use--transitive { color: var(--fn); }
+.use--none       { color: var(--ink-mut); }
+.use--uncertain  { color: var(--ink-mut); }
 
 /* Symbol-level reachability badges — DETERMINISTIC (not advisory). "confirmed"
    means a resolved call reaches the vulnerable function (amber signal); a
@@ -494,16 +474,16 @@ body {
 .sym {
   font: 600 0.58rem/1 var(--f-mono);
   letter-spacing: 0.05em;
-  padding: 0.22rem 0.42rem;
+  padding: 0.18rem 0;
   border-radius: 2px;
-  border: 1px solid var(--hair);
+  border: none;
   color: var(--ink-dim);
   text-transform: uppercase;
   white-space: nowrap;
 }
-.sym--confirmed { background: var(--signal-soft); border-color: rgba(242,177,52,0.42); color: var(--signal-ink); }
-.sym--package   { border-color: var(--ink-mut); color: var(--ink-mut); }
-.sym--none      { border-color: var(--safe); color: var(--safe-ink); }
+.sym--confirmed { color: var(--signal-ink); }
+.sym--package   { color: var(--ink-mut); }
+.sym--none      { color: var(--safe-ink); }
 
 /* Taint badges — DETERMINISTIC. "tainted" is the strongest signal on the page:
    attacker input provably reaches the call, so it wears the filled alert glow
@@ -511,20 +491,15 @@ body {
 .taint {
   font: 600 0.58rem/1 var(--f-mono);
   letter-spacing: 0.05em;
-  padding: 0.22rem 0.42rem;
+  padding: 0.18rem 0;
   border-radius: 2px;
-  border: 1px solid var(--hair);
+  border: none;
   color: var(--ink-dim);
   text-transform: uppercase;
   white-space: nowrap;
 }
-.taint--tainted {
-  background: var(--alert-soft);
-  color: var(--alert-ink);
-  border-color: rgba(242,101,78,0.55);
-  box-shadow: 0 0 6px var(--alert-glow);
-}
-.taint--none { border-color: var(--ink-mut); color: var(--ink-mut); }
+.taint--tainted { color: var(--alert-ink); font-weight: 700; }
+.taint--none { color: var(--ink-mut); }
 
 /* Deterministic escalation ladder (dependency datasheet): reachable -> vulnerable
    function reached -> exploitable. Each rung is a status dot + the stage name +
@@ -925,7 +900,7 @@ body.has-transitive .legend__item--transitive { display: flex; }
   color: var(--ink);
 }
 .badge__k { font-size: 0.56rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-mut); }
-.badge--risk { border-color: var(--alert); color: var(--alert-ink); background: var(--alert-soft); }
+.badge--risk { color: var(--alert-ink); }
 .badge--risk .badge__k { color: var(--alert-ink); }
 .badge--ok { border-color: rgba(120,178,224,0.4); }
 
