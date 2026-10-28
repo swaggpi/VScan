@@ -6,7 +6,9 @@ Emits PyPI dependencies. Declared versions come from the manifest (a
 enumerated: ``poetry.lock`` beside a poetry ``pyproject.toml`` and
 ``Pipfile.lock`` beside a ``Pipfile``. Packages the manifest does not declare
 itself are emitted as ``direct=False`` (the soundness key: a transitive dep is
-never ruled unreachable). A plain ``requirements.txt`` carries no
+never ruled unreachable). ``uv.lock`` beside a PEP 621 ``pyproject.toml`` is
+handled the same way (preferred over ``poetry.lock`` when both exist), and its
+direct deps are resolved to the exact locked version. A plain ``requirements.txt`` carries no
 direct/transitive signal, so every entry there stays ``direct=True``.
 """
 
@@ -179,6 +181,54 @@ def _transitive_from_poetry_lock(
     return out
 
 
+def _uv_lock_packages(lock_abspath: str) -> dict[str, tuple[str, str]]:
+    """Return ``{normalised_name: (name, version)}`` from a ``uv.lock``.
+
+    uv.lock is TOML with a flat ``[[package]]`` table list (the full resolved
+    tree, exact versions) -- structurally identical to ``poetry.lock``. Missing
+    or malformed lock files yield ``{}`` rather than raising.
+    """
+    try:
+        with open(lock_abspath, "rb") as handle:
+            data = tomllib.load(handle)
+    except (OSError, tomllib.TOMLDecodeError):
+        return {}
+
+    out: dict[str, tuple[str, str]] = {}
+    for pkg in data.get("package", []) or []:
+        if not isinstance(pkg, dict):
+            continue
+        name = pkg.get("name")
+        version = pkg.get("version")
+        if not isinstance(name, str) or not isinstance(version, str):
+            continue
+        out.setdefault(_normalize_pep503(name), (name, version))
+    return out
+
+
+def _pep621_direct_entries(data: dict, include_groups: bool) -> list[str]:
+    """Collect PEP 621 direct-dependency requirement strings from a pyproject.
+
+    Always includes ``[project].dependencies``. When ``include_groups`` is set
+    (a uv project), also includes ``[project.optional-dependencies].*`` and PEP
+    735 ``[dependency-groups].*`` -- uv resolves and locks those too, so they
+    are direct. Group entries that are not plain strings (e.g. the PEP 735
+    ``{include-group = ...}`` form) are skipped.
+    """
+    project = data.get("project", {})
+    if not isinstance(project, dict):
+        project = {}
+    entries = [e for e in (project.get("dependencies", []) or []) if isinstance(e, str)]
+    if include_groups:
+        for group in (project.get("optional-dependencies", {}) or {}).values():
+            if isinstance(group, list):
+                entries.extend(e for e in group if isinstance(e, str))
+        for group in (data.get("dependency-groups", {}) or {}).values():
+            if isinstance(group, list):
+                entries.extend(e for e in group if isinstance(e, str))
+    return entries
+
+
 def _parse_pyproject(abspath: str, relpath: str) -> list[Dependency]:
     deps: list[Dependency] = []
     try:
@@ -187,20 +237,48 @@ def _parse_pyproject(abspath: str, relpath: str) -> list[Dependency]:
     except (OSError, tomllib.TOMLDecodeError):
         return deps
 
-    # PEP 621 [project].dependencies (list of PEP 508 strings).
     project = data.get("project", {})
-    for entry in project.get("dependencies", []) or []:
-        if not isinstance(entry, str):
-            continue
+    if not isinstance(project, dict):
+        project = {}
+    poetry = data.get("tool", {}).get("poetry", {})
+
+    # Precedence: uv.lock wins over poetry.lock when both are present (unusual).
+    # A uv project uses PEP 621 [project] (independent of [tool.poetry]); when a
+    # sibling uv.lock exists we resolve direct deps to their exact locked
+    # versions and enumerate the rest of the tree as transitive.
+    uv_lock_abspath = os.path.join(os.path.dirname(abspath), "uv.lock")
+    uv_packages = (
+        _uv_lock_packages(uv_lock_abspath) if os.path.isfile(uv_lock_abspath) else {}
+    )
+
+    # PEP 621 [project].dependencies (list of PEP 508 strings). For a uv project
+    # the optional-dependencies and PEP 735 dependency-groups count as direct
+    # too; without uv.lock the behaviour is unchanged (dependencies only).
+    direct_norm: set[str] = set()
+    for entry in _pep621_direct_entries(data, include_groups=bool(uv_packages)):
         parsed = _parse_pep508(entry)
-        if parsed:
-            name, version, declared = parsed
-            deps.append(
-                Dependency(name, version, "PyPI", relpath, resolved=False, declared=declared)
-            )
+        if not parsed:
+            continue
+        name, version, declared = parsed
+        if uv_packages:
+            norm = _normalize_pep503(name)
+            if norm in direct_norm:
+                continue  # same dep declared in several groups -- emit once
+            direct_norm.add(norm)
+            locked = uv_packages.get(norm)
+            if locked is not None:
+                # Resolve to the exact locked version (fixes ">=" / unpinned).
+                deps.append(
+                    Dependency(
+                        name, locked[1], "PyPI", relpath, resolved=True, declared=declared
+                    )
+                )
+                continue
+        deps.append(
+            Dependency(name, version, "PyPI", relpath, resolved=False, declared=declared)
+        )
 
     # [tool.poetry.dependencies] (mapping name -> constraint).
-    poetry = data.get("tool", {}).get("poetry", {})
     for name, constraint in (poetry.get("dependencies", {}) or {}).items():
         if name.lower() == "python":  # the interpreter constraint, not a dep
             continue
@@ -209,12 +287,25 @@ def _parse_pyproject(abspath: str, relpath: str) -> list[Dependency]:
             Dependency(name, version, "PyPI", relpath, resolved=False, declared=declared)
         )
 
-    # Transitive dependencies: for a poetry project ([tool.poetry] present),
-    # enumerate the sibling poetry.lock and emit every locked package the
-    # manifest does not declare as direct=False -- the soundness key. Declared
-    # vs locked names are compared PEP 503-normalised so a declared "PyYAML"
-    # matches a locked "pyyaml" and is not double-emitted as transitive.
-    if poetry:
+    # Transitive dependencies: enumerate the sibling lock file and emit every
+    # locked package the manifest does not declare as direct=False -- the
+    # soundness key. Declared vs locked names are compared PEP 503-normalised so
+    # a declared "PyYAML" matches a locked "pyyaml" and is not double-emitted.
+    if uv_packages:
+        declared_norm = {_normalize_pep503(dep.name) for dep in deps}
+        # The root project appears in its own uv.lock as a [[package]]; exclude
+        # it by its [project].name so it is neither direct nor transitive.
+        project_name = project.get("name")
+        if isinstance(project_name, str):
+            declared_norm.add(_normalize_pep503(project_name))
+        lock_relpath = _sibling_relpath(relpath, "uv.lock")
+        for norm, (name, version) in uv_packages.items():
+            if norm in declared_norm:
+                continue
+            deps.append(
+                Dependency(name, version, "PyPI", lock_relpath, resolved=True, direct=False)
+            )
+    elif poetry:
         declared_norm = {_normalize_pep503(dep.name) for dep in deps}
         deps.extend(_transitive_from_poetry_lock(abspath, relpath, declared_norm))
 
