@@ -1584,8 +1584,7 @@
       .forEach(function (t) { if (t.rationale && reasons.indexOf(t.rationale) < 0) reasons.push(t.rationale); });
     if (u && u.summary && reasons.indexOf(u.summary) < 0) reasons.push(u.summary);
     var summaryText = reasons.slice(0, 2).join(" ");
-    html += '<section class="dsec"><h2 class="dsec__h">Summary ' +
-      '<span class="advisory-flag">Advisory</span></h2>' +
+    html += '<section class="dsec"><h2 class="dsec__h">Summary</h2>' +
       (summaryText
         ? '<p class="prose clamp">' + esc(summaryText) + '</p>' + moreBtn()
         : '<p class="dim-note">No advisory context.</p>') +
