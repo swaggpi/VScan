@@ -2008,7 +2008,9 @@
     redash: { file: "redash-bundle.json", label: "redash · real-world repo (200 deps) · audit", btn: el.viewRedash,
               hint: "Open the dashboard from a local web server to load the redash bundle." },
     transitive: { file: "transitive-bundle.json", label: "transitive-app · npm direct+transitive", btn: el.viewTransitive,
-              hint: "Open the dashboard from a local web server to load the transitive-app bundle." }
+              hint: "Open the dashboard from a local web server to load the transitive-app bundle." },
+    sample: { file: "healthy-bundle.json", label: "Healthy API · modern FastAPI service · audit", btn: el.viewSample,
+              hint: "Open the dashboard from a local web server to load the Healthy API bundle." }
   };
   var viewToken = 0; // latest requested view wins if fetches resolve out of order
 
@@ -2034,7 +2036,7 @@
     });
   }
 
-  el.viewSample.addEventListener("click", showSample);
+  el.viewSample.addEventListener("click", function () { showBundle("sample"); });
   el.viewDemo.addEventListener("click", function () { showBundle("demo"); });
   el.viewRedash.addEventListener("click", function () { showBundle("redash"); });
   el.viewTransitive.addEventListener("click", function () { showBundle("transitive"); });
