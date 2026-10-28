@@ -418,9 +418,30 @@ def _build_bundle(
         usage=usage,
         taint=taint,
     )
+    # Bundle-only trim: the viewer (computeFocused) discards every reachable
+    # dependency that is not vulnerable, so drop them from the serialized copy.
+    # ``reach`` itself, the CLI/MCP outputs and every verdict stay untouched.
+    vuln_ids = {f.dependency_id for f in correlation.findings}
+    reachability = reach.to_dict()
+    # verdict_by_dep is trimmed to vulnerable ids too: the viewer reads
+    # per-finding verdicts, not this map; the live reach object / CLI / MCP keep
+    # the full map.
+    for ep in reachability.get("entrypoints", []):
+        ep["reachable_dependencies"] = [
+            rd for rd in ep.get("reachable_dependencies", []) if rd.get("id") in vuln_ids
+        ]
+        if "verdict_by_dep" in ep:
+            ep["verdict_by_dep"] = {
+                k: v for k, v in ep["verdict_by_dep"].items() if k in vuln_ids
+            }
+    repo_roll = reachability.get("repo")
+    if isinstance(repo_roll, dict) and "verdict_by_dep" in repo_roll:
+        repo_roll["verdict_by_dep"] = {
+            k: v for k, v in repo_roll["verdict_by_dep"].items() if k in vuln_ids
+        }
     return {
         "graph": graph.to_dict(),
-        "reachability": reach.to_dict(),
+        "reachability": reachability,
         "findings": audit_payload["findings"],
         "summary": audit_payload["summary"],
         "coverage": audit_payload["coverage"],
