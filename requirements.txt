@@ -3,3 +3,7 @@
 # os). The JavaScript/PHP/Go analyzers parse via tree-sitter grammars.
 pathspec>=0.12
 tree-sitter-language-pack>=1.22
+
+# Web service (scanner/web): FastAPI backend + ASGI server.
+fastapi>=0.115,<0.116
+uvicorn[standard]>=0.34,<0.35

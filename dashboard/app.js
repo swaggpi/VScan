@@ -74,6 +74,7 @@
     counts: document.getElementById("counts"),
     layout: document.querySelector(".layout"),
     funnel: document.getElementById("funnel"),
+    noise: document.getElementById("noise"),
     eplist: document.getElementById("eplist"),
     epNote: document.getElementById("ep-note"),
     reachBody: document.getElementById("reach-body"),
@@ -820,6 +821,7 @@
     if (!bundleMeta || !bundleMeta.summary) {
       el.funnel.hidden = true;
       el.funnel.innerHTML = "";
+      renderNoise(null);
       return;
     }
     var s = bundleMeta.summary;
@@ -847,6 +849,38 @@
     });
     el.funnel.innerHTML = html;
     el.funnel.hidden = false;
+    renderNoise(s);
+  }
+
+  // The "vs. a conventional scanner" line under the funnel. Every number comes
+  // from the loaded bundle's summary: total_vulnerabilities is what a
+  // conventional scanner would flag, taint_confirmed_vulnerabilities is what
+  // VScan proves exploitable; the % is the share of alerts removed. Floored to
+  // one decimal and capped at 99.9 while anything is exploitable, so it never
+  // rounds up to a claim of "100%". Hidden when the bundle has no CVE count.
+  function renderNoise(s) {
+    if (!el.noise) return;
+    var total = s ? s.total_vulnerabilities : null;
+    if (typeof total !== "number" || !(total > 0)) {
+      el.noise.hidden = true;
+      el.noise.innerHTML = "";
+      return;
+    }
+    var exploit = Math.max(0, Math.min(total, s.taint_confirmed_vulnerabilities || 0));
+    var pct = Math.floor((1 - exploit / total) * 1000) / 10;
+    if (exploit > 0 && pct > 99.9) pct = 99.9;
+    var pctTxt = String(pct) + "%";
+    var alerts = groupNum(total) + " alert" + (total === 1 ? "" : "s");
+    var verdict = exploit === 0
+      ? "VScan proves <b>none</b> are exploitable"
+      : exploit === total
+        ? "VScan proves <b>all " + groupNum(exploit) + "</b> " + (exploit === 1 ? "is" : "are") + " exploitable"
+        : "VScan proves <b>" + groupNum(exploit) + "</b> " + (exploit === 1 ? "is" : "are") + " exploitable";
+    el.noise.innerHTML =
+      'A conventional scanner would flag <b>' + alerts + '</b>. ' + verdict +
+      (exploit === total ? "." : ' &mdash; <b class="noise__pct">' + pctTxt + ' noise removed.</b>');
+    el.noise.style.setProperty("--noise-removed", pct + "%");
+    el.noise.hidden = false;
   }
 
   // Above this many routes the flat list is a wall, so routes collapse into
@@ -1525,6 +1559,107 @@
     return html + '</div>';
   }
 
+  /* ---------------------------------------------------------------- AI attack analysis */
+  // Lead finding for a dependency: tainted first, else the highest-severity
+  // reachable finding, else the highest-severity finding. null when none.
+  function leadFinding(fs) {
+    if (!fs || !fs.length) return null;
+    function sev(f) { return SEV_RANK[(f.severity || "").toUpperCase()] || 0; }
+    function best(list) {
+      return list.reduce(function (b, f) { return !b || sev(f) > sev(b) ? f : b; }, null);
+    }
+    var tainted = fs.filter(function (f) { return f.taint === "tainted"; });
+    if (tainted.length) return best(tainted);
+    var reach = fs.filter(function (f) { return f.reachable === true; });
+    return best(reach.length ? reach : fs);
+  }
+
+  function aiBadgeHtml(model) {
+    return '<span class="ai-badge"><span class="ai-badge__mark" aria-hidden="true"></span>' +
+      'AI analysis · ' + esc(model || "Meta Muse") + '</span>';
+  }
+  function aiLoadingHtml() {
+    return '<p class="ai-loading" role="status">' + aiBadgeHtml("Meta Muse") +
+      '<span class="ai-loading__txt">Analyzing with Meta Muse<span class="ai-dots" aria-hidden="true">…</span></span></p>';
+  }
+  function aiNoteHtml(msg) { return '<p class="dim-note ai-note">' + esc(msg) + '</p>'; }
+  // Untrusted model text -> safe HTML. The model replies in Markdown; VScanMd
+  // (md.js) escapes first, then applies an allowlisted subset. If md.js failed to
+  // load we fall back to escaped paragraphs (single newlines become <br>).
+  function aiParasHtml(text, cls) {
+    text = String(text == null ? "" : text);
+    if (window.VScanMd && typeof window.VScanMd.mdToHtml === "function") {
+      return '<div class="md ' + cls + '">' + window.VScanMd.mdToHtml(text) + '</div>';
+    }
+    return text.split(/\n\s*\n/).map(function (para) {
+      para = para.trim();
+      return para ? '<p class="' + cls + '">' + esc(para).replace(/\n/g, "<br>") + '</p>' : "";
+    }).join("");
+  }
+  // Deterministic (static-analysis) verdict -> label + modifier class. Lookup map
+  // only; an unknown/missing verdict yields no badge (never guess).
+  var AI_VERDICTS = {
+    exploitable: { label: "EXPLOITABLE", cls: "ai-verdict--exploit" },
+    reachable:   { label: "REACHABLE \u00B7 NOT PROVEN EXPLOITABLE", cls: "ai-verdict--reach" },
+    not_reached: { label: "NOT REACHED", cls: "ai-verdict--safe" }
+  };
+  function aiVerdictHtml(verdict) {
+    var v = typeof verdict === "string" && Object.prototype.hasOwnProperty.call(AI_VERDICTS, verdict)
+      ? AI_VERDICTS[verdict] : null;
+    if (!v) return "";
+    return '<div class="ai-verdict ' + v.cls + '"><span class="ai-verdict__k">VScan verdict</span>' +
+      '<span class="ai-verdict__v">' + esc(v.label) + '</span></div>';
+  }
+  function aiResultHtml(d) {
+    var live = d.provenance === "llm";
+    return aiVerdictHtml(d.verdict) + '<div class="ai-head">' + aiBadgeHtml(d.model) +
+      '<span class="ai-prov ' + (live ? "ai-prov--live" : "ai-prov--offline") + '">' +
+      (live ? "live model" : "offline analysis") + '</span></div>' +
+      aiParasHtml(d.narrative, "prose ai-narr") +
+      (d.remediation && String(d.remediation).trim()
+        ? '<div class="ai-fix"><span class="ai-fix__k">Fix</span>' + aiParasHtml(d.remediation, "prose ai-fix__v") + '</div>'
+        : "");
+  }
+
+  // Fetch the analysis for the section just rendered into the drawer. Stale
+  // responses are dropped two ways: the previous request is aborted, and a result
+  // is only painted if its section is still the live one and still in the DOM.
+  var aiCtl = null, aiSeq = 0;
+  function loadAiAnalysis(sec) {
+    if (aiCtl) { try { aiCtl.abort(); } catch (e) {} aiCtl = null; }
+    if (!sec) return;
+    var mySeq = ++aiSeq;
+    var body = sec.querySelector(".ai-body");
+    if (!body) return;
+    var ctl = (typeof AbortController === "function") ? new AbortController() : null;
+    aiCtl = ctl;
+    function live() { return mySeq === aiSeq && document.body.contains(sec); }
+    function show(h) { if (live()) body.innerHTML = h; }
+    if (typeof fetch !== "function") { show(aiNoteHtml("AI analysis unavailable.")); return; }
+    var opts = {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        dependency_id: sec.getAttribute("data-ai-dep"),
+        vuln_id: sec.getAttribute("data-ai-vuln")
+      })
+    };
+    if (ctl) opts.signal = ctl.signal;
+    fetch("/api/explain", opts).then(function (r) {
+      if (r.status === 404) { show(aiNoteHtml("Live AI analysis is available for the ACME demo scan.")); return null; }
+      if (r.status === 503) { show(aiNoteHtml("Scan still warming up — try again in a moment.")); return null; }
+      if (!r.ok) throw new Error("http " + r.status);
+      return r.json();
+    }).then(function (d) {
+      if (!d) return;
+      if (!d.narrative) throw new Error("empty");
+      show(aiResultHtml(d));
+    }).catch(function (e) {
+      if (e && e.name === "AbortError") return;
+      show(aiNoteHtml("AI analysis unavailable."));
+    });
+  }
+
   // The MINIMAL dependency drawer: exactly four sections — Package details,
   // Status (escalation verdict as compact badges + one condensed line), Quick
   // summary (the dep-level agent reasoning synthesised from triage + usage), and
@@ -1587,6 +1722,17 @@
       html += '<span class="verdict verdict--maybe">No findings matched</span>';
     }
     html += '</section>';
+
+    // (b2) AI attack analysis — a LIVE call to POST /api/explain for the lead
+    // finding. Rendered as a loading placeholder here; wireDetail() starts the
+    // fetch once the drawer is in the DOM. Skipped entirely when there is no finding.
+    var leadF = leadFinding(depFindings);
+    if (leadF) {
+      html += '<section class="dsec ai-sec" data-ai-dep="' + esc(leadF.dependency_id) +
+        '" data-ai-vuln="' + esc(leadF.vuln_id || "") + '">' +
+        '<h2 class="dsec__h">AI attack analysis</h2>' +
+        '<div class="ai-body">' + aiLoadingHtml() + '</div></section>';
+    }
 
     // (c) Quick summary — the dep-level AGENT REASONING: the triage rationale(s)
     // (strongest verdict first) plus the dynamic-usage summary, synthesised into a
@@ -1688,6 +1834,8 @@
     // entry-point list both route through lightTrace / lightReverseTrace), so the
     // drawer no longer carries a "light this trace" button.
     // Expand/collapse clamped snippets and docstrings (only when truly overflowing).
+    // Dependency drawer: kick off the live AI analysis (or cancel a stale one).
+    loadAiAnalysis(root.querySelector(".ai-sec"));
     Array.prototype.forEach.call(root.querySelectorAll(".more[data-clamp]"), function (btn) {
       var target = btn.previousElementSibling;
       if (!target || !target.classList.contains("clamp") || target.scrollHeight - target.clientHeight < 2) { btn.remove(); return; }

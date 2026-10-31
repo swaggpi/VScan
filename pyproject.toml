@@ -12,6 +12,9 @@ license = { text = "MIT" }
 dependencies = [
     "pathspec>=0.12",
     "tree-sitter-language-pack>=1.22",
+    # Web service (scanner/web): FastAPI backend + ASGI server.
+    "fastapi>=0.115,<0.116",
+    "uvicorn[standard]>=0.34,<0.35",
 ]
 
 [project.optional-dependencies]
@@ -27,6 +30,7 @@ mcp = [
 [project.scripts]
 vscan = "scanner.cli:main"
 vscan-mcp = "scanner.mcp.server:main"
+vscan-web = "scanner.web.__main__:main"
 
 [tool.setuptools.packages.find]
 include = ["scanner*"]
