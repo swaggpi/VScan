@@ -508,3 +508,31 @@ def test_prompt_registered():
     text = S.audit_and_fix()
     assert isinstance(text, str) and text.strip()
     assert "vscan_verify_fix" in text
+
+
+@pytest.fixture
+def captured_run(monkeypatch):
+    """Record ``mcp.run`` calls and restore the transport settings afterwards."""
+    for field in ("host", "port", "transport_security"):
+        monkeypatch.setattr(S.mcp.settings, field, getattr(S.mcp.settings, field))
+    calls = []
+    monkeypatch.setattr(S.mcp, "run", lambda transport: calls.append(transport))
+    return calls
+
+
+def test_main_defaults_to_stdio(captured_run):
+    S.main([])
+    assert captured_run == ["stdio"]
+
+
+def test_main_http_on_public_bind_drops_localhost_host_check(captured_run):
+    assert S.mcp.settings.transport_security is not None  # loopback default
+    S.main(["--transport", "streamable-http", "--host", "0.0.0.0", "--port", "9000"])
+    assert captured_run == ["streamable-http"]
+    assert (S.mcp.settings.host, S.mcp.settings.port) == ("0.0.0.0", 9000)
+    assert S.mcp.settings.transport_security is None
+
+
+def test_main_http_on_loopback_keeps_host_check(captured_run):
+    S.main(["--transport", "streamable-http"])
+    assert S.mcp.settings.transport_security is not None

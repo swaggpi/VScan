@@ -23,8 +23,9 @@ dev = [
 ]
 mcp = [
     # FastMCP lives at ``mcp.server.fastmcp`` in the v1 SDK; mcp 2.x renamed it,
-    # so we cap below 2 to keep the FastMCP stdio server importable.
-    "mcp>=1.2,<2",
+    # so we cap below 2 to keep the FastMCP stdio server importable. 1.10 is the
+    # first release with the transport-security settings the HTTP mode adjusts.
+    "mcp>=1.10,<2",
 ]
 
 [project.scripts]

@@ -1,0 +1,34 @@
+services:
+  mcp:
+    build: .
+    restart: unless-stopped
+    environment:
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      NVD_API_KEY: ${NVD_API_KEY:-}
+    volumes:
+      - ./repos:/repos
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - mcp
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+      # Required: an empty token would make Caddy accept "Authorization: Bearer ".
+      MCP_TOKEN: ${MCP_TOKEN:?set MCP_TOKEN in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./dashboard:/srv/dashboard:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

@@ -153,7 +153,9 @@ vscan audit <repo> [-o audit.json] [--json] [--offline] [--nvd] [--explain] [--b
 The same library is exposed as an [MCP](https://modelcontextprotocol.io) server
 so an LLM agent can navigate a repository through its knowledge graph (instead
 of reading files), reason over the vulnerability findings, and drive fixes. The
-server wraps the library in process and speaks MCP over stdio.
+server wraps the library in process and speaks MCP over stdio (default) or
+streamable HTTP (`--transport streamable-http`, see
+[Server deployment](#server-deployment-docker-compose)).
 
 ```bash
 pip install -e ".[mcp]"      # or: pip install "vscan[mcp]"
@@ -204,6 +206,48 @@ An MCP prompt, `audit_and_fix`, scripts the full audit → remediate → preview
 prove loop (`vscan_audit` → `vscan_remediation` → `vscan_apply_upgrade`
 dry-run → `vscan_verify_fix`) prioritising `tainted` > `confirmed` >
 `reachable`.
+
+## Server deployment (Docker Compose)
+
+`docker-compose.yml` runs two containers:
+
+* `mcp`: the MCP server over streamable HTTP. It has no authentication of its
+  own and publishes no host port.
+* `caddy`: serves `dashboard/` at `https://$DOMAIN/`, proxies
+  `https://$DOMAIN/mcp` to the MCP server only when the request carries
+  `Authorization: Bearer $MCP_TOKEN`, and obtains the TLS certificate
+  automatically.
+
+The dashboard is public and static. It shows the bundled sample scans, and
+"Load a scan" reads the file in the visitor's browser only.
+
+On the server (any Linux host, e.g. a Hetzner Cloud instance):
+
+1. Point a DNS A (and AAAA) record for the domain at the server. If a Hetzner
+   firewall is attached, allow inbound TCP 80 and 443 (and UDP 443 for HTTP/3).
+2. Install Docker: `curl -fsSL https://get.docker.com | sh`
+3. Clone and configure:
+   ```bash
+   git clone https://github.com/swaggpi/VScan.git && cd VScan
+   cp .env.example .env   # set DOMAIN and MCP_TOKEN; optionally LLM_* / NVD_API_KEY
+   ```
+4. Put the repositories to scan under `./repos`, which is mounted at `/repos`:
+   ```bash
+   git clone <repo-url> repos/<name>
+   chown -R 1000:1000 repos   # only if vscan_apply_upgrade should write (container runs as uid 1000)
+   ```
+5. Start: `docker compose up -d --build`. Update later with
+   `git pull && docker compose up -d --build`.
+
+Connect a client and pass paths as the container sees them (`/repos/<name>`):
+
+```bash
+claude mcp add --transport http vscan https://$DOMAIN/mcp \
+  --header "Authorization: Bearer $MCP_TOKEN"
+```
+
+Clients that cannot send a custom header (for example, those that support only
+OAuth for remote servers) cannot connect to this setup.
 
 ## Example output
 
