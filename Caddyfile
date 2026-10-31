@@ -1,0 +1,14 @@
+{$DOMAIN} {
+	# MCP endpoint: the server has no auth of its own, so require the bearer token here.
+	handle /mcp* {
+		@unauthorized not header Authorization "Bearer {$MCP_TOKEN}"
+		respond @unauthorized 401
+		reverse_proxy mcp:8000
+	}
+
+	handle {
+		root * /srv/dashboard
+		encode zstd gzip
+		file_server
+	}
+}

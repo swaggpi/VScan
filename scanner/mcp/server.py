@@ -835,17 +835,43 @@ def vulnreach_apply_upgrade(params: ApplyUpgradeInput) -> str:
     return _safe(impl)
 
 
+_LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")
+
+
 def main(argv: list[str] | None = None) -> None:
-    """Console entry point: run the vulnreach MCP server over stdio."""
+    """Console entry point: run the vulnreach MCP server over stdio or HTTP."""
     import argparse
 
     parser = argparse.ArgumentParser(
         prog="vulnreach-mcp",
-        description="Run the vulnreach MCP server (stdio transport). "
-        "Wire it into an MCP client, e.g. `claude mcp add vulnreach -- vulnreach-mcp`.",
+        description="Run the vulnreach MCP server. Defaults to stdio; wire it into "
+        "an MCP client, e.g. `claude mcp add vulnreach -- vulnreach-mcp`. The "
+        "streamable-http transport has no authentication of its own: run it "
+        "behind a reverse proxy that enforces it.",
     )
-    parser.parse_args(argv)
-    mcp.run()
+    parser.add_argument(
+        "--transport",
+        choices=("stdio", "streamable-http"),
+        default="stdio",
+        help="MCP transport (default: stdio). streamable-http serves /mcp.",
+    )
+    parser.add_argument(
+        "--host", default="127.0.0.1", help="HTTP bind address (default: 127.0.0.1)."
+    )
+    parser.add_argument(
+        "--port", type=int, default=8000, help="HTTP port (default: 8000)."
+    )
+    args = parser.parse_args(argv)
+
+    if args.transport == "streamable-http":
+        mcp.settings.host = args.host
+        mcp.settings.port = args.port
+        if args.host not in _LOOPBACK_HOSTS:
+            # FastMCP was constructed with its loopback default, which restricts
+            # the Host header to localhost. Drop that check, as FastMCP itself
+            # does when constructed with a non-loopback host.
+            mcp.settings.transport_security = None
+    mcp.run(transport=args.transport)
 
 
 if __name__ == "__main__":

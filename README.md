@@ -120,7 +120,9 @@ vulnreach audit <repo> [-o audit.json] [--json] [--offline] [--nvd] [--explain] 
 The same library is exposed as an [MCP](https://modelcontextprotocol.io) server
 so an LLM agent can navigate a repository through its knowledge graph (instead
 of reading files), reason over the vulnerability findings, and drive fixes. The
-server wraps the library in process and speaks MCP over stdio.
+server wraps the library in process and speaks MCP over stdio (default) or
+streamable HTTP (`--transport streamable-http`, see
+[Server deployment](#server-deployment-docker-compose)).
 
 ```bash
 pip install -e ".[mcp]"      # or: pip install "vulnreach[mcp]"
@@ -164,6 +166,48 @@ model is configured. The ten tools, grouped by capability:
 **Fix**
 - `vulnreach_remediation` — for one dependency or all vulnerable ones: current version, smallest fixed version that clears the CVEs, the manifest file and pin to change, reachability priority, and the entry points/paths to re-test after upgrading.
 - `vulnreach_apply_upgrade` — surgically re-pin one dependency in its manifest and return a unified diff (`dry_run=true` by default previews only). Refuses when the pin is ambiguous or a range, pointing at the file/line to edit manually.
+
+## Server deployment (Docker Compose)
+
+`docker-compose.yml` runs two containers:
+
+* `mcp`: the MCP server over streamable HTTP. It has no authentication of its
+  own and publishes no host port.
+* `caddy`: serves `dashboard/` at `https://$DOMAIN/`, proxies
+  `https://$DOMAIN/mcp` to the MCP server only when the request carries
+  `Authorization: Bearer $MCP_TOKEN`, and obtains the TLS certificate
+  automatically.
+
+The dashboard is public and static. It shows the bundled sample scans, and
+"Load a scan" reads the file in the visitor's browser only.
+
+On the server (any Linux host, e.g. a Hetzner Cloud instance):
+
+1. Point a DNS A (and AAAA) record for the domain at the server. If a Hetzner
+   firewall is attached, allow inbound TCP 80 and 443 (and UDP 443 for HTTP/3).
+2. Install Docker: `curl -fsSL https://get.docker.com | sh`
+3. Clone and configure:
+   ```bash
+   git clone https://github.com/swaggpi/VScan.git && cd VScan
+   cp .env.example .env   # set DOMAIN and MCP_TOKEN; optionally LLM_* / NVD_API_KEY
+   ```
+4. Put the repositories to scan under `./repos`, which is mounted at `/repos`:
+   ```bash
+   git clone <repo-url> repos/<name>
+   chown -R 1000:1000 repos   # only if vulnreach_apply_upgrade should write (container runs as uid 1000)
+   ```
+5. Start: `docker compose up -d --build`. Update later with
+   `git pull && docker compose up -d --build`.
+
+Connect a client and pass paths as the container sees them (`/repos/<name>`):
+
+```bash
+claude mcp add --transport http vulnreach https://$DOMAIN/mcp \
+  --header "Authorization: Bearer $MCP_TOKEN"
+```
+
+Clients that cannot send a custom header (for example, those that support only
+OAuth for remote servers) cannot connect to this setup.
 
 ## Example output
 

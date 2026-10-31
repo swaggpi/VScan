@@ -33,3 +33,6 @@ test-corpus/
 
 # overnight research scratch (not part of the project)
 .research/
+
+# repositories mounted into the MCP container (docker-compose.yml)
+repos/
