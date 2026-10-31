@@ -9,7 +9,7 @@ this test tells you whether a real edge broke or a false edge appeared.
 Everything here is a toy: the deps are declared in `requirements.txt` but never
 installed, and the code is never run.
 
-## Entry points (5)
+## Entry points (8)
 
 | Route | Handler | Route style exercised |
 |-------|---------|-----------------------|
@@ -18,6 +18,9 @@ installed, and the code is never run.
 | `GET /fetch` | `app.fetch` | decorator, default verb |
 | `GET /added` | `app.added` | imperative `app.add_url_rule(...)` |
 | `GET /api/items` | `app.list_items` | `Blueprint` mounted at `url_prefix="/api"` |
+| `POST /load` | `app.load_config` | taint fixture — tainted into PyYAML |
+| `GET /echo` | `app.echo` | taint fixture — source read, no sink |
+| `GET /proxy` | `app.proxy` | taint fixture — shadow (constant reaches sink) |
 
 ## Call edges that MUST resolve
 
@@ -92,20 +95,49 @@ The resolver stays sound by refusing anything it cannot prove. These remain
 
 | Dependency | How it's wired | Verdict |
 |------------|----------------|---------|
-| `PyYAML` | called on the `POST /submit` chain | **reachable** |
-| `requests` | called on the `GET /fetch` chain | **reachable** |
+| `PyYAML` | called on the `POST /submit` and `POST /load` chains | **reachable** |
+| `requests` | called on the `GET /fetch` and `GET /proxy` chains | **reachable** |
 | `python-dateutil` | called on the `GET /api/items` chain | **reachable** |
-| `Flask` | used only at module level, not inside a routed function | **unreachable** |
+| `Flask` | `request.get_json` / `request.args.get` inside routed handlers | **reachable** |
 | `urllib3` | called only from non-routed `offline.sync` | **unreachable** |
 | `click` | imported but never called | **unreachable** |
 | `itsdangerous` | declared in `requirements.txt`, never imported (declares-only node) | **unreachable** |
 
-The reachable region is **fully resolved**, which is what lets the four
+The reachable region is **fully resolved**, which is what lets the three
 non-reached deps earn a definite `unreachable` verdict (not merely
-`potentially_reachable`).
+`potentially_reachable`). Flask is reachable because the taint-fixture handlers
+read the Flask `request` object, which the analyzer resolves as calls into the
+Flask distribution.
 
 Headline example path:
 
 ```
 POST /submit → app.submit → services.ingest → services.load_yaml → PyYAML
 ```
+
+## Taint ground truth (`scanner/taint.py`)
+
+The taint pass asks a stronger question than reachability: does **attacker-
+controlled input at a web handler flow, hop by hop, into a call into the dep**?
+It is derived and additive — it never changes a reachability verdict,
+`symbol_match`, ranking, or any summary counter. Default is `not_proven` (never
+"safe"); only a fully proven source→sink flow is `tainted`.
+
+| Dependency | Taint | Why |
+|------------|-------|-----|
+| `PyYAML` | **tainted** | `POST /load`: `request.get_json()` → `services.parse_config` → `services.load_yaml` → `yaml.safe_load(raw)`. Every hop is a proven argument binding. |
+| `requests` | `not_proven` | Reached only with constant URLs (`GET /fetch`, `GET /proxy`). In `/proxy` a request source **is** read into `requested`, but the value passed to `fetch_remote` is a pinned constant — the tainted value never reaches the sink. |
+| `python-dateutil` | `not_proven` | Reached via `GET /api/items` with a constant list literal. |
+| `Flask` | `not_proven` | Flask is the **source** library (it produces attacker data); no attacker value flows *into* a Flask sink here. |
+
+Negatives exercised (all must stay `not_proven`):
+
+- **No sink** — `GET /echo` reads `request.args.get("q")` but only echoes it back
+  in a local dict; it reaches no dependency call.
+- **Shadow / constant-at-sink** — `GET /proxy` reads a real request source into
+  `requested` but forwards a constant `target` to the `requests` sink. A name is
+  never tainted merely because it looks like request data; only a proven flow of
+  attacker data counts.
+- **Constant on the reachable chain** — `POST /submit` reaches the very same
+  `yaml.safe_load` sink as `/load`, but with the constant `"a: 1"`, so that path
+  alone proves nothing (PyYAML is tainted only because the `/load` path does).

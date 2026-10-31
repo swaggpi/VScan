@@ -1,0 +1,14 @@
+[tool.poetry]
+name = "transitive-poetry"
+version = "1.0.0"
+description = "Poetry sample proving transitive-dependency scanning: pyproject.toml declares two deps (requests, PyYAML); poetry.lock resolves transitive packages (certifi, urllib3) the manifest never names. Ground truth in README.md."
+authors = ["fixture <fixture@example.com>"]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+requests = "^2.31.0"
+PyYAML = "^6.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

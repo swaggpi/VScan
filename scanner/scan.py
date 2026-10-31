@@ -34,20 +34,33 @@ def _extract_dependencies(files: list[FileInfo], graph: KnowledgeGraph) -> list[
         adapter = manifests.adapter_for(info.relpath)
         if adapter is None:
             continue
-        for dep in adapter.parse(info.abspath, info.relpath):
-            dep_id = dep.node_id()
-            graph.add_node(
-                dep_id,
-                "dependency",
-                dep.name,
-                ecosystem=dep.ecosystem,
-                version=dep.version,
-                declared=dep.declared,
-                resolved=dep.resolved,
-                source_file=dep.source_file,
-            )
-            graph.add_edge(f"file:{dep.source_file}", dep_id, "declares")
-            deps.append(dep)
+        deps.extend(adapter.parse(info.abspath, info.relpath))
+
+    # Direct must win. A dep id can be emitted BOTH as a declared/direct dep and
+    # again as transitive (e.g. the lockfile walk enumerates the whole tree), and
+    # ``graph.add_node`` merges attrs last-write-wins. So compute, per dep id, the
+    # OR of every ``direct`` flag seen FIRST; a node that is direct in any source
+    # then ends up ``direct=True`` regardless of emission order, never downgraded
+    # to False by a later transitive emission.
+    direct_by_id: dict[str, bool] = {}
+    for dep in deps:
+        dep_id = dep.node_id()
+        direct_by_id[dep_id] = direct_by_id.get(dep_id, False) or dep.direct
+
+    for dep in deps:
+        dep_id = dep.node_id()
+        graph.add_node(
+            dep_id,
+            "dependency",
+            dep.name,
+            ecosystem=dep.ecosystem,
+            version=dep.version,
+            declared=dep.declared,
+            resolved=dep.resolved,
+            source_file=dep.source_file,
+            direct=direct_by_id[dep_id],
+        )
+        graph.add_edge(f"file:{dep.source_file}", dep_id, "declares")
     return deps
 
 
@@ -90,6 +103,10 @@ def _build_repo_index(
         # Go cross-package index (additive; Python/JS keys above unchanged).
         "go_module": None,  # the single module's path from go.mod, or None
         "go_packages": {},  # local import path -> {package, exports{name: fn_id}}
+        # dir relpath -> {func_name: fn_id} over ALL top-level funcs (exported
+        # AND unexported) of that directory, for bare same-package cross-file
+        # call/handler resolution. Ambiguous names (declared in >1 file) dropped.
+        "go_package_funcs": {},
     }
     source_cache: dict[str, str] = {}
 
@@ -212,16 +229,22 @@ def _build_go_index(
         )
 
     go_packages: dict[str, Any] = {}
+    # dir relpath -> {func_name: fn_id} over ALL top-level funcs of the dir.
+    go_package_funcs: dict[str, dict[str, str]] = {}
     for directory, members in dir_files.items():
         rel = _rel_within(directory, go_mod_dir)
-        if rel is None:
-            continue  # outside the module root
-        import_path = go_module if rel == "" else f"{go_module}/{rel}"
+        import_path = None if rel is None else (
+            go_module if rel == "" else f"{go_module}/{rel}"
+        )
         package_names: set[str] = set()
         name_to_ids: dict[str, set[str]] = {}
+        # All top-level (non-method) funcs of the directory, exported AND
+        # unexported, for bare same-package cross-file resolution.
+        func_name_to_ids: dict[str, set[str]] = {}
         for relpath, source in members:
             try:
                 package_name, exports = go_analyzer.index_source(relpath, source)
+                _pkg, all_funcs = go_analyzer.index_source_funcs(relpath, source)
             except Exception as exc:  # pathological source: skip, never abort scan
                 _record_file_error(graph, relpath, "index_error", exc)
                 continue
@@ -229,6 +252,20 @@ def _build_go_index(
                 package_names.add(package_name)
             for name, fn_id in exports.items():
                 name_to_ids.setdefault(name, set()).add(fn_id)
+            for name, fn_id in all_funcs.items():
+                func_name_to_ids.setdefault(name, set()).add(fn_id)
+        # Same-package bare-call map: a name declared in >1 file of the dir is
+        # ambiguous (impossible in compilable Go) -> dropped, never a wrong
+        # edge. Built per directory (package == directory in Go), independent
+        # of module-root membership.
+        go_package_funcs[directory] = {
+            name: next(iter(ids))
+            for name, ids in func_name_to_ids.items()
+            if len(ids) == 1
+        }
+        # The cross-PACKAGE exported index is only meaningful within the module.
+        if import_path is None:
+            continue  # outside the module root
         # A directory with conflicting declared package names is left unresolved.
         package = next(iter(package_names)) if len(package_names) == 1 else None
         merged = {
@@ -240,6 +277,7 @@ def _build_go_index(
 
     repo_index["go_module"] = go_module
     repo_index["go_packages"] = go_packages
+    repo_index["go_package_funcs"] = go_package_funcs
 
 
 def scan_repo(repo_path: str) -> KnowledgeGraph:

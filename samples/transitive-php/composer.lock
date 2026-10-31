@@ -1,0 +1,22 @@
+{
+    "_readme": [
+        "This file is a fixture for the scanner tests (a locked composer tree)."
+    ],
+    "content-hash": "0000000000000000000000000000000000000000",
+    "packages": [
+        {
+            "name": "monolog/monolog",
+            "version": "3.5.0",
+            "description": "Sends your logs to files, sockets, inboxes, databases and various web services"
+        },
+        {
+            "name": "psr/log",
+            "version": "3.0.0",
+            "description": "Common interface for logging libraries"
+        }
+    ],
+    "packages-dev": [],
+    "platform": {
+        "php": ">=8.0"
+    }
+}

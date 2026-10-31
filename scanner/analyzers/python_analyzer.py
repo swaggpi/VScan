@@ -137,6 +137,11 @@ _ROUTE_CONSTRUCTORS: dict[str, str] = {
     "Blueprint": "flask",
     "FastAPI": "fastapi",
     "APIRouter": "fastapi",
+    # Starlette apps bind routes as a LIST of Route objects (see
+    # ``_extract_starlette_routes``); registering the app var here also lets the
+    # existing decorator path honour the deprecated ``@app.route(...)`` form and
+    # the imperative ``app.add_route(...)`` registrar.
+    "Starlette": "starlette",
 }
 
 _BUILTINS: frozenset[str] = frozenset(dir(builtins))
@@ -449,6 +454,9 @@ class PythonAnalyzer(LanguageAnalyzer):
             mountable,
         )
         self._extract_django_urls(tree, symtab, relpath, repo_index, graph)
+        self._extract_starlette_routes(
+            tree, symtab, relpath, repo_index, graph, mod_id
+        )
 
     # -- function display detail ----------------------------------------------
 
@@ -1327,6 +1335,27 @@ class PythonAnalyzer(LanguageAnalyzer):
                     handler_index=1,
                     handler_kwarg="endpoint",
                 )
+            elif recv in route_objects and meth == "add_route":
+                # Starlette imperative form: ``app.add_route(path, endpoint,
+                # methods=[...])``. Shares the imperative handler; default verb
+                # is GET when ``methods=`` is absent (matching Starlette).
+                self._handle_imperative_rule(
+                    node,
+                    symtab,
+                    relpath,
+                    repo_index,
+                    graph,
+                    route_objects[recv],
+                    recv,
+                    ctor_prefix,
+                    mount_prefix,
+                    unresolved,
+                    class_bases,
+                    mountable,
+                    path_index=0,
+                    handler_index=1,
+                    handler_kwarg="endpoint",
+                )
 
         if unresolved:
             mod = graph.get_node(mod_id)
@@ -2027,3 +2056,290 @@ class PythonAnalyzer(LanguageAnalyzer):
                 if view.attr in funcs:
                     return f"fn:{desc['relpath']}:{view.attr}"
         return None
+
+    # -- Starlette route-LIST detection ---------------------------------------
+
+    @staticmethod
+    def _ctor_name(func: ast.AST) -> str | None:
+        """The simple name of a call target: ``X`` or ``pkg.X`` -> ``X``."""
+        if isinstance(func, ast.Attribute):
+            return func.attr
+        if isinstance(func, ast.Name):
+            return func.id
+        return None
+
+    @staticmethod
+    def _resolve_route_list(
+        arg: ast.AST | None, list_assigns: dict[str, ast.AST]
+    ) -> list[ast.AST] | None:
+        """Resolve a ``routes=`` argument to its list of element expressions.
+
+        Accepts an inline ``[...]`` / ``(...)`` literal, or a bare ``Name`` bound
+        to a module-level list literal (``routes = [...]``; ``Starlette(routes=
+        routes)``). Returns ``None`` when the list cannot be seen in-file -- never
+        a guessed route.
+        """
+        if isinstance(arg, (ast.List, ast.Tuple)):
+            return list(arg.elts)
+        if isinstance(arg, ast.Name):
+            bound = list_assigns.get(arg.id)
+            if isinstance(bound, (ast.List, ast.Tuple)):
+                return list(bound.elts)
+        return None
+
+    def _starlette_path(self, call: ast.Call) -> str | None:
+        """First string-literal path of a ``Route``/``Mount`` call, else None.
+
+        Honours the positional first argument or an explicit ``path=`` kwarg;
+        anything non-literal yields ``None`` (the caller records it, never
+        inventing a route).
+        """
+        if call.args:
+            first = call.args[0]
+            if isinstance(first, ast.Constant) and isinstance(first.value, str):
+                return first.value
+        state, value = self._str_kwarg(call, "path")
+        if state == "literal":
+            return value
+        return None
+
+    def _extract_starlette_routes(
+        self,
+        tree: ast.AST,
+        symtab: dict[str, dict[str, Any]],
+        relpath: str,
+        repo_index: dict[str, Any],
+        graph: Any,
+        mod_id: str,
+    ) -> None:
+        """Detect Starlette routes declared as a LIST of ``Route``/``Mount``.
+
+        Starlette does not use decorators; it binds ``routes=[Route(path,
+        endpoint, methods=[...]), Mount(prefix, routes=[...]), ...]`` on the
+        ``Starlette(...)`` application (inline, or via a module-level ``routes``
+        list). This anchors on the ``Starlette(...)`` call so a bare list that is
+        never mounted produces nothing. ``Mount`` prefixes compose onto nested
+        route paths; a ``Mount(app=...)`` sub-application is resolved best-effort
+        when it is itself a ``Starlette(routes=...)``.
+
+        Cardinal rule (matching the other frameworks): only a string-literal path
+        yields a route; an unresolved endpoint still emits the (real) route with
+        an ``unresolved_handler`` note and no edge -- never a wrong path or verb.
+        """
+        # Module-level ``name = [...]`` lists and ``name = Starlette(...)`` apps.
+        list_assigns: dict[str, ast.AST] = {}
+        starlette_apps: dict[str, ast.Call] = {}
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Assign):
+                continue
+            value = node.value
+            if isinstance(value, (ast.List, ast.Tuple)):
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        list_assigns[target.id] = value
+            elif isinstance(value, ast.Call) and self._ctor_name(value.func) == (
+                "Starlette"
+            ):
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        starlette_apps[target.id] = value
+
+        # Starlette() calls mounted as a sub-application (``Mount(app=...)``) must
+        # be processed WITH the mount prefix, never again standalone at no prefix.
+        sub_app_nodes: set[int] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and self._ctor_name(node.func) == "Mount":
+                sub = self._resolve_sub_app(
+                    self._kwarg_value(node, "app"), starlette_apps
+                )
+                if sub is not None:
+                    sub_app_nodes.add(id(sub))
+
+        unresolved: list[str] = []
+        for node in ast.walk(tree):
+            if not (
+                isinstance(node, ast.Call)
+                and self._ctor_name(node.func) == "Starlette"
+            ):
+                continue
+            if id(node) in sub_app_nodes:
+                continue
+            elts = self._resolve_route_list(
+                self._kwarg_value(node, "routes"), list_assigns
+            )
+            if elts is None:
+                continue
+            for elt in elts:
+                self._process_starlette_elt(
+                    elt,
+                    "",
+                    list_assigns,
+                    starlette_apps,
+                    symtab,
+                    relpath,
+                    repo_index,
+                    graph,
+                    unresolved,
+                )
+
+        if unresolved:
+            mod = graph.get_node(mod_id)
+            if mod is not None:
+                prior = mod.attrs.get("unresolved_routes", [])
+                mod.attrs["unresolved_routes"] = prior + unresolved
+
+    @staticmethod
+    def _resolve_sub_app(
+        app_arg: ast.AST | None, starlette_apps: dict[str, ast.Call]
+    ) -> ast.Call | None:
+        """A ``Mount(app=...)`` target that is a ``Starlette(...)`` call, else None."""
+        if isinstance(app_arg, ast.Call) and (
+            PythonAnalyzer._ctor_name(app_arg.func) == "Starlette"
+        ):
+            return app_arg
+        if isinstance(app_arg, ast.Name):
+            return starlette_apps.get(app_arg.id)
+        return None
+
+    def _process_starlette_elt(
+        self,
+        elt: ast.AST,
+        prefix: str,
+        list_assigns: dict[str, ast.AST],
+        starlette_apps: dict[str, ast.Call],
+        symtab: dict[str, dict[str, Any]],
+        relpath: str,
+        repo_index: dict[str, Any],
+        graph: Any,
+        unresolved: list[str],
+    ) -> None:
+        """Emit one Starlette ``Route`` or recurse into one ``Mount``."""
+        if not isinstance(elt, ast.Call):
+            return
+        name = self._ctor_name(elt.func)
+        if name == "Route":
+            self._handle_starlette_route(
+                elt, prefix, symtab, relpath, repo_index, graph, unresolved
+            )
+        elif name == "Mount":
+            self._handle_starlette_mount(
+                elt,
+                prefix,
+                list_assigns,
+                starlette_apps,
+                symtab,
+                relpath,
+                repo_index,
+                graph,
+                unresolved,
+            )
+
+    def _handle_starlette_route(
+        self,
+        elt: ast.Call,
+        prefix: str,
+        symtab: dict[str, dict[str, Any]],
+        relpath: str,
+        repo_index: dict[str, Any],
+        graph: Any,
+        unresolved: list[str],
+    ) -> None:
+        local_path = self._starlette_path(elt)
+        if local_path is None:
+            unresolved.append(
+                f"Route(...): non-literal path {self._safe_unparse(elt)}"
+            )
+            return
+        full_path = self._join_paths(prefix, local_path) if prefix else local_path
+
+        # endpoint = second positional arg, or ``endpoint=`` kwarg.
+        endpoint = elt.args[1] if len(elt.args) > 1 else None
+        if endpoint is None:
+            endpoint = self._kwarg_value(elt, "endpoint")
+
+        methods = self._methods_kwarg(elt) or ["GET"]
+        handler_qual, handler_file = self._resolve_handler_ref(
+            endpoint, symtab, relpath, repo_index
+        )
+        extra: dict[str, Any] = {}
+        if handler_qual is None and endpoint is not None:
+            extra["unresolved_handler"] = self._safe_unparse(endpoint)
+        for method in methods:
+            self._emit_entrypoint(
+                graph,
+                method,
+                full_path,
+                "starlette",
+                relpath,
+                handler_qual=handler_qual,
+                handler_file=handler_file,
+                extra=extra or None,
+            )
+
+    def _handle_starlette_mount(
+        self,
+        elt: ast.Call,
+        prefix: str,
+        list_assigns: dict[str, ast.AST],
+        starlette_apps: dict[str, ast.Call],
+        symtab: dict[str, dict[str, Any]],
+        relpath: str,
+        repo_index: dict[str, Any],
+        graph: Any,
+        unresolved: list[str],
+    ) -> None:
+        mount_path = self._starlette_path(elt)
+        if mount_path is None:
+            unresolved.append(
+                f"Mount(...): non-literal prefix {self._safe_unparse(elt)}"
+            )
+            return
+        new_prefix = self._join_paths(prefix, mount_path) if prefix else mount_path
+
+        routes_arg = self._kwarg_value(elt, "routes")
+        if routes_arg is not None:
+            nested = self._resolve_route_list(routes_arg, list_assigns)
+            if nested is None:
+                unresolved.append(
+                    f"Mount({mount_path!r}): routes= not an in-file list literal"
+                )
+                return
+            for child in nested:
+                self._process_starlette_elt(
+                    child,
+                    new_prefix,
+                    list_assigns,
+                    starlette_apps,
+                    symtab,
+                    relpath,
+                    repo_index,
+                    graph,
+                    unresolved,
+                )
+            return
+
+        # Best-effort sub-application: ``Mount(prefix, app=Starlette(routes=...))``.
+        sub = self._resolve_sub_app(self._kwarg_value(elt, "app"), starlette_apps)
+        if sub is not None:
+            nested = self._resolve_route_list(
+                self._kwarg_value(sub, "routes"), list_assigns
+            )
+            if nested is not None:
+                for child in nested:
+                    self._process_starlette_elt(
+                        child,
+                        new_prefix,
+                        list_assigns,
+                        starlette_apps,
+                        symtab,
+                        relpath,
+                        repo_index,
+                        graph,
+                        unresolved,
+                    )
+                return
+        # Any other sub-application (mounted ASGI app, cross-file routes) is
+        # skipped soundly -- recorded, never guessed into a bogus route.
+        unresolved.append(
+            f"Mount({mount_path!r}): sub-application routes not resolvable in-file"
+        )

@@ -1,0 +1,30 @@
+# VScan — reachability-aware dependency vulnerability scan in CI.
+#
+# On every pull request and on pushes to main it builds the knowledge graph,
+# correlates declared dependencies against vulnerability data, joins the result
+# with reachability, uploads a SARIF log to GitHub code scanning (Security →
+# Code scanning), and posts/updates a PR comment with the funnel.
+#
+# This repo consumes the action locally with `uses: ./`. External consumers
+# would instead pin the published action: `uses: swaggpi/VScan@main`.
+name: VScan
+
+on:
+  pull_request: {}
+  push:
+    branches: [main]
+
+permissions:
+  contents: read            # checkout
+  security-events: write    # upload SARIF to code scanning
+  pull-requests: write      # post/update the PR comment
+
+jobs:
+  vscan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./
+        with:
+          path: .
+          fail-on: reachable

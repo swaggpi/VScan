@@ -1,0 +1,39 @@
+version = 1
+revision = 1
+requires-python = ">=3.11"
+
+[[package]]
+name = "uv-app"
+version = "0.1.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "jinja2" },
+    { name = "pyyaml" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "jinja2", specifier = "==3.1.2" },
+    { name = "pyyaml", specifier = ">=5.0" },
+]
+
+[[package]]
+name = "jinja2"
+version = "3.1.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "markupsafe" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/jinja2-3.1.2.tar.gz", hash = "sha256:0000000000000000000000000000000000000000000000000000000000000000" }
+
+[[package]]
+name = "markupsafe"
+version = "2.1.5"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/markupsafe-2.1.5.tar.gz", hash = "sha256:0000000000000000000000000000000000000000000000000000000000000000" }
+
+[[package]]
+name = "pyyaml"
+version = "5.4.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/pyyaml-5.4.1.tar.gz", hash = "sha256:0000000000000000000000000000000000000000000000000000000000000000" }

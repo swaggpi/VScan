@@ -1,4 +1,4 @@
-"""Safe, surgical manifest pin editing for ``vulnreach_apply_upgrade``.
+"""Safe, surgical manifest pin editing for ``vscan_apply_upgrade``.
 
 The contract is deliberately conservative: locate exactly **one** unambiguous
 pin for a dependency in its declared manifest and rewrite only that version

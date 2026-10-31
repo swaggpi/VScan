@@ -1,0 +1,9 @@
+{
+  "name": "transitive-app",
+  "version": "1.0.0",
+  "description": "Node sample proving transitive-dependency scanning: package.json declares ONE dep (express); the lockfile resolves transitive packages (minimist, qs) that package.json never names. Ground truth in README.md.",
+  "main": "server.js",
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}

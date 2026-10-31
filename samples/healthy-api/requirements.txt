@@ -1,0 +1,16 @@
+# Scribe Notes API -- pinned dependencies (the HEALTHY contrast fixture).
+#
+# Every version is pinned EXACTLY (==) to a CURRENT release with no known OSV
+# advisory, so the audit funnel reads clean: the routes are reachable, the code
+# genuinely reaches each dependency, and yet there is nothing to flag. This is
+# the "N deps, 0 known CVEs" story that a well-maintained project should tell.
+#
+# Direct, route-reachable dependencies:
+fastapi==0.115.6          # web framework; every route is a FastAPI handler
+starlette==1.3.1          # FastAPI's ASGI toolkit (pinned explicitly)
+pydantic==2.10.4          # request/response models (v2)
+uvicorn==0.34.0           # ASGI server (ops entry point)
+httpx==0.28.1             # outbound notifications in services/link_service.py
+orjson==3.11.6            # JSON serialization in core/serializer.py
+structlog==24.4.0         # structured logging in core/logging.py
+python-dateutil==2.9.0.post0  # ISO timestamps in services/note_service.py

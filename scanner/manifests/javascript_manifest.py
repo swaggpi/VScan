@@ -2,8 +2,8 @@
 
 Emits npm dependencies. Declared versions come from ``package.json``
 (``dependencies`` and ``devDependencies``). When a sibling lockfile is present
-(``package-lock.json`` preferred, then ``pnpm-lock.yaml`` best-effort) the
-resolved exact version replaces the declared range and ``resolved`` is set.
+(``package-lock.json`` preferred, then ``pnpm-lock.yaml``, then ``bun.lock``)
+the resolved exact version replaces the declared range and ``resolved`` is set.
 """
 
 from __future__ import annotations
@@ -94,6 +94,74 @@ def _resolved_from_pnpm(abspath: str) -> dict[str, str]:
     return resolved
 
 
+_JSONC_TRAILING_COMMA = re.compile(r",(\s*[}\]])")
+
+
+def _strip_jsonc(text: str) -> str:
+    """Minimal JSONC -> JSON cleanup for a ``bun.lock``.
+
+    bun.lock is JSON with trailing commas (and possibly ``//`` comments), which
+    ``json.loads`` rejects. This removes full-line ``//`` comments (a line whose
+    first non-whitespace is ``//`` -- bun.lock data lines always start with a
+    ``"``, so this never touches a ``//`` inside a string such as a sha512 hash
+    or a path) and drops any comma immediately before a ``}`` or ``]`` (version
+    strings and hashes contain neither, so this is safe).
+    """
+    lines = [ln for ln in text.splitlines() if not ln.lstrip().startswith("//")]
+    return _JSONC_TRAILING_COMMA.sub(r"\1", "\n".join(lines))
+
+
+def _split_name_version(spec: str) -> tuple[str, str] | None:
+    """Split a bun ``name@version`` spec; the version is after the LAST ``@``.
+
+    Handles scoped packages (``@scope/pkg@1.2.3`` -> ``@scope/pkg`` + ``1.2.3``).
+    Returns ``None`` when there is no version segment.
+    """
+    idx = spec.rfind("@")
+    if idx <= 0:  # no "@", or only the leading "@" of a scoped name (no version)
+        return None
+    name, version = spec[:idx], spec[idx + 1 :]
+    if not name or not version:
+        return None
+    return (name, version)
+
+
+def _resolved_from_bun_lock(abspath: str) -> dict[str, str]:
+    """Return ``{name: version}`` from a ``bun.lock`` (JSONC, lockfileVersion 1).
+
+    The ``packages`` map is keyed by install path; each value is an array whose
+    first element is the canonical ``"name@version"`` spec. Malformed files
+    yield ``{}`` rather than raising.
+    """
+    try:
+        with open(abspath, encoding="utf-8", errors="replace") as handle:
+            raw = handle.read()
+    except OSError:
+        return {}
+    try:
+        data = json.loads(_strip_jsonc(raw))
+    except (json.JSONDecodeError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+
+    resolved: dict[str, str] = {}
+    packages = data.get("packages")
+    if isinstance(packages, dict):
+        for entry in packages.values():
+            spec: str | None = None
+            if isinstance(entry, list) and entry and isinstance(entry[0], str):
+                spec = entry[0]
+            elif isinstance(entry, str):
+                spec = entry
+            if not spec:
+                continue
+            parsed = _split_name_version(spec)
+            if parsed:
+                resolved.setdefault(parsed[0], parsed[1])
+    return resolved
+
+
 def _lockfile_versions(manifest_dir: str) -> dict[str, str]:
     package_lock = os.path.join(manifest_dir, "package-lock.json")
     if os.path.isfile(package_lock):
@@ -101,6 +169,9 @@ def _lockfile_versions(manifest_dir: str) -> dict[str, str]:
     pnpm_lock = os.path.join(manifest_dir, "pnpm-lock.yaml")
     if os.path.isfile(pnpm_lock):
         return _resolved_from_pnpm(pnpm_lock)
+    bun_lock = os.path.join(manifest_dir, "bun.lock")
+    if os.path.isfile(bun_lock):
+        return _resolved_from_bun_lock(bun_lock)
     return {}
 
 
@@ -139,4 +210,21 @@ class JavaScriptManifestAdapter(ManifestAdapter):
                 deps.append(
                     Dependency(name, spec, "npm", relpath, resolved=False, declared=spec)
                 )
+
+        # Transitive dependencies: every package the lockfile resolved that the
+        # manifest does NOT declare itself. These come straight from the fully
+        # resolved tree (``_resolved_from_package_lock`` / ``_resolved_from_pnpm``
+        # already enumerate the whole tree), so they are exact-version resolved.
+        # They are ``direct=False`` -- the soundness key: a transitive dep is
+        # never ruled unreachable. The root/self package and any empty entry are
+        # skipped.
+        self_name = data.get("name") if isinstance(data.get("name"), str) else None
+        for name, version in resolved.items():
+            if not name or not version or name in declared or name == self_name:
+                continue
+            deps.append(
+                Dependency(
+                    name, version, "npm", relpath, resolved=True, direct=False
+                )
+            )
         return deps

@@ -10,9 +10,9 @@ so a bad cache can never crash a scan.
 
 Location (first match wins):
 
-* ``$VULNREACH_CACHE_DIR``                -- explicit override
-* ``$XDG_CACHE_HOME/vulnreach``          -- XDG base-directory spec
-* ``~/.cache/vulnreach``                 -- default
+* ``$VSCAN_CACHE_DIR``                -- explicit override
+* ``$XDG_CACHE_HOME/vscan``          -- XDG base-directory spec
+* ``~/.cache/vscan``                 -- default
 """
 
 from __future__ import annotations
@@ -24,9 +24,9 @@ import time
 from pathlib import Path
 from typing import Any
 
-_ENV_OVERRIDE = "VULNREACH_CACHE_DIR"
+_ENV_OVERRIDE = "VSCAN_CACHE_DIR"
 _ENV_XDG = "XDG_CACHE_HOME"
-_APP = "vulnreach"
+_APP = "vscan"
 
 
 def cache_dir() -> Path:

@@ -33,7 +33,7 @@ _KEV_URL = (
 )
 _EPSS_URL = "https://api.first.org/data/v1/epss"
 _NVD_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
-_USER_AGENT = "vulnreach/0.1 (defensive dependency scanner)"
+_USER_AGENT = "vscan/0.1 (defensive dependency scanner)"
 _TIMEOUT = 30.0
 
 _KEV_TTL = 24 * 60 * 60  # ~1 day; catalog updates on business days.

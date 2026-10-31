@@ -65,7 +65,7 @@ _EXT_LANGUAGE: dict[str, str] = {
 
 # Exact filenames that are dependency manifests.
 _MANIFEST_FILES: frozenset[str] = frozenset(
-    {"pyproject.toml", "package.json", "composer.json", "go.mod"}
+    {"pyproject.toml", "package.json", "composer.json", "go.mod", "Pipfile"}
 )
 
 # Exact filenames that are lockfiles.
@@ -74,7 +74,10 @@ _LOCKFILE_FILES: frozenset[str] = frozenset(
         "package-lock.json",
         "pnpm-lock.yaml",
         "yarn.lock",
+        "bun.lock",
         "poetry.lock",
+        "uv.lock",
+        "Pipfile.lock",
         "composer.lock",
         "go.sum",
     }

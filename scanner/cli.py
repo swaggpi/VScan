@@ -12,19 +12,40 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from typing import Sequence
 
 from .agent import LLMClient, assess_findings, investigate_usage, triage_findings
-from .correlate import CorrelationResult, correlate_full
+from .correlate import CorrelationResult, Finding, correlate_full
 from .correlate import report as correlate_report
+from .correlate.sarif import to_markdown, to_sarif
 from .coverage import compute_coverage
 from .dotenv import load_dotenv
 from .graph import KnowledgeGraph
 from .reachability import ReachabilityResult, compute_reachability
 from .scan import scan_repo
+from .taint import TaintResult, compute_taint
 
-_DEFAULT_OUTPUT = "vulnreach-graph.json"
+_DEFAULT_OUTPUT = "vscan-graph.json"
+
+
+def _compute_exit_code(fail_on: str, findings: list[Finding]) -> int:
+    """Map the ``--fail-on`` bar + findings to a process exit code.
+
+    ``never`` (the default) always returns 0, preserving current behavior. The
+    other bars return 1 when at least one finding meets them, else 0. Findings
+    must already be joined with reachability/taint for the non-``never`` bars.
+    """
+    if fail_on == "reachable":
+        return 1 if any(f.reachable for f in findings) else 0
+    if fail_on == "confirmed":
+        return 1 if any(f.symbol_match == "confirmed" for f in findings) else 0
+    if fail_on == "tainted":
+        return 1 if any(f.taint == "tainted" for f in findings) else 0
+    if fail_on == "any":
+        return 1 if findings else 0
+    return 0  # "never"
 
 
 def _print_summary(graph: KnowledgeGraph, repo_path: str, output_path: str) -> None:
@@ -33,7 +54,7 @@ def _print_summary(graph: KnowledgeGraph, repo_path: str, output_path: str) -> N
     deps = summary["dependencies"]
 
     out = sys.stderr
-    print(f"vulnreach scan: {repo_path}", file=out)
+    print(f"vscan scan: {repo_path}", file=out)
     print(f"  files:        {node_counts.get('file', 0)}", file=out)
     print(f"  modules:      {node_counts.get('module', 0)}", file=out)
     print(f"  functions:    {node_counts.get('function', 0)}", file=out)
@@ -83,7 +104,7 @@ def _print_summary(graph: KnowledgeGraph, repo_path: str, output_path: str) -> N
 def _format_reachability(result: ReachabilityResult, repo_path: str) -> str:
     """Render a reachability result as a human-readable text report."""
     lines: list[str] = []
-    lines.append(f"vulnreach reachability: {repo_path}")
+    lines.append(f"vscan reachability: {repo_path}")
     lines.append("")
 
     if not result.entrypoints:
@@ -368,6 +389,7 @@ def _build_bundle(
     assessments: list,
     triage: list,
     usage: list,
+    taint: dict[str, TaintResult] | None = None,
 ) -> dict:
     """Assemble one self-contained payload the dashboard viewer can load.
 
@@ -388,11 +410,38 @@ def _build_bundle(
     therefore ALWAYS carries all three tiers (offline-grounded by default).
     """
     audit_payload = correlate_report.audit(
-        graph, correlation, reach, assessments=assessments, triage=triage, usage=usage
+        graph,
+        correlation,
+        reach,
+        assessments=assessments,
+        triage=triage,
+        usage=usage,
+        taint=taint,
     )
+    # Bundle-only trim: the viewer (computeFocused) discards every reachable
+    # dependency that is not vulnerable, so drop them from the serialized copy.
+    # ``reach`` itself, the CLI/MCP outputs and every verdict stay untouched.
+    vuln_ids = {f.dependency_id for f in correlation.findings}
+    reachability = reach.to_dict()
+    # verdict_by_dep is trimmed to vulnerable ids too: the viewer reads
+    # per-finding verdicts, not this map; the live reach object / CLI / MCP keep
+    # the full map.
+    for ep in reachability.get("entrypoints", []):
+        ep["reachable_dependencies"] = [
+            rd for rd in ep.get("reachable_dependencies", []) if rd.get("id") in vuln_ids
+        ]
+        if "verdict_by_dep" in ep:
+            ep["verdict_by_dep"] = {
+                k: v for k, v in ep["verdict_by_dep"].items() if k in vuln_ids
+            }
+    repo_roll = reachability.get("repo")
+    if isinstance(repo_roll, dict) and "verdict_by_dep" in repo_roll:
+        repo_roll["verdict_by_dep"] = {
+            k: v for k, v in repo_roll["verdict_by_dep"].items() if k in vuln_ids
+        }
     return {
         "graph": graph.to_dict(),
-        "reachability": reach.to_dict(),
+        "reachability": reachability,
         "findings": audit_payload["findings"],
         "summary": audit_payload["summary"],
         "coverage": audit_payload["coverage"],
@@ -408,7 +457,7 @@ def _build_bundle(
 def main(argv: Sequence[str] | None = None) -> int:
     load_dotenv()
     parser = argparse.ArgumentParser(
-        prog="vulnreach",
+        prog="vscan",
         description="Reachability-aware dependency scanner (layer 1: structure graph).",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -487,6 +536,32 @@ def main(argv: Sequence[str] | None = None) -> int:
         "and opt-in: it does not affect the -o/--json output. Works offline, in "
         "which case the findings list is empty.",
     )
+    audit_parser.add_argument(
+        "--sarif",
+        default=None,
+        metavar="PATH",
+        help="Also write a SARIF 2.1.0 log of the findings (for code scanning / "
+        "GitHub). Additive and opt-in: it does not affect stdout. Deterministic "
+        "and offline-friendly -- it needs only findings + taint, never the "
+        "advisory LLM tiers.",
+    )
+    audit_parser.add_argument(
+        "--markdown",
+        default=None,
+        metavar="PATH",
+        help="Also write a GitHub-comment-ready markdown summary (funnel line + a "
+        "table of the top reachable/exploitable findings). Additive and opt-in: "
+        "it does not affect stdout.",
+    )
+    audit_parser.add_argument(
+        "--fail-on",
+        dest="fail_on",
+        choices=["never", "reachable", "confirmed", "tainted", "any"],
+        default="never",
+        help="Exit non-zero (1) for CI when a finding meets this bar: reachable, "
+        "symbol-confirmed, tainted (exploitable), or any finding at all. The "
+        "default 'never' always exits 0 and preserves current behavior.",
+    )
 
     args = parser.parse_args(argv)
 
@@ -535,6 +610,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             graph, offline=args.offline, use_nvd=args.nvd
         )
 
+        # Derived, additive taint signal (offline, no model): does attacker input
+        # at an entry handler flow into a call into a vulnerable dep? Strictly
+        # stronger than symbol_match; never changes reachable/verdict/ranking.
+        taint_map = compute_taint(graph, reach, os.path.abspath(args.repo_path))
+
         # The advisory agent tier feeds --bundle (always), the --json/-o audit
         # payload, and the --explain text render. Compute it once -- so the model
         # is called at most once per run -- only when something needs it. The
@@ -556,6 +636,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         if args.bundle:
             with open(args.bundle, "w", encoding="utf-8") as handle:
+                # Compact JSON: the bundle is machine-consumed by the dashboard,
+                # and pretty-printing a large repo's graph (whitespace) can
+                # quadruple the file (e.g. redash ~5MB compact vs ~20MB indented),
+                # slowing the in-browser load for no reader benefit.
                 handle.write(
                     json.dumps(
                         _build_bundle(
@@ -565,29 +649,45 @@ def main(argv: Sequence[str] | None = None) -> int:
                             assessments=assessments,
                             triage=triage,
                             usage=usage,
+                            taint=taint_map,
                         ),
-                        indent=2,
+                        separators=(",", ":"),
                     )
                 )
 
-        if args.output or args.json:
-            payload = json.dumps(
-                correlate_report.audit(
-                    graph, correlation, reach,
-                    assessments=assessments, triage=triage, usage=usage,
-                ),
-                indent=2,
+        # The audit payload feeds -o/--json (with the advisory tiers) and the
+        # deterministic --sarif/--markdown renderers (findings + taint only, no
+        # model). Compute it once when any of them is requested; the join it
+        # performs also populates the signals the exit-code logic reads.
+        payload = None
+        if args.output or args.json or args.sarif or args.markdown:
+            payload = correlate_report.audit(
+                graph, correlation, reach,
+                assessments=assessments, triage=triage, usage=usage,
+                taint=taint_map,
             )
-            if args.output:
-                with open(args.output, "w", encoding="utf-8") as handle:
-                    handle.write(payload)
-            if args.json:
-                print(payload)
-                return 0
+
+        if args.output:
+            with open(args.output, "w", encoding="utf-8") as handle:
+                handle.write(json.dumps(payload, indent=2))
+
+        if args.sarif:
+            with open(args.sarif, "w", encoding="utf-8") as handle:
+                handle.write(json.dumps(to_sarif(payload, graph), indent=2))
+
+        if args.markdown:
+            with open(args.markdown, "w", encoding="utf-8") as handle:
+                handle.write(to_markdown(payload))
+
+        if args.json:
+            print(json.dumps(payload, indent=2))
+            # The payload's audit() already joined reachability + taint, so the
+            # findings-based exit code is sound here too (for CI).
+            return _compute_exit_code(args.fail_on, correlation.findings)
 
         print(
             correlate_report.format_report(
-                args.repo_path, graph, correlation, reach
+                args.repo_path, graph, correlation, reach, taint=taint_map
             )
         )
         if args.explain:
@@ -596,7 +696,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             print(_format_triage(triage, model_configured=model_configured))
             print(_format_usage(usage, model_configured=model_configured))
-        return 0
+        # format_report joined reachability + taint, so the findings now carry
+        # the signals the exit-code bars read.
+        return _compute_exit_code(args.fail_on, correlation.findings)
 
     parser.error(f"unknown command: {args.command}")  # pragma: no cover
     return 2

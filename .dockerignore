@@ -1,5 +1,18 @@
-*
-!pyproject.toml
-!README.md
-!scanner/
-**/__pycache__
+# Keep the build context small. The web image needs scanner/ and samples/, so
+# those are NOT excluded here.
+.git
+.venv
+venv
+__pycache__
+*.egg-info
+.pytest_cache
+.ruff_cache
+.research
+.claude
+.playwright-mcp
+
+# The big prebuilt dashboard bundles; not needed to run the backend.
+dashboard/*.json
+
+# Cloned external repos for ad-hoc testing (untrusted, not part of the build).
+test-corpus

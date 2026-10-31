@@ -1,6 +1,6 @@
 # demo-app
 
-A small, mostly-secure Flask service used to showcase the `vulnreach`
+A small, mostly-secure Flask service used to showcase the `VScan`
 reachability engine. This is a **defensive-security demo fixture**: there is no
 exploit code anywhere in it. The only thing "vulnerable" about the app is that a
 few dependency *versions* in `requirements.txt` are intentionally outdated.

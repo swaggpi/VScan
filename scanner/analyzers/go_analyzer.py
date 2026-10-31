@@ -84,6 +84,7 @@ NOT RESOLVED (recorded, never guessed)
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from tree_sitter_language_pack import get_parser
@@ -134,6 +135,7 @@ _ROUTER_CONSTRUCTORS: tuple[tuple[str, frozenset[str], str], ...] = (
     ("github.com/labstack/echo", frozenset({"New"}), "echo"),
     ("github.com/go-chi/chi", frozenset({"NewRouter"}), "chi"),
     ("github.com/gorilla/mux", frozenset({"NewRouter"}), "mux"),
+    ("github.com/gofiber/fiber", frozenset({"New"}), "fiber"),
 )
 
 # Go predeclared (built-in) functions -- callable by a bare name with no import.
@@ -181,6 +183,12 @@ class GoAnalyzer(LanguageAnalyzer):
         dep_index = self._go_dep_index(graph)
         go_module = repo_index.get("go_module")
         go_packages = repo_index.get("go_packages", {})
+        # Bare same-package cross-file resolution: this file's own-directory map
+        # of {func_name: fn_id} over ALL top-level funcs of the package (every
+        # file in the same directory), exported AND unexported.
+        pkg_funcs = repo_index.get("go_package_funcs", {}).get(
+            os.path.dirname(relpath), {}
+        )
         pkg_map, stdlib, local_pkg_map, unresolved_imports = self._process_imports(
             root, mod_id, dep_index, graph, go_module, go_packages
         )
@@ -224,7 +232,8 @@ class GoAnalyzer(LanguageAnalyzer):
                 continue
             for call in self._iter_calls(body):
                 result = self._resolve_call(
-                    call, pkg_map, stdlib, bound, local_funcs, relpath, local_pkg_map
+                    call, pkg_map, stdlib, bound, local_funcs, relpath,
+                    local_pkg_map, pkg_funcs,
                 )
                 kind = result[0]
                 if kind == "fn":
@@ -244,7 +253,8 @@ class GoAnalyzer(LanguageAnalyzer):
 
         # -- entry points (routes) --------------------------------------------
         self._extract_routes(
-            root, functions, pkg_map, stdlib, local_funcs, relpath, graph, local_pkg_map
+            root, functions, pkg_map, stdlib, local_funcs, relpath, graph,
+            local_pkg_map, pkg_funcs,
         )
 
     # -- dependency index ------------------------------------------------------
@@ -302,13 +312,24 @@ class GoAnalyzer(LanguageAnalyzer):
     def _default_package_name(import_path: str) -> str:
         """Default local identifier for an import path, sans an explicit alias.
 
-        It is the last path segment, with a trailing gopkg.in-style major-version
-        suffix stripped: ``gopkg.in/yaml.v2`` is imported as ``yaml``,
-        ``github.com/gin-gonic/gin`` as ``gin``. This is a sound default (the
-        true package name can still differ, which is why an explicit alias always
-        wins); it covers the ubiquitous ``.vN`` case so calls resolve.
+        It is the last path segment, with a trailing major-version suffix
+        stripped: ``gopkg.in/yaml.v2`` is imported as ``yaml``,
+        ``github.com/gin-gonic/gin`` as ``gin``, and a Go-module ``/vN`` path
+        suffix as its preceding segment (``github.com/gofiber/fiber/v2`` ->
+        ``fiber``, ``github.com/labstack/echo/v4`` -> ``echo``). This is a sound
+        default (the true package name can still differ, which is why an explicit
+        alias always wins); it covers the ubiquitous ``.vN``/``/vN`` cases so
+        calls resolve.
         """
         last = import_path.rsplit("/", 1)[-1]
+        # ``/vN`` module major-version segment: the package name is the segment
+        # before it, not the bare ``vN``.
+        if (
+            "/" in import_path
+            and last.startswith("v")
+            and last[1:].isdigit()
+        ):
+            last = import_path.rsplit("/", 2)[-2]
         if "." in last:
             head, tail = last.rsplit(".", 1)
             if head and tail.startswith("v") and tail[1:].isdigit():
@@ -655,9 +676,11 @@ class GoAnalyzer(LanguageAnalyzer):
         local_funcs: set[str],
         relpath: str,
         local_pkg_map: dict[str, dict[str, Any]] | None = None,
+        pkg_funcs: dict[str, str] | None = None,
     ) -> tuple[str, ...]:
         """Resolve one call. See the module docstring for the model."""
         local_pkg_map = local_pkg_map or {}
+        pkg_funcs = pkg_funcs or {}
         func = call.child_by_field_name("function")
         if func is None:
             return ("unresolved", "<call>")
@@ -670,8 +693,17 @@ class GoAnalyzer(LanguageAnalyzer):
                 return ("fn", f"fn:{relpath}:{name}")
             if name in _GO_BUILTINS:
                 return ("skip",)
-            # A bare name that is neither a sibling function nor a built-in may be
-            # declared in another Go file (cross-file is out of scope): unresolved.
+            # Same-package cross-file: a bare name may be a top-level func
+            # declared in ANOTHER file of this directory. ``pkg_funcs`` holds
+            # only names with EXACTLY ONE declaring file in the package (the
+            # orchestrator drops ambiguous ones), so this is a definite target
+            # -- never a guess. The ``bound`` and ``local_funcs`` checks above
+            # already handle shadowing and the same-file winner.
+            target = pkg_funcs.get(name)
+            if target is not None:
+                return ("fn", target)
+            # A bare name not resolvable anywhere stays unresolved (a miss, never
+            # a false edge).
             return ("unresolved", name)
 
         if func.type == "selector_expression":
@@ -720,8 +752,10 @@ class GoAnalyzer(LanguageAnalyzer):
         relpath: str,
         graph: Any,
         local_pkg_map: dict[str, dict[str, Any]] | None = None,
+        pkg_funcs: dict[str, str] | None = None,
     ) -> None:
         local_pkg_map = local_pkg_map or {}
+        pkg_funcs = pkg_funcs or {}
         # A verb call is a route only when its receiver was bound in-file to a
         # recognised router constructor; map each such name -> framework first.
         routers = self._router_vars(root, pkg_map, stdlib)
@@ -747,16 +781,24 @@ class GoAnalyzer(LanguageAnalyzer):
                 method_name = field.text.decode("utf-8")
 
                 if method_name == "HandleFunc":
-                    # net/http: the receiver must be the stdlib ``net/http``
-                    # package itself, or a ``*ServeMux`` bound from
-                    # ``http.NewServeMux()``. Anything else is not a route.
-                    if not (
-                        self._is_net_http(recv_name, stdlib)
-                        or routers.get(recv_name) == "net/http"
-                    ):
+                    # ``HandleFunc(path, handler)`` is a route when the receiver
+                    # is either the stdlib ``net/http`` (the package itself, or a
+                    # ``*ServeMux`` bound from ``http.NewServeMux()``) or a
+                    # gorilla/mux router (``mux.NewRouter()``). Anything else is
+                    # not a route.
+                    fw = routers.get(recv_name)
+                    if self._is_net_http(recv_name, stdlib) or fw == "net/http":
+                        framework = "net/http"
+                        methods = ["ANY"]
+                    elif fw == "mux":
+                        # mux: an optionally chained ``.Methods("GET","POST")``
+                        # pins the verbs (one entrypoint each); without it, mux
+                        # matches all methods, so we emit ``ANY``.
+                        framework = "mux"
+                        verbs = self._chained_methods(call)
+                        methods = verbs if verbs else ["ANY"]
+                    else:
                         continue
-                    http_method = "ANY"
-                    framework = "net/http"
                 elif method_name.upper() in _HTTP_VERBS:
                     fw = routers.get(recv_name)
                     if fw is None:
@@ -766,8 +808,8 @@ class GoAnalyzer(LanguageAnalyzer):
                         # already records it in ``unresolved_calls``; emit no
                         # entrypoint and no handler edge.
                         continue
-                    http_method = method_name.upper()
                     framework = fw
+                    methods = [method_name.upper()]
                 else:
                     continue
 
@@ -780,17 +822,19 @@ class GoAnalyzer(LanguageAnalyzer):
                     continue
 
                 handler_arg = args[-1] if len(args) >= 2 else None
-                self._emit_route(
-                    http_method,
-                    path,
-                    framework,
-                    handler_arg,
-                    bound,
-                    local_funcs,
-                    relpath,
-                    graph,
-                    local_pkg_map,
-                )
+                for http_method in methods:
+                    self._emit_route(
+                        http_method,
+                        path,
+                        framework,
+                        handler_arg,
+                        bound,
+                        local_funcs,
+                        relpath,
+                        graph,
+                        local_pkg_map,
+                        pkg_funcs,
+                    )
 
     def _router_vars(
         self,
@@ -876,6 +920,31 @@ class GoAnalyzer(LanguageAnalyzer):
         """
         return name == "http" and "net/http" in stdlib
 
+    def _chained_methods(self, call: Any) -> list[str] | None:
+        """Verbs of a ``.Methods("GET","POST")`` chained onto a mux route.
+
+        ``call`` is the inner ``r.HandleFunc(path, handler)`` call. A directly
+        chained ``r.HandleFunc(...).Methods(...)`` makes that HandleFunc call the
+        receiver (operand) of a ``.Methods`` selector, whose enclosing call lists
+        the verbs as string literals. Returns the uppercased verbs, or ``None``
+        when there is no such chain (mux then defaults to all methods).
+        """
+        parent = call.parent
+        if parent is None or parent.type != "selector_expression":
+            return None
+        field = parent.child_by_field_name("field")
+        if field is None or field.text.decode("utf-8") != "Methods":
+            return None
+        outer = parent.parent
+        if outer is None or outer.type != "call_expression":
+            return None
+        verbs: list[str] = []
+        for arg in self._named_args(outer):
+            value = self._string_value(arg)
+            if value is not None:
+                verbs.append(value.upper())
+        return verbs or None
+
     def _emit_route(
         self,
         http_method: str,
@@ -887,9 +956,11 @@ class GoAnalyzer(LanguageAnalyzer):
         relpath: str,
         graph: Any,
         local_pkg_map: dict[str, dict[str, Any]] | None = None,
+        pkg_funcs: dict[str, str] | None = None,
     ) -> None:
         ep_id = f"ep:{http_method}:{path}"
         local_pkg_map = local_pkg_map or {}
+        pkg_funcs = pkg_funcs or {}
 
         # Resolve the handler to a function node only when it is an unambiguous
         # named reference: a bare name declared in THIS file (and not locally
@@ -913,8 +984,17 @@ class GoAnalyzer(LanguageAnalyzer):
                     handler_fn_id = f"fn:{relpath}:{cand}"
                     handler_repr = cand
                     handler_file = relpath
+                elif pkg_funcs.get(cand) is not None:
+                    # Same-package cross-file handler: a bare name declared in
+                    # another file of this directory. ``pkg_funcs`` is
+                    # exactly-one by construction (ambiguous names dropped), and
+                    # the ``bound`` shadow check above already ran -- a definite
+                    # target, never a guess.
+                    handler_fn_id = pkg_funcs[cand]
+                    handler_repr = cand
+                    handler_file = self._file_of_fn(handler_fn_id)
                 else:
-                    # Bare name not declared in this file: cross-file or unknown.
+                    # Bare name not declared anywhere resolvable: unknown.
                     unresolved_handler = cand
             elif handler_arg.type == "selector_expression":
                 operand = handler_arg.child_by_field_name("operand")
@@ -1071,3 +1151,38 @@ def index_source(relpath: str, source: str) -> tuple[str | None, dict[str, str]]
         seen[qual] = fn_id
     exports = {name: fid for name, fid in seen.items() if name not in dup}
     return package, exports
+
+
+def index_source_funcs(relpath: str, source: str) -> tuple[str | None, dict[str, str]]:
+    """Return ``(package_name, {func_name: fn_id})`` for EVERY top-level func.
+
+    Like :func:`index_source` but includes UNEXPORTED (lowercase) names. Used to
+    resolve BARE same-package cross-file calls and route handlers: in Go a
+    package is a directory, so a top-level func declared in one file is callable
+    as a bare name from any other file of the same directory, exported or not.
+
+    Methods and qualified names are excluded -- a bare call can only name a
+    package-level function, never a method. A name a single file declares more
+    than once is dropped (ambiguous); the caller merges across the directory's
+    files and drops any name ambiguous across the package, so only an
+    exactly-one target is ever emitted (never a wrong edge).
+    """
+    global _INDEX_ANALYZER
+    if _INDEX_ANALYZER is None:
+        _INDEX_ANALYZER = GoAnalyzer()
+    analyzer = _INDEX_ANALYZER
+    root = get_parser("go").parse(source.encode("utf-8")).root_node
+    package = analyzer._package_name(root)
+    functions = analyzer._collect_functions(root)
+
+    seen: dict[str, str] = {}
+    dup: set[str] = set()
+    for qual, _node, is_method, _ptr in functions:
+        if is_method or "." in qual:
+            continue  # methods / qualified names are not package-level funcs
+        fn_id = f"fn:{relpath}:{qual}"
+        if qual in seen:
+            dup.add(qual)
+        seen[qual] = fn_id
+    funcs = {name: fid for name, fid in seen.items() if name not in dup}
+    return package, funcs

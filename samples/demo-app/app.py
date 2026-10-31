@@ -1,6 +1,6 @@
 """Demo service: a small, mostly-secure notes/config/report API.
 
-This is a defensive-security demo fixture for the ``vulnreach`` reachability
+This is a defensive-security demo fixture for the ``VScan`` reachability
 engine. There is no exploit code anywhere in this app -- the only thing
 "vulnerable" about it is that a few dependency *versions* in
 ``requirements.txt`` are intentionally outdated.

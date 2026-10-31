@@ -9,7 +9,7 @@
 # is gitignored and not part of this project.
 #
 # Usage:  scripts/fetch_test_corpus.sh
-# Then:   ./.venv/bin/vulnreach scan test-corpus/<repo-name>
+# Then:   ./.venv/bin/vscan scan test-corpus/<repo-name>
 
 set -u
 

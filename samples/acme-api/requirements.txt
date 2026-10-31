@@ -1,0 +1,35 @@
+# Acme DocVault API -- pinned dependencies.
+#
+# All versions are pinned EXACTLY (==) so the correlator can look each one up
+# against public advisory data (OSV). The mix is deliberate, and it is what
+# makes the reachability funnel tell a story:
+#
+#   * a few old pins are REACHABLE from a public HTTP route;
+#   * exactly one of those is EXPLOITABLE (attacker input reaches its sink);
+#   * several old, vulnerable pins are only reached from offline CLI/cron code
+#     (or are declared-but-unused), so they are UNREACHABLE from the service.
+
+# --- Reachable from a public route --------------------------------------
+Flask==0.12.2        # web framework; every route reads the request object
+PyYAML==5.3.1        # CVE-2020-14343: unsafe yaml.load RCE -- the FLAGSHIP sink
+Jinja2==2.10         # reached by GET /reports/<id>; not attacker-tainted
+requests==2.19.1     # reached by POST /webhooks/dispatch with a constant URL
+
+# --- Vulnerable, but reached ONLY from offline CLI / cron code ----------
+urllib3==1.24.1      # maintenance/sync.py (cron feed sync) -- not routed
+paramiko==2.4.1      # maintenance/deploy.py (SSH release push) -- not routed
+Pillow==7.1.0        # cli/thumbnails.py (thumbnail tool) -- not routed
+lxml==4.5.0          # cli/export_xml.py (XML export tool) -- not routed
+cryptography==2.8    # cli/signing.py (artifact signing tool) -- not routed
+
+# --- Declared but never imported (transitive / future use) --------------
+Werkzeug==0.14.1     # Flask's WSGI toolkit, pinned old; not called directly
+certifi==2018.11.29  # CA bundle; declared, never imported directly
+idna==2.7            # declared, never imported directly
+rsa==3.4.2           # declared, never imported directly
+Pygments==2.3.0      # declared, never imported directly
+gunicorn==19.9.0     # production WSGI server; invoked by ops, not imported
+MarkupSafe==1.0      # Jinja2 helper; declared, never imported directly
+itsdangerous==1.1.0  # Flask signing helper; declared, never imported directly
+click==7.1.2         # declared, never imported directly
+python-dateutil==2.7.5  # declared, never imported directly

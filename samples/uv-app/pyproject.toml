@@ -1,0 +1,12 @@
+[project]
+name = "uv-app"
+version = "0.1.0"
+description = "uv sample proving uv.lock resolution: PEP 621 declares pyyaml (>= constraint) and jinja2 (== pin); uv.lock resolves both to exact versions plus a transitive package (markupsafe). Ground truth in README.md."
+requires-python = ">=3.11"
+dependencies = [
+    "pyyaml>=5.0",
+    "jinja2==3.1.2",
+]
+
+[tool.uv]
+package = false

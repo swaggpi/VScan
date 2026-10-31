@@ -98,11 +98,11 @@ def _isolated_cache(tmp_path, monkeypatch):
     """Point the on-disk cache at a fresh temp dir for every test.
 
     OSV vuln records are now cached (``osv-vuln:<id>``, 7-day TTL). Without this
-    redirect the suite would read/write the user's real ``~/.cache/vulnreach``,
+    redirect the suite would read/write the user's real ``~/.cache/vscan``,
     leaking fixtures across runs and making call-count assertions non-hermetic.
-    Tests that set ``VULNREACH_CACHE_DIR`` themselves simply override this.
+    Tests that set ``VSCAN_CACHE_DIR`` themselves simply override this.
     """
-    monkeypatch.setenv("VULNREACH_CACHE_DIR", str(tmp_path / "vulnreach-cache"))
+    monkeypatch.setenv("VSCAN_CACHE_DIR", str(tmp_path / "vscan-cache"))
 
 
 @pytest.fixture
@@ -415,7 +415,7 @@ def test_correlate_full_degrades_on_non_dict_batch(graph, monkeypatch):
 
 
 def test_kev_rejects_non_dict(tmp_path, monkeypatch):
-    monkeypatch.setenv("VULNREACH_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setenv("VSCAN_CACHE_DIR", str(tmp_path / "cache"))
     monkeypatch.setattr(enrich, "_get", lambda url, headers=None: b"[]")
     with pytest.raises(enrich.EnrichNetworkError):
         enrich.fetch_kev_catalog()
@@ -424,7 +424,7 @@ def test_kev_rejects_non_dict(tmp_path, monkeypatch):
 def test_enrich_findings_never_raises_on_non_dict(tmp_path, monkeypatch):
     # Both KEV and EPSS returning a non-dict JSON must degrade to notices, never
     # raise out of enrich_findings.
-    monkeypatch.setenv("VULNREACH_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setenv("VSCAN_CACHE_DIR", str(tmp_path / "cache"))
     monkeypatch.setattr(enrich, "_get", lambda url, headers=None: b"[]")
     finding = Finding(
         dependency_id="d",
@@ -484,7 +484,7 @@ def test_fixed_versions_reads_matching_version_range():
 def test_cache_fails_soft_on_uncreatable_dir(tmp_path, monkeypatch):
     blocker = tmp_path / "blocker"
     blocker.write_text("not a directory")
-    monkeypatch.setenv("VULNREACH_CACHE_DIR", str(blocker / "sub"))
+    monkeypatch.setenv("VSCAN_CACHE_DIR", str(blocker / "sub"))
     assert cache.get("some-key") is None  # no raise
     cache.set("some-key", {"value": 1}, ttl=100)  # no raise
     assert cache.get("some-key") is None
@@ -681,7 +681,7 @@ def test_audit_verdict_defaults_to_potentially_reachable_when_absent():
 
 # #15 -- T2: cache round-trip, TTL expiry (with stale-file cleanup) and fail-soft
 # on a corrupt entry. The autouse ``_isolated_cache`` fixture already points
-# VULNREACH_CACHE_DIR at a fresh temp dir for every test.
+# VSCAN_CACHE_DIR at a fresh temp dir for every test.
 
 
 def test_cache_round_trip_returns_stored_value():
@@ -703,3 +703,152 @@ def test_cache_get_on_corrupt_file_is_a_miss():
     path.write_text("{ this is not valid json ", encoding="utf-8")
     # A garbage entry must fail soft -- a miss, never a raise.
     assert cache.get("corrupt-key") is None
+
+
+# -- symbol-level advisory matching (symbol_match) ----------------------------
+#
+# A deterministic, always-on 3-tier signal derived FROM the resolved
+# reachability verdict: "confirmed" (the advisory's named function is among the
+# dep's reached symbols), "no_path" (verdict unreachable), or "package_reachable"
+# (reachable but the specific vulnerable function is unconfirmed). It must never
+# change `reachable`, the verdict, ranking, or the existing summary counts.
+
+from scanner.reachability import (  # noqa: E402 -- grouped with the feature's tests
+    REACHABLE,
+    UNREACHABLE,
+    EntrypointReachability,
+    ReachedDependency,
+    RepoReachability,
+)
+
+_SYM_DEP = "dep:PyPI:PyYAML"
+
+
+def _reach_with(symbols, verdict):
+    """A minimal ReachabilityResult: one entry point reaching ``_SYM_DEP``.
+
+    ``verdict`` is stored in ``repo.verdict_by_dep``; the dep is listed as
+    reachable only when its verdict is not ``unreachable`` (so the reachable-set
+    and verdict layers stay consistent, as the real engine keeps them).
+    """
+    reachable = verdict != UNREACHABLE
+    ep = EntrypointReachability(
+        id="ep:POST:/import",
+        method="POST",
+        path="/import",
+        handlers=["fn:app.py:do_import"],
+        reachable_function_count=1,
+        reachable_dependencies=(
+            [
+                ReachedDependency(
+                    id=_SYM_DEP,
+                    name="PyYAML",
+                    version="5.3",
+                    ecosystem="PyPI",
+                    symbol=symbols[0] if symbols else None,
+                    symbols=list(symbols),
+                    example_path=["ep:POST:/import", _SYM_DEP],
+                )
+            ]
+            if reachable
+            else []
+        ),
+        unresolved_calls_encountered=0,
+    )
+    repo = RepoReachability(
+        reachable_deps=[{"id": _SYM_DEP}] if reachable else [],
+        verdict_by_dep={_SYM_DEP: verdict},
+    )
+    return ReachabilityResult(entrypoints=[ep], repo=repo)
+
+
+def _sym_finding(summary, details):
+    return Finding(
+        dependency_id=_SYM_DEP,
+        dependency_name="PyYAML",
+        version="5.3",
+        ecosystem="PyPI",
+        vuln_id="GHSA-pyyaml-3pqx",
+        cve_ids=[PYYAML_CVE],
+        summary=summary,
+        fixed_versions=["5.3.1"],
+        details=details,
+    )
+
+
+def test_symbol_match_confirmed_when_named_function_is_reached():
+    # The advisory names ``yaml.load`` and the dep is reached via ``yaml.load``.
+    finding = _sym_finding(
+        "PyYAML code execution", "The yaml.load function is the vulnerable sink."
+    )
+    report.join_reachability(
+        KnowledgeGraph(), [finding], _reach_with(["yaml.load"], REACHABLE)
+    )
+
+    assert finding.reachable is True
+    assert finding.reached_symbols == ["yaml.load"]
+    assert finding.symbol_match == "confirmed"
+
+
+def test_symbol_match_package_reachable_when_named_function_not_reached():
+    # The advisory names ``full_load`` but the project only calls ``safe_load``:
+    # reachable package, but the specific vulnerable function is unconfirmed.
+    finding = _sym_finding("PyYAML code execution", "The full_load method is vulnerable.")
+    report.join_reachability(
+        KnowledgeGraph(), [finding], _reach_with(["yaml.safe_load"], REACHABLE)
+    )
+
+    assert finding.reachable is True
+    assert finding.reached_symbols == ["yaml.safe_load"]
+    assert finding.symbol_match == "package_reachable"
+
+
+def test_symbol_match_package_reachable_when_advisory_names_no_function():
+    # The advisory names no specific function (a generic/transitive description):
+    # still a live finding, never silently "safe".
+    finding = _sym_finding(
+        "PyYAML allows arbitrary code execution",
+        "Parsing untrusted input can lead to arbitrary code execution.",
+    )
+    report.join_reachability(
+        KnowledgeGraph(), [finding], _reach_with(["yaml.safe_load"], REACHABLE)
+    )
+
+    assert finding.reachable is True
+    assert finding.symbol_match == "package_reachable"
+
+
+def test_symbol_match_no_path_when_verdict_unreachable():
+    # The dep's resolved verdict is ``unreachable`` -- the only tier-2 case, and
+    # sound because verdict_by_dep already applied the fully-resolved gate.
+    finding = _sym_finding(
+        "PyYAML code execution", "The yaml.load function is the vulnerable sink."
+    )
+    report.join_reachability(
+        KnowledgeGraph(), [finding], _reach_with(["yaml.load"], UNREACHABLE)
+    )
+
+    assert finding.reachable is False
+    assert finding.symbol_match == "no_path"
+
+
+def test_build_summary_counts_symbol_confirmed():
+    confirmed = _sym_finding("PyYAML", "The yaml.load function is vulnerable.")
+    report.join_reachability(
+        KnowledgeGraph(), [confirmed], _reach_with(["yaml.load"], REACHABLE)
+    )
+
+    pkg = _sym_finding("PyYAML", "The full_load method is vulnerable.")
+    report.join_reachability(
+        KnowledgeGraph(), [pkg], _reach_with(["yaml.safe_load"], REACHABLE)
+    )
+
+    none = _sym_finding("lodash prototype pollution", "Prototype pollution via merge.")
+    none.dependency_id = "dep:npm:lodash"
+    none.dependency_name = "lodash"
+    report.join_reachability(KnowledgeGraph(), [none], ReachabilityResult())
+
+    assert confirmed.symbol_match == "confirmed"
+    assert pkg.symbol_match == "package_reachable"
+    summary = report.build_summary(KnowledgeGraph(), [confirmed, pkg, none])
+    assert summary["symbol_confirmed_vulnerabilities"] == 1

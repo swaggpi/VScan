@@ -1,6 +1,6 @@
 """Minimal ``.env`` loader (stdlib only).
 
-Lets ``vulnreach`` pick up ``LLM_*``, ``NVD_API_KEY`` and ``VULNREACH_CACHE_DIR``
+Lets ``vscan`` pick up ``LLM_*``, ``NVD_API_KEY`` and ``VSCAN_CACHE_DIR``
 from a local ``.env`` file without adding a dependency.
 """
 

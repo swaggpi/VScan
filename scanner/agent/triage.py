@@ -49,10 +49,10 @@ end-to-end with no API key.
 
 from __future__ import annotations
 
-import re
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any
 
+from ..correlate.symbols import _match_called_symbol, _named_functions
 from ..graph import KnowledgeGraph
 from ..reachability import ReachabilityResult, _unresolved_count
 from ._graph import _called_symbols, _reachable_dep_ids
@@ -75,32 +75,6 @@ _ADVISORY_NOTE = (
     "vulnerable function is named AND demonstrably not called AND usage is fully "
     "resolved."
 )
-
-# Generic trailing identifiers that, on their own, are too weak to treat as a
-# vulnerable-symbol match (they appear constantly in English/CVE prose). A bare
-# last component in this set never fires the AFFECTED trigger; the full dotted
-# symbol (e.g. "yaml.load") still does. The generous matcher (used only to
-# WITHHOLD a "safe" verdict) ignores this set, staying conservative.
-_GENERIC_TOKENS = frozenset(
-    {
-        "get", "set", "put", "post", "open", "read", "write", "load", "dump",
-        "run", "call", "make", "use", "add", "new", "init", "close", "send",
-        "list", "copy", "parse", "data", "value", "object", "request",
-        "response", "handler", "main", "start", "stop", "update",
-    }
-)
-
-# A "specific named function/feature" in CVE prose: a dotted path whose final
-# component is a real identifier (>=3 chars) -- e.g. ``yaml.full_load``,
-# ``PIL.Image.open``, ``Session.resolve_redirects`` -- or a bare ``name()``
-# call form. Version strings like ``1.24.2`` never match (they do not start with
-# a letter), and abbreviations like ``e.g`` fail the >=3-char final-component
-# rule, so they are not mistaken for a named function.
-_NAMED_FUNC_RE = re.compile(
-    r"\b[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+\b"  # dotted path
-    r"|\b[A-Za-z_][A-Za-z0-9_]*(?=\s*\(\))"  # bare name() form
-)
-
 
 @dataclass
 class Triage:
@@ -178,65 +152,6 @@ def _cve_text(finding: "Finding") -> str:
     if isinstance(summary, str) and summary.strip():
         return summary
     return ""
-
-
-# -- symbol <-> CVE-text matching ---------------------------------------------
-
-
-def _symbol_tokens(symbol: str, *, strict: bool) -> set[str]:
-    """Candidate text tokens that represent ``symbol`` in CVE prose.
-
-    Always includes the full dotted symbol (``yaml.load``) and its last two
-    components (``Image.open``). The bare final component (``load``, ``open``) is
-    included only in the GENEROUS mode, because on its own it is too generic to
-    be a reliable AFFECTED trigger -- but it is a fine reason to WITHHOLD a
-    "safe" verdict (the conservative direction).
-    """
-    parts = symbol.split(".")
-    tokens: set[str] = {symbol.lower()}
-    if len(parts) >= 2:
-        tokens.add(".".join(parts[-2:]).lower())
-    last = parts[-1].lower()
-    if strict:
-        if last not in _GENERIC_TOKENS and len(last) >= 4:
-            tokens.add(last)
-    else:
-        if last:
-            tokens.add(last)
-    return tokens
-
-
-def _token_in_text(token: str, lower_text: str) -> bool:
-    """Whole-word (``\\b``-anchored) case-insensitive presence test."""
-    return re.search(r"\b" + re.escape(token) + r"\b", lower_text) is not None
-
-
-def _match_called_symbol(
-    called_symbols: list[str], lower_text: str, *, strict: bool
-) -> tuple[str, str] | None:
-    """First ``(symbol, matched_token)`` whose token occurs in ``lower_text``.
-
-    Longer tokens are tried first so the most specific match (the full dotted
-    symbol) is preferred and cited.
-    """
-    for symbol in called_symbols:
-        for token in sorted(_symbol_tokens(symbol, strict=strict), key=len, reverse=True):
-            if _token_in_text(token, lower_text):
-                return symbol, token
-    return None
-
-
-def _named_functions(text: str) -> list[str]:
-    """Specific function/feature tokens named in the CVE text (dotted or ``()``)."""
-    out: list[str] = []
-    for match in _NAMED_FUNC_RE.finditer(text):
-        token = match.group(0)
-        if "." in token:
-            if len(token.split(".")[-1]) >= 3:
-                out.append(token)
-        else:
-            out.append(token)
-    return out
 
 
 # -- the conservative gate (applied to BOTH paths) ----------------------------

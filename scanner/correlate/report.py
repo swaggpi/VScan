@@ -16,8 +16,14 @@ from typing import Any
 
 from ..coverage import CoverageReport, compute_coverage
 from ..graph import KnowledgeGraph
-from ..reachability import POTENTIALLY_REACHABLE, REACHABLE, ReachabilityResult
+from ..reachability import (
+    POTENTIALLY_REACHABLE,
+    REACHABLE,
+    UNREACHABLE,
+    ReachabilityResult,
+)
 from . import CorrelationResult, Finding
+from .symbols import advisory_matches_called_symbol
 
 # Upper bound on the serialized OSV ``details`` description, so the bundle/--json
 # payload a UI consumes never carries an unbounded advisory blob. Findings from
@@ -53,25 +59,49 @@ def join_reachability(
     A finding is reachable when its dependency id appears in the repo-wide
     reachable set. The reaching entry points and a shortest example path are
     taken from the per-entrypoint reachability records.
+
+    Also populates the deterministic symbol-level advisory signal
+    (``reached_symbols`` / ``symbol_match``). This is derived FROM the resolved
+    reachability verdict and never changes ``reachable``, the verdict, ranking,
+    or any summary count -- a false "confirmed"/"no_path" would be a critical
+    error, so both stay conservative (see :mod:`scanner.correlate.symbols`).
     """
     reachable_ids = {dep["id"] for dep in reach.repo.reachable_deps}
 
     # dep id -> list of (entrypoint label, example path)
     routes: dict[str, list[tuple[str, list[str]]]] = {}
+    # dep id -> union of reached symbols across every reaching entry point
+    symbols_by_dep: dict[str, set[str]] = {}
     for ep in reach.entrypoints:
         label = f"{ep.method} {ep.path}"
         for dep in ep.reachable_dependencies:
             routes.setdefault(dep.id, []).append((label, list(dep.example_path)))
+            symbols_by_dep.setdefault(dep.id, set()).update(dep.symbols)
 
     for finding in findings:
-        if finding.dependency_id not in reachable_ids:
-            continue
-        finding.reachable = True
-        entries = routes.get(finding.dependency_id, [])
-        finding.reachable_entrypoints = sorted({label for label, _ in entries})
-        if entries:
-            # Shortest example path is the clearest evidence.
-            finding.example_path = min((path for _, path in entries), key=len)
+        dep_id = finding.dependency_id
+        if dep_id in reachable_ids:
+            finding.reachable = True
+            entries = routes.get(dep_id, [])
+            finding.reachable_entrypoints = sorted({label for label, _ in entries})
+            if entries:
+                # Shortest example path is the clearest evidence.
+                finding.example_path = min((path for _, path in entries), key=len)
+            finding.reached_symbols = sorted(symbols_by_dep.get(dep_id, set()))
+
+        # Resolved three-way verdict (identical formula to the serialized audit
+        # payload): the fully-resolved gate already decides when "unreachable"
+        # is sound, so the symbol signal is read off it, never off ``reachable``.
+        verdict = reach.repo.verdict_by_dep.get(dep_id) or (
+            REACHABLE if finding.reachable else POTENTIALLY_REACHABLE
+        )
+        advisory_text = f"{finding.summary} {finding.details or ''}"
+        if verdict == UNREACHABLE:
+            finding.symbol_match = "no_path"
+        elif advisory_matches_called_symbol(finding.reached_symbols, advisory_text):
+            finding.symbol_match = "confirmed"
+        else:
+            finding.symbol_match = "package_reachable"
 
 
 def rank_findings(findings: list[Finding]) -> list[Finding]:
@@ -88,17 +118,85 @@ def rank_findings(findings: list[Finding]) -> list[Finding]:
     )
 
 
+def _apply_taint(
+    findings: list[Finding], taint: dict[str, Any] | None
+) -> None:
+    """Set each finding's derived ``taint``/``taint_evidence`` from a taint map.
+
+    Strictly additive: it only ever sets the two derived taint fields and never
+    touches ``reachable``, the verdict, ``symbol_match`` or ranking. The taint
+    map is per dependency, but a dependency can carry several CVEs about
+    different functions, so a finding is escalated to ``"tainted"`` only when
+    the dependency's flow is proven AND the finding's own advisory text names
+    the tainted sink symbol. Anything else stays ``"not_proven"`` with no
+    evidence. This makes ``tainted`` imply ``symbol_match == "confirmed"``
+    (the sink is a reached call and the advisory matches it). Shared by
+    :func:`audit` and :func:`format_report` so both paths apply the identical
+    logic. A ``None`` map is a no-op.
+    """
+    if taint is None:
+        return
+    for finding in findings:
+        result = taint.get(finding.dependency_id)
+        if result is None:
+            continue
+        evidence = result.to_dict() if hasattr(result, "to_dict") else dict(result)
+        sink_symbol = evidence.get("sink_symbol")
+        advisory_text = f"{finding.summary} {finding.details or ''}"
+        if (
+            evidence.get("verdict") == "tainted"
+            and sink_symbol
+            and advisory_matches_called_symbol([sink_symbol], advisory_text)
+        ):
+            finding.taint = "tainted"
+            finding.taint_evidence = evidence
+        else:
+            finding.taint = "not_proven"
+
+
+def funnel_line(summary: dict[str, Any]) -> str:
+    """The one-line impact funnel, built from the summary counters.
+
+    Single source of truth for the funnel format, reused by the text report and
+    the markdown PR comment. Renders correctly offline (all counts 0).
+    """
+    return (
+        f"Funnel: {summary['total_dependencies']} deps · "
+        f"{summary['total_vulnerabilities']} known CVEs · "
+        f"{summary['reachable_vulnerabilities']} reachable · "
+        f"{summary['symbol_confirmed_vulnerabilities']} vulnerable-function confirmed · "
+        f"{summary['taint_confirmed_vulnerabilities']} exploitable "
+        f"(attacker input reaches the call)"
+    )
+
+
 def build_summary(graph: KnowledgeGraph, findings: list[Finding]) -> dict[str, Any]:
     """Compute the headline counters for the report header."""
     vulnerable_deps = {f.dependency_id for f in findings}
+    dep_nodes = graph.nodes_of_kind("dependency")
     return {
-        "total_dependencies": len(graph.nodes_of_kind("dependency")),
+        # Honest: now that we scan the whole resolved tree this counts direct +
+        # transitive. The two split counters below break it down; the funnel
+        # line still reads ``total_dependencies``.
+        "total_dependencies": len(dep_nodes),
+        "direct_dependencies": sum(
+            1 for n in dep_nodes if n.attrs.get("direct", True) is not False
+        ),
+        "transitive_dependencies": sum(
+            1 for n in dep_nodes if n.attrs.get("direct", True) is False
+        ),
         "vulnerable_dependencies": len(vulnerable_deps),
         "total_vulnerabilities": len(findings),
         "reachable_vulnerabilities": sum(1 for f in findings if f.reachable),
+        "symbol_confirmed_vulnerabilities": sum(
+            1 for f in findings if f.symbol_match == "confirmed"
+        ),
         "kev_vulnerabilities": sum(1 for f in findings if f.kev),
         "high_epss_vulnerabilities": sum(
             1 for f in findings if f.epss is not None and f.epss >= 0.5
+        ),
+        "taint_confirmed_vulnerabilities": sum(
+            1 for f in findings if f.taint == "tainted"
         ),
     }
 
@@ -111,6 +209,7 @@ def audit(
     assessments: list[Any] | None = None,
     triage: list[Any] | None = None,
     usage: list[Any] | None = None,
+    taint: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run the join + ranking and return a JSON-serializable audit payload.
 
@@ -141,8 +240,18 @@ def audit(
     key carrying its own ``"key"`` of ``<dependency_id>`` for UI keying. Advisory
     only. When ``None`` the key is omitted and the payload is byte-for-byte as
     before.
+
+    ``taint`` is the optional DERIVED taint signal (a ``dependency_id ->
+    TaintResult`` map from :func:`scanner.taint.compute_taint`). When provided,
+    each finding's ``taint`` / ``taint_evidence`` is set from the map before
+    ranking and the summary. It is strictly additive -- it never changes
+    ``reachable``, the verdict, ``symbol_match`` or ranking -- and only ever
+    escalates a finding to ``"tainted"`` when a source->sink flow is proven.
     """
     join_reachability(graph, correlation.findings, reach)
+    # Strictly additive: set only the derived taint fields, before ranking and
+    # the summary. Never touches reachable/verdict/symbol_match/ranking.
+    _apply_taint(correlation.findings, taint)
     ranked = rank_findings(correlation.findings)
     verdicts = reach.repo.verdict_by_dep
 
@@ -271,14 +380,23 @@ def format_report(
     graph: KnowledgeGraph,
     correlation: CorrelationResult,
     reach: ReachabilityResult,
+    taint: dict[str, Any] | None = None,
 ) -> str:
-    """Render the full ranked audit as a human-readable text report."""
+    """Render the full ranked audit as a human-readable text report.
+
+    ``taint`` is the optional DERIVED taint map (``dependency_id -> TaintResult``
+    from :func:`scanner.taint.compute_taint`). Supplying it lets the funnel show
+    the exploitable count; it is applied with the same additive logic as
+    :func:`audit` (after the reachability join, before ranking/summary) and never
+    changes ``reachable``, the verdict, ``symbol_match`` or ranking.
+    """
     join_reachability(graph, correlation.findings, reach)
+    _apply_taint(correlation.findings, taint)
     ranked = rank_findings(correlation.findings)
     summary = build_summary(graph, ranked)
 
     lines: list[str] = []
-    lines.append(f"vulnreach audit: {repo_path}")
+    lines.append(f"vscan audit: {repo_path}")
     lines.append("=" * 72)
 
     # Degraded-mode banner (offline or network failure).
@@ -294,6 +412,8 @@ def format_report(
     lines.append(f"  reachable vulnerabilities:     {summary['reachable_vulnerabilities']}")
     lines.append(f"  actively exploited (KEV):      {summary['kev_vulnerabilities']}")
     lines.append(f"  high EPSS (>= 0.5):            {summary['high_epss_vulnerabilities']}")
+    lines.append("")
+    lines.append(funnel_line(summary))
     lines.append("")
 
     lines.extend(_coverage_block(compute_coverage(graph, reach)))

@@ -1,4 +1,4 @@
-"""Knowledge-graph data model for the vulnreach scanner.
+"""Knowledge-graph data model for the vscan scanner.
 
 The scanner emits a typed, JSON-serializable graph describing the *structure* of
 a target repository: its files, dependencies, modules, functions, public entry

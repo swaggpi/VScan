@@ -52,6 +52,12 @@ _MAX_ATTEMPTS = 3
 _BACKOFF_BASE_SECONDS = 0.5
 _BACKOFF_JITTER_SECONDS = 0.1
 
+# Sentinel the chat transport returns when the endpoint rejects the request
+# *shape* with HTTP 400 (e.g. an unsupported ``temperature`` field alongside
+# ``tools``). It is not transient: the caller retries once with a more
+# conservative payload (no ``temperature``) before degrading to ``None``.
+_HTTP_400 = object()
+
 
 @dataclass
 class LLMResult:
@@ -151,6 +157,45 @@ class LLMClient:
             return result.data
         return None
 
+    def chat(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        *,
+        tool_choice: str = "auto",
+    ) -> dict[str, Any] | None:
+        """Run one tool-calling chat turn, or return ``None`` on any error.
+
+        ``messages`` is a full OpenAI-style message list (``system`` / ``user``
+        / ``assistant`` / ``tool`` roles, including assistant turns that carry
+        ``tool_calls`` and the ``tool`` results answering them). ``tools`` is a
+        list of OpenAI function schemas the model may call this turn, or ``None``
+        / ``[]`` to disable tool use (used for the final, tools-off answer).
+
+        On success returns ``{"content": str | None, "tool_calls": list,
+        "raw": dict}`` where ``raw`` is the model's message object exactly as the
+        API returned it (so the caller can append it verbatim and keep the
+        tool-call ids intact) and ``tool_calls`` is that message's
+        ``tool_calls`` list (empty when the model gave a final answer).
+
+        Provider-neutral and never raises: a missing configuration, transport
+        flake, non-2xx status, or unparsable body all collapse to ``None`` so
+        the caller can degrade gracefully. Mirrors :meth:`complete_json`: a
+        first attempt pins ``temperature=0`` for determinism and, on an HTTP 400
+        rejecting that shape, retries once without it.
+        """
+        if not self.available():
+            return None
+
+        result = self._post_chat(messages, tools, tool_choice, with_temperature=True)
+        if result is _HTTP_400:
+            # Not transient: the server rejected the request shape. Retry once
+            # with the more conservative payload (drop ``temperature``).
+            result = self._post_chat(
+                messages, tools, tool_choice, with_temperature=False
+            )
+        return None if (result is None or result is _HTTP_400) else result
+
     # -- internals ------------------------------------------------------------
 
     def _post(
@@ -184,7 +229,7 @@ class LLMClient:
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}",
-            "User-Agent": "vulnreach-agent/0.1",
+            "User-Agent": "vscan-agent/0.1",
         }
         request = urllib.request.Request(
             f"{self.base_url}/chat/completions",
@@ -230,6 +275,103 @@ class LLMClient:
             return LLMResult(data=None, raw=text)
         parsed = self._parse_json_object(content)
         return LLMResult(data=parsed, raw=content)
+
+    def _post_chat(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        tool_choice: str,
+        *,
+        with_temperature: bool,
+    ) -> dict[str, Any] | None | object:
+        """POST a tool-calling chat turn with bounded transient retry.
+
+        Returns the model's parsed message dict (``{content, tool_calls, raw}``)
+        on success, :data:`_HTTP_400` if the endpoint rejects the request shape
+        (so :meth:`chat` can retry without ``temperature``), or ``None`` on a
+        non-retryable transport error or once the retry budget is spent. The
+        retry policy matches :meth:`_post`: HTTP 429/>=500/404 and
+        connection-level flakes are retried with exponential backoff + jitter.
+        """
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "max_tokens": self.max_tokens,
+        }
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = tool_choice
+        if with_temperature:
+            payload["temperature"] = 0
+
+        body = json.dumps(payload).encode("utf-8")
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.api_key}",
+            "User-Agent": "vscan-agent/0.1",
+        }
+        request = urllib.request.Request(
+            f"{self.base_url}/chat/completions",
+            data=body,
+            headers=headers,
+            method="POST",
+        )
+
+        text: str | None = None
+        for attempt in range(_MAX_ATTEMPTS):
+            try:
+                with urllib.request.urlopen(
+                    request, timeout=self.timeout
+                ) as response:
+                    charset = response.headers.get_content_charset() or "utf-8"
+                    text = response.read().decode(charset, errors="replace")
+                break
+            except urllib.error.HTTPError as exc:
+                if exc.code == 400 and with_temperature:
+                    # Not transient: signal the caller to retry a leaner shape.
+                    return _HTTP_400
+                if self._is_transient_status(exc.code) and self._has_retry_left(
+                    attempt
+                ):
+                    self._backoff(attempt)
+                    continue
+                return None
+            except (urllib.error.URLError, TimeoutError, OSError):
+                if self._has_retry_left(attempt):
+                    self._backoff(attempt)
+                    continue
+                return None
+            except ValueError:
+                return None
+
+        if text is None:
+            return None
+        return self._extract_message(text)
+
+    @staticmethod
+    def _extract_message(text: str) -> dict[str, Any] | None:
+        """Pull ``choices[0].message`` out and shape it for :meth:`chat`.
+
+        Returns ``{"content": str | None, "tool_calls": list, "raw": <message>}``
+        or ``None`` when the body is not a well-formed completions response.
+        """
+        try:
+            doc = json.loads(text)
+        except (json.JSONDecodeError, ValueError):
+            return None
+        choices = doc.get("choices") if isinstance(doc, dict) else None
+        if not isinstance(choices, list) or not choices:
+            return None
+        message = choices[0].get("message") if isinstance(choices[0], dict) else None
+        if not isinstance(message, dict):
+            return None
+        content = message.get("content")
+        tool_calls = message.get("tool_calls")
+        return {
+            "content": content if isinstance(content, str) else None,
+            "tool_calls": tool_calls if isinstance(tool_calls, list) else [],
+            "raw": message,
+        }
 
     @staticmethod
     def _is_transient_status(code: int) -> bool:
