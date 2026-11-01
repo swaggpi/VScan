@@ -241,12 +241,15 @@ a { color: inherit; }
 /* ----------------------------------------------------------------- layout */
 .layout {
   flex: 1;
+  position: relative;        /* anchor for the overlaying detail drawer */
+  overflow: hidden;          /* clip the drawer while it is parked off-screen */
   display: grid;
   grid-template-columns: var(--rail-w) minmax(0, 1fr) 0;
   min-height: 0;
-  transition: grid-template-columns 0.18s ease;
 }
-.layout.has-detail { grid-template-columns: var(--rail-w) minmax(0, 1fr) var(--detail-w); }
+/* The drawer overlays the canvas (see .detail), so the stage keeps full width
+   whether or not it is open — opening never re-fits or re-zooms the graph. */
+.layout.has-detail { grid-template-columns: var(--rail-w) minmax(0, 1fr) 0; }
 
 .rail {
   border-right: 1px solid var(--hair);
@@ -432,12 +435,20 @@ a { color: inherit; }
 
 /* ----------------------------------------------------------------- pop-out */
 .detail {
+  position: absolute;
+  top: 0; right: 0; bottom: 0;
+  width: var(--detail-w);
+  z-index: 20;
+  transform: translateX(100%);          /* parked off-screen when closed */
+  transition: transform 0.18s ease;
+  box-shadow: -16px 0 36px -20px rgba(0, 0, 0, 0.75);
   border-left: 1px solid var(--hair);
   background: var(--panel);
   overflow-y: auto;
   min-height: 0;
   min-width: 0;
 }
+.layout.has-detail .detail { transform: none; }
 .detail__inner { min-width: var(--detail-w); }
 
 .detail__empty { padding: 1.4rem 1.1rem; color: var(--ink-dim); }
@@ -534,7 +545,12 @@ a { color: inherit; }
   .layout, .layout.has-detail { grid-template-columns: 1fr; }
   .rail { border-right: none; border-bottom: 1px solid var(--hair); max-height: 15rem; }
   .stage__canvas { min-height: 22rem; }
-  .detail { border-left: none; border-top: 1px solid var(--hair); }
+  /* Below the canvas on narrow screens: static flow, not an overlay. */
+  .detail {
+    position: static; transform: none; width: auto;
+    z-index: auto; box-shadow: none;
+    border-left: none; border-top: 1px solid var(--hair);
+  }
   .layout:not(.has-detail) .detail { display: none; }
   .detail__inner { min-width: 0; }
 }

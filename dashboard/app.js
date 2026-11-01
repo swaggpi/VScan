@@ -435,6 +435,21 @@
         "border-color": ALERT_INK, "border-width": 3.5,
         "overlay-color": ALERT, "overlay-opacity": 0.24, "overlay-padding": 8
       }},
+      /* A lit LIKELY-reachable dep stays VIOLET (advisory), never the cool proven
+         glow or the red proven-reached endpoint — declared last so it wins over
+         node.lit / node.lit[vuln=1] when a likely dep's inferred path is lit. */
+      { selector: 'node.lit[likely = 1]', style: {
+        "background-fill": "solid", "background-color": INFER,
+        "border-color": "#B9A9F7", "border-width": 2.5,
+        "overlay-color": INFER, "overlay-opacity": 0.22, "overlay-padding": 8
+      }},
+      /* A lit inferred HOP stays violet + dashed (never the cool proven line), so
+         an AI-inferred likely path reads as advisory even when highlighted. */
+      { selector: 'edge[inferred].lit', style: {
+        "line-style": "dashed", "line-color": INFER, "target-arrow-color": INFER,
+        "opacity": 1, "width": 2.2,
+        "overlay-color": INFER, "overlay-opacity": 0.14, "overlay-padding": 2
+      }},
 
       /* neighborhood focus (click a node) */
       { selector: ".focus", style: { "opacity": 1 } },
@@ -860,9 +875,45 @@
     selectedEp = null;
     updateEpButtons(null);
     var res = traceReverse(depId);
+    // A likely-reachable dep has no resolved reaching path (its only link is the
+    // AI-inferred hop, which is display-only and never in the trace model). Light
+    // its full inferred `via` chain end-to-end instead, so the path spans the whole
+    // graph (entry -> functions -> dep) rather than leaving the dep unlit.
+    var likely = likelyByDep[depId];
+    if (likely && (!res.entrypoints || !res.entrypoints.length) && lightVia(likely)) {
+      renderReachReverse(depId, res);
+      if (model.index[depId]) showDetail(model.index[depId]);
+      return;
+    }
     energize(res, instant, "source");
     renderReachReverse(depId, res);
     if (model.index[depId]) showDetail(model.index[depId]);
+  }
+
+  // Light the AI-inferred reaching path for a likely-reachable dep: every node on
+  // its `via` chain and the edge between each consecutive pair. The final hop is
+  // the inferred (violet, dashed) edge and the endpoint is the likely dep — both
+  // keep their advisory violet styling (edge[inferred].lit / node.lit[likely=1]),
+  // so a highlighted likely path never reads as a proven one. Returns false when
+  // there is no usable via chain, so the caller falls back to the normal trace.
+  function lightVia(likely) {
+    if (!cy || !likely || !Array.isArray(likely.via) || likely.via.length < 2) return false;
+    clearHighlight();
+    el.stage.classList.add("is-traced");
+    cy.elements().addClass("dim");
+    var via = likely.via, lit = 0;
+    for (var i = 0; i < via.length; i++) {
+      var n = cy.getElementById(via[i]);
+      if (n && n.length) { n.removeClass("dim").addClass("lit"); lit++; }
+    }
+    for (var j = 0; j < via.length - 1; j++) {
+      (function (a, b) {
+        cy.edges().forEach(function (ed) {
+          if (ed.source().id() === a && ed.target().id() === b) ed.removeClass("dim").addClass("lit");
+        });
+      })(via[j], via[j + 1]);
+    }
+    return lit > 0;
   }
 
   function focusNeighborhood(node) {
@@ -1491,28 +1542,29 @@
     if (id) { var n = cy.getElementById(id); if (n && n.length) n.addClass("selected"); }
   }
 
-  // Open or collapse the detail drawer. The grid column animates from 0 to
-  // --detail-w, so when the width actually changes we resize + re-fit the graph
-  // once the transition settles, keeping the pipeline centred in the new space.
+  // Open or collapse the detail drawer. The drawer OVERLAYS the canvas (it no
+  // longer takes a grid column), so opening it never resizes, re-fits or
+  // re-zooms the graph — which is what used to throw the viewport around and
+  // leave edges briefly misaligned. We only slide the graph sideways by roughly
+  // the drawer's width so the right-hand dependency column stays visible beside
+  // it: a pure pan, no zoom change and no cy.resize().
   function setDrawer(open) {
     if (!el.layout) return;
     var was = el.layout.classList.contains("has-detail");
     el.layout.classList.toggle("has-detail", open);
-    if (was !== open) resizeGraph();
+    if (was !== open) panForDrawer(open);
   }
 
-  function resizeGraph() {
+  function panForDrawer(open) {
     if (!cy) return;
-    if (window.requestAnimationFrame) window.requestAnimationFrame(function () { cy.resize(); });
-    setTimeout(function () {
-      if (!cy) return;
-      cy.resize();
-      var eles = (graphFitEles && graphFitEles.length) ? graphFitEles.filter(":visible") : null;
-      if (!eles || !eles.length) eles = cy.nodes(":visible");
-      if (!eles.length) return;
-      if (REDUCED) cy.fit(eles, GRAPH_PAD);
-      else cy.animate({ fit: { eles: eles, padding: GRAPH_PAD } }, { duration: 140, easing: "ease-out" });
-    }, 190);
+    // On narrow screens the drawer stacks below the canvas (static flow), so a
+    // horizontal pan would be wrong — leave the viewport alone.
+    if (window.matchMedia && window.matchMedia("(max-width: 860px)").matches) return;
+    var w = el.detail ? el.detail.getBoundingClientRect().width : 0;
+    var shift = (w || 336) - 24;            // drawer width minus a small gutter
+    var dx = open ? -shift : shift;
+    if (REDUCED) cy.panBy({ x: dx, y: 0 });
+    else cy.animate({ panBy: { x: dx, y: 0 } }, { duration: 160, easing: "ease-out" });
   }
 
   // Assessments whose reaching_entrypoints include this endpoint's label
