@@ -256,13 +256,13 @@
       // the risk ramp: a muted grey-blue neuron. Vulnerable states warm it up
       // (slate → amber → red) in the risk rules below.
       { selector: 'node[kind = "dependency"]', style: {
-        "background-color": "#486177", "background-opacity": 1,
-        "border-color": "#5E7A99", "border-width": 2,
-        "width": 42, "height": 42, "color": "#D7ECF9"
+        "background-color": "#39485A", "background-opacity": 0.88,
+        "border-color": "#4C5E71", "border-width": 2,
+        "width": 42, "height": 42, "color": "#B9CEDE"
       }},
       // Functions — the hidden layers. A dim neuron over the dark ground.
       { selector: 'node[kind = "function"]', style: {
-        "background-color": "#324A62", "background-opacity": 0.9,
+        "background-color": "#2C3F54", "background-opacity": 0.72,
         "border-color": "#4E6B86", "border-width": 2,
         "width": 30, "height": 30
       }},
@@ -274,8 +274,8 @@
       // flow — deliberately NOT amber, so it never reads as the amber "reachable"
       // dependency state.
       { selector: 'node[kind = "entrypoint"]', style: {
-        "background-color": "#4E7CA3", "background-opacity": 0.95,
-        "border-color": "#7FA8C6", "border-width": 2.5,
+        "background-color": "#4C8FC7", "background-opacity": 1,
+        "border-color": "#9ECAEE", "border-width": 2.5,
         "width": 42, "height": 42, "color": "#CDE2F2", "font-weight": 600
       }},
 
@@ -315,8 +315,8 @@
          with red (background-fill:solid resets any prior fill). */
       { selector: 'node[vuln = 1]', style: {
         "background-fill": "solid",
-        "background-color": "#5E7A99", "background-opacity": 1,
-        "border-color": "#86A0BC", "border-width": 1.5, "color": "#C7D7E6"
+        "background-color": "#43566A", "background-opacity": 0.82,
+        "border-color": "#56697D", "border-width": 1.5, "color": "#9FB2C3"
       }},
       { selector: 'node[vreach = 1]', style: {
         "background-fill": "solid",

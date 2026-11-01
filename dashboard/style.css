@@ -35,9 +35,9 @@
   --alert-ink:  #F7A6A0;
 
   /* "Vulnerable, not reached" — a low-concern slate, cool and clearly not red */
-  --slate:      #5E7A99;
-  --slate-ink:  #86A0BC;
-  --slate-soft: rgba(94, 122, 153, 0.18);
+  --slate:      #43566A;
+  --slate-ink:  #8CA2B8;
+  --slate-soft: rgba(67, 86, 106, 0.22);
 
   /* AI-inferred reachability — violet, held apart from amber/red/slate */
   --infer:      #8E7BF5;
