@@ -1,69 +1,57 @@
 /* ===========================================================================
-   VScan · reachability viewer
-   Aesthetic: engineering schematic / blueprint. The repo is drawn as a wiring
-   diagram of code paths; one hot signal marks live reachability only.
+   VScan · minimal attack-surface overview
+   The graph is the star. The chrome stays lean and quiet; all deep/technical
+   detail (paths, snippets, rationale) is delegated to the chat agent.
+   Dark blueprint theme, held quiet.
    =========================================================================== */
 
 :root {
   /* Blueprint ground */
-  --ground:      #0B2239;  /* deep architectural blue */
-  --ground-sink: #081A2C;  /* recessed wells (graph stage) */
-  --panel:       #0E2A45;  /* raised rail / cards */
+  --ground:      #0B2239;
+  --ground-sink: #081A2C;
+  --panel:       #0E2A45;
   --panel-edge:  rgba(120, 178, 224, 0.22);
-  --hair:        rgba(120, 178, 224, 0.14); /* hairline rules */
-  --grid:        rgba(120, 178, 224, 0.09); /* faint cyan grid lines */
+  --hair:        rgba(120, 178, 224, 0.14);
+  --grid:        rgba(120, 178, 224, 0.08);
 
   /* Ink */
-  --ink:      #CFE4F2;  /* pale cyan-white */
+  --ink:      #CFE4F2;
   --ink-dim:  rgba(207, 228, 242, 0.62);
   --ink-mut:  rgba(207, 228, 242, 0.38);
 
-  /* Structure accents (cyan family, quiet) */
-  --dep:   #6FB8E0;  /* dependency fill */
-  --fn:    #9FC6E0;  /* function outline */
-  --muted: #4E7493;  /* module / file / doc */
+  /* Structure accents */
+  --dep:   #6FB8E0;
+  --fn:    #9FC6E0;
+  --muted: #4E7493;
 
-  /* The one hot signal — reachability + public entry points only */
-  --signal:      #F2B134;  /* amber/gold */
+  /* The amber reachability signal */
+  --signal:      #F2B134;
   --signal-soft: rgba(242, 177, 52, 0.16);
-  --signal-glow: rgba(242, 177, 52, 0.55);
-  --signal-ink:  #F6D28A;  /* lighter amber for readable badge text */
+  --signal-ink:  #F6D28A;
 
-  /* Severity accent — vulnerability only. A warm red-orange, held apart from
-     the amber reachability signal so the two read as distinct facts: amber =
-     "reached", red = "vulnerable", and a node wearing both is the top problem. */
-  --alert:      #F2654E;  /* warning red-orange (KEV / critical) */
-  --alert-soft: rgba(242, 101, 78, 0.16);
-  --alert-glow: rgba(242, 101, 78, 0.5);
-  --alert-ink:  #F79885;  /* lighter tint for text on the dark ground */
+  /* Severity red — the ONLY red, reserved for proven-exploitable */
+  --alert:      #E5484D;
+  --alert-soft: rgba(229, 72, 77, 0.16);
+  --alert-ink:  #F7A6A0;
 
-  /* Triage "likely safe" — a cool green, distinct from amber and red. */
-  --safe:      #4FB286;  /* exploitability triage: likely unaffected */
-  --safe-ink:  #7FD3AC;
+  /* "Vulnerable, not reached" — a low-concern slate, cool and clearly not red */
+  --slate:      #5E7A99;
+  --slate-ink:  #86A0BC;
+  --slate-soft: rgba(94, 122, 153, 0.18);
 
-  /* AI-inferred reachability (Phase 2) — a violet held apart from amber
-     (reachable), red (exploitable) and green (triage-safe), so an inferred edge
-     or likely-reachable marker is never mistaken for a deterministic verdict. */
-  --infer:      #A98BF0;
-  --infer-soft: rgba(169, 139, 240, 0.14);
-  --infer-glow: rgba(169, 139, 240, 0.5);
+  /* AI-inferred reachability — violet, held apart from amber/red/slate */
+  --infer:      #8E7BF5;
+  --infer-soft: rgba(142, 123, 245, 0.14);
   --infer-ink:  #C6B2F6;
 
-  /* ADVISORY code-level attack surface (Tier-A AI pen-tester) — a hot magenta/rose
-     held apart from amber (reachable), red (exploitable) AND violet (likely), so an
-     AI-identified code-level HYPOTHESIS is never read as a deterministic verdict. */
-  --danger:      #FF4FA3;
-  --danger-soft: rgba(255, 79, 163, 0.12);
-  --danger-glow: rgba(255, 79, 163, 0.5);
-  --danger-ink:  #FF9AC6;
-  /* Severity grading (matches the canvas DANGER_SEV_COLOR map in app.js). */
-  --danger-crit: #FF2E86;
-  --danger-high: #FF5FA2;
-  --danger-med:  #FF84B8;
-  --danger-low:  #E59BC4;
+  /* AI code-level risk — magenta-purple, held apart from everything above and
+     in particular clearly NOT the red */
+  --danger:      #E24FC4;
+  --danger-soft: rgba(226, 79, 196, 0.12);
+  --danger-ink:  #F3A6E0;
 
-  --radius: 4px;
-  --rail-w: 20rem;
+  --radius: 5px;
+  --rail-w: 19rem;
   --detail-w: 21rem;
 
   --f-display: "Space Grotesk", system-ui, sans-serif;
@@ -72,7 +60,6 @@
 }
 
 * { box-sizing: border-box; }
-
 html, body { height: 100%; }
 
 body {
@@ -80,7 +67,6 @@ body {
   font-family: var(--f-body);
   color: var(--ink);
   background: var(--ground);
-  /* Blueprint grid wash behind the whole page */
   background-image:
     linear-gradient(var(--grid) 1px, transparent 1px),
     linear-gradient(90deg, var(--grid) 1px, transparent 1px);
@@ -89,1847 +75,478 @@ body {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+  overflow-x: hidden;
 }
+
+a { color: inherit; }
 
 .skip-link {
   position: absolute;
   left: -999px;
   top: 0;
   background: var(--signal);
-  color: var(--ground);
+  color: #0B2239;
   padding: 0.5rem 0.9rem;
-  font: 600 0.82rem/1 var(--f-mono);
-  z-index: 50;
+  z-index: 100;
+  border-radius: 0 0 var(--radius) 0;
+  font-weight: 600;
 }
-.skip-link:focus { left: 0.75rem; top: 0.75rem; }
+.skip-link:focus { left: 0; }
 
-:focus-visible {
-  outline: 2px solid var(--signal);
-  outline-offset: 2px;
-  border-radius: 2px;
-}
-
-/* ---------------------------------------------------------------- title block */
-/* One slim bar: the mark on the left, the scan selector on the right. The stat
-   tiles and the instructional paragraph are gone — the funnel strip below is the
-   headline value. */
+/* ----------------------------------------------------------------- header */
 .titleblock {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  flex-wrap: wrap; /* the Meta mark made the bar wider than ~900px viewports */
-  gap: 0.5rem 1.5rem;
-  padding: 0.6rem 1.4rem;
-  border-bottom: 1px solid var(--panel-edge);
-  background: linear-gradient(180deg, rgba(14,42,69,0.92), rgba(11,34,57,0.92));
-  backdrop-filter: blur(2px);
+  gap: 1rem;
+  padding: 0.7rem 1.1rem;
+  border-bottom: 1px solid var(--hair);
+  background: linear-gradient(180deg, rgba(14, 42, 69, 0.9), rgba(11, 34, 57, 0.6));
+  flex-wrap: wrap;
 }
-
-.titleblock__id {
-  display: flex;
-  align-items: baseline;
-  gap: 0.65rem;
-}
+.titleblock__id { display: flex; align-items: baseline; gap: 0.85rem; flex-wrap: wrap; }
 .wordmark {
-  font: 700 1.3rem/1 var(--f-display);
-  letter-spacing: -0.02em;
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 1.25rem;
+  letter-spacing: 0.02em;
   color: var(--ink);
 }
-.wordmark::before {
-  /* schematic tick: the signal lives in the mark, quietly */
-  content: "";
-  display: inline-block;
-  width: 7px; height: 7px;
-  margin-right: 0.5rem;
-  background: var(--signal);
-  box-shadow: 0 0 8px var(--signal-glow);
-  vertical-align: 0.1em;
-}
-.eyebrow {
-  font: 500 0.6rem/1 var(--f-mono);
-  letter-spacing: 0.26em;
-  text-transform: uppercase;
-  color: var(--signal);
-}
-
-.titleblock__load { display: flex; align-items: center; gap: 0.9rem; }
-
-/* Segmented control: the three ways in. A schematic selector switch — one
-   throw lit amber, the rest quiet. */
-.viewswitch {
+.meta-mark {
   display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.66rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  font-weight: 500;
+}
+.meta-mark__dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--infer);
+  box-shadow: 0 0 7px var(--infer);
+}
+
+.titleblock__load { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+
+.viewswitch { display: inline-flex; align-items: center; gap: 0.3rem; position: relative; }
+.seg {
+  appearance: none;
+  border: 1px solid var(--panel-edge);
+  background: rgba(14, 42, 69, 0.6);
+  color: var(--ink-dim);
+  font-family: var(--f-body);
+  font-size: 0.8rem;
+  font-weight: 500;
+  padding: 0.34rem 0.7rem;
+  border-radius: var(--radius);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.seg:hover { color: var(--ink); border-color: var(--signal); }
+.seg[aria-pressed="true"] {
+  background: var(--signal-soft);
+  border-color: var(--signal);
+  color: var(--signal-ink);
+}
+.seg--more { list-style: none; display: inline-flex; align-items: center; gap: 0.25rem; }
+.seg--more::-webkit-details-marker { display: none; }
+.moremenu { position: relative; }
+.moremenu__caret { font-size: 0.7rem; }
+.moremenu__panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.35rem);
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.5rem;
+  background: var(--panel);
   border: 1px solid var(--panel-edge);
   border-radius: var(--radius);
-  overflow: hidden;
-  background: var(--ground-sink);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  z-index: 40;
+  min-width: 11rem;
 }
-.seg {
-  position: relative;
+.seg--menu { text-align: left; width: 100%; }
+.seg--file { position: relative; display: inline-flex; align-items: center; }
+.seg--file input { position: absolute; opacity: 0; width: 0; height: 0; }
+
+.askvscan {
   display: inline-flex;
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: center;
-  gap: 0.05rem;
-  cursor: pointer;
-  padding: 0.42rem 0.8rem;
-  border: 0;
-  border-left: 1px solid var(--hair);
-  background: transparent;
-  color: var(--ink-dim);
-  font: 500 0.78rem/1.05 var(--f-mono);
-  transition: color 0.15s, background 0.15s;
+  align-items: center;
+  gap: 0.3rem;
+  text-decoration: none;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--infer-ink);
+  border: 1px solid var(--infer);
+  background: var(--infer-soft);
+  padding: 0.34rem 0.75rem;
+  border-radius: var(--radius);
+  transition: background 0.15s ease;
 }
-.seg:first-child { border-left: 0; }
-.seg:hover:not([disabled]) { color: var(--ink); background: var(--signal-soft); }
-.seg[aria-pressed="true"] { color: var(--ground); background: var(--signal); }
-.seg[aria-pressed="true"] .seg__sub { color: rgba(11,34,57,0.7); }
-.seg[disabled] { opacity: 0.4; cursor: not-allowed; }
-.seg__sub {
-  font: 500 0.56rem/1 var(--f-mono);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--ink-mut);
-}
-.seg--file { position: relative; overflow: hidden; }
-.seg--file input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
-.seg--file:focus-within { outline: 2px solid var(--signal); outline-offset: -2px; }
+.askvscan:hover { background: rgba(169, 139, 240, 0.22); }
+
 .scanname {
-  order: -1; /* a quiet descriptive label, to the left of the selector */
-  font: 400 0.68rem/1.2 var(--f-mono);
+  font-family: var(--f-mono);
+  font-size: 0.68rem;
   color: var(--ink-mut);
-  text-align: right;
-  max-width: 30ch;
+  max-width: 16rem;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* "More" scans dropdown — a de-emphasised throw on the selector that opens a
-   small floating panel with the tucked scans, so only the two headline scans
-   compete up front. The panel stacks its segments vertically. */
-.moremenu { position: relative; display: inline-flex; }
-.moremenu > summary.seg--more {
-  list-style: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-  height: 100%;
-  color: var(--ink-mut);
-}
-.moremenu > summary::-webkit-details-marker { display: none; }
-.moremenu > summary.seg--more:hover { color: var(--ink); background: var(--signal-soft); }
-.moremenu[open] > summary.seg--more { color: var(--ink); background: var(--signal-soft); }
-.moremenu__caret { font-size: 0.7em; transition: transform 0.15s; }
-.moremenu[open] .moremenu__caret { transform: rotate(180deg); }
-.moremenu__panel {
-  position: absolute;
-  top: calc(100% + 0.35rem);
-  right: 0;
-  z-index: 40;
-  display: flex;
-  flex-direction: column;
-  min-width: 12rem;
-  border: 1px solid var(--panel-edge);
-  border-radius: var(--radius);
-  background: var(--ground-sink);
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.42);
-  overflow: hidden;
-}
-.moremenu__panel .seg--menu {
-  flex-direction: row;
-  width: 100%;
-  border-left: 0;
-  border-top: 1px solid var(--hair);
-}
-.moremenu__panel .seg--menu:first-child { border-top: 0; }
-
-/* ---------------------------------------------------------------- impact funnel */
-/* The headline strip under the header, shown only in bundle mode: five stages
-   narrowing left -> right, from every dependency down to the proven-exploitable
-   few. Neutral chips for the broad early stages; amber for "confirmed", a red
-   glow for "exploitable" — so the eye lands on the narrow, dangerous end. */
+/* ----------------------------------------------------------------- funnel */
 .funnel {
   display: flex;
   align-items: stretch;
-  gap: 0.5rem;
-  padding: 0.7rem 1.4rem;
-  border-bottom: 1px solid var(--panel-edge);
-  background: linear-gradient(180deg, rgba(14,42,69,0.55), rgba(11,34,57,0.55));
+  gap: 0.2rem;
+  padding: 0.55rem 1.1rem 0.2rem;
+  flex-wrap: wrap;
 }
-.funnel[hidden] { display: none; }
+.funnel__arrow { align-self: center; color: var(--ink-mut); font-size: 0.85rem; }
 .funnel__stage {
-  flex: 1 1 0;
   display: flex;
   flex-direction: column;
-  align-items: center;
   justify-content: center;
-  text-align: center;
-  gap: 0.15rem;
-  padding: 0.5rem 0.6rem;
+  padding: 0.3rem 0.65rem;
   border: 1px solid var(--hair);
   border-radius: var(--radius);
-  background: var(--ground-sink);
+  background: rgba(14, 42, 69, 0.4);
+  min-width: 5.5rem;
 }
-/* Narrowing ramp: each stage a little slimmer than the last. */
-.funnel__stage--i0 { flex-grow: 1.9; }
-.funnel__stage--i1 { flex-grow: 1.5; }
-.funnel__stage--i2 { flex-grow: 1.2; }
-.funnel__stage--i3 { flex-grow: 0.95; }
-.funnel__stage--i4 { flex-grow: 0.78; }
-.funnel__num {
-  font: 500 1.7rem/1 var(--f-display);
-  font-variant-numeric: tabular-nums;
-  color: var(--ink);
-}
-.funnel__label {
-  font: 500 0.6rem/1.25 var(--f-mono);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--ink-dim);
-}
-.funnel__sub {
-  font: 400 0.56rem/1.2 var(--f-mono);
-  color: var(--ink-mut);
-  max-width: 18ch;
-}
-.funnel__arrow {
-  flex: none;
-  align-self: center;
-  font: 400 1rem/1 var(--f-mono);
-  color: var(--ink-mut);
-}
-/* Tone: the two confirmed/exploitable stages carry the risk signal. */
-.funnel__stage--confirmed { border-color: var(--hair); }
+.funnel__num { font-family: var(--f-mono); font-size: 1.05rem; font-weight: 600; color: var(--ink); line-height: 1.1; }
+.funnel__label { font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-dim); }
+.funnel__sub { font-size: 0.6rem; color: var(--ink-mut); margin-top: 0.12rem; }
+.funnel__stage--confirmed { border-color: rgba(242, 177, 52, 0.4); }
 .funnel__stage--confirmed .funnel__num { color: var(--signal-ink); }
-.funnel__stage--exploit { border-color: var(--hair); }
+.funnel__stage--exploit { border-color: rgba(242, 101, 78, 0.5); background: var(--alert-soft); }
 .funnel__stage--exploit .funnel__num { color: var(--alert-ink); }
-/* A zero count still renders — neutral, never a false alarm (redash: 0 exploitable). */
-.funnel__stage.is-zero .funnel__num { color: var(--ink-mut); }
-.funnel__stage--confirmed.is-zero { border-color: var(--hair); }
-.funnel__stage--exploit.is-zero {
-  border-color: var(--hair);
-  background: var(--ground-sink);
-  box-shadow: none;
-}
+.funnel__stage.is-zero { opacity: 0.5; }
 
-/* ---------------------------------------------------------------- layout */
+.noise {
+  margin: 0;
+  padding: 0.1rem 1.1rem 0.5rem;
+  font-size: 0.74rem;
+  color: var(--ink-dim);
+  line-height: 1.4;
+}
+.noise b { color: var(--ink); font-weight: 600; }
+.noise__pct { color: var(--signal-ink); }
+
+/* ----------------------------------------------------------------- layout */
 .layout {
   flex: 1;
   display: grid;
-  /* The detail column is zero-width until a node is selected, so the graph fills
-     the space; it opens to --detail-w when a datasheet is shown. */
   grid-template-columns: var(--rail-w) minmax(0, 1fr) 0;
   min-height: 0;
   transition: grid-template-columns 0.18s ease;
 }
-.layout.has-detail {
-  grid-template-columns: var(--rail-w) minmax(0, 1fr) var(--detail-w);
-}
+.layout.has-detail { grid-template-columns: var(--rail-w) minmax(0, 1fr) var(--detail-w); }
 
 .rail {
-  border-right: 1px solid var(--panel-edge);
-  background: var(--panel);
+  border-right: 1px solid var(--hair);
+  padding: 0.9rem 0.85rem;
   overflow-y: auto;
-  display: flex;
-  flex-direction: column;
+  min-height: 0;
 }
-
-.panel { padding: 0.85rem 1.05rem; border-bottom: 1px solid var(--hair); }
-.panel--filters { margin-top: auto; }
-/* Compact, uppercase section headers — one quiet label style shared by the rail
-   and the datasheet, so the whole UI reads as a set of small, scannable cards. */
 .panel__h {
-  margin: 0 0 0.1rem;
-  font: 600 0.66rem/1.2 var(--f-mono);
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--ink-dim);
-}
-.panel__note, .panel__empty {
-  margin: 0.2rem 0 0.7rem;
-  font-size: 0.74rem;
-  line-height: 1.4;
-  color: var(--ink-mut);
-}
-.panel__empty { margin-bottom: 0; }
-
-/* ---------------------------------------------------------------- entry points */
-.eplist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.4rem; }
-.ep {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  align-items: center;
-  gap: 0.6rem;
-  width: 100%;
-  text-align: left;
-  padding: 0.55rem 0.65rem;
-  border: 1px solid var(--hair);
-  border-left: 2px solid var(--muted);
-  border-radius: var(--radius);
-  background: var(--ground-sink);
-  color: var(--ink);
-  cursor: pointer;
-  font-family: var(--f-mono);
-  transition: border-color 0.15s, background 0.15s, transform 0.08s;
-}
-.ep:hover { border-color: var(--panel-edge); }
-.ep[aria-pressed="true"] {
-  border-color: var(--signal);
-  border-left-color: var(--signal);
-  background: var(--signal-soft);
-}
-.ep__method {
-  font: 600 0.64rem/1 var(--f-mono);
-  letter-spacing: 0.06em;
-  padding: 0.25rem 0.4rem;
-  border-radius: 2px;
-  color: var(--ground);
-  background: var(--dep);
-}
-.ep[aria-pressed="true"] .ep__method { background: var(--signal); }
-.ep__path { font-size: 0.82rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-/* ---------------------------------------------------------------- reachable panel */
-.reach-head {
-  font-size: 0.78rem;
-  color: var(--ink-dim);
-  margin: 0 0 0.75rem;
-  line-height: 1.45;
-}
-.reach-head b { color: var(--signal); font-weight: 600; }
-.deplist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.45rem; }
-.dep {
-  padding: 0.5rem 0.6rem;
-  border: 1px solid var(--hair);
-  border-left: 2px solid var(--signal);
-  border-radius: var(--radius);
-  background: var(--ground-sink);
-}
-.dep__name { font: 600 0.82rem/1.2 var(--f-mono); color: var(--ink); word-break: break-all; }
-.dep__meta { margin-top: 0.2rem; font: 400 0.68rem/1.2 var(--f-mono); color: var(--ink-dim); display: flex; gap: 0.5rem; flex-wrap: wrap; }
-.dep__eco {
-  padding: 0.1rem 0.35rem;
-  border: 1px solid var(--hair);
-  border-radius: 2px;
-  color: var(--ink-mut);
-}
-.dep__ver { color: var(--signal); }
-.reach-none { font-size: 0.78rem; color: var(--ink-dim); line-height: 1.45; margin: 0; }
-
-/* ---------------------------------------------------------------- vulnerability findings */
-.vuln-head {
-  margin: 0 0 0.75rem;
-  font-size: 0.78rem;
-  line-height: 1.45;
-  color: var(--ink-dim);
-}
-.vuln-head b { color: var(--alert-ink); font-weight: 600; }
-.vuln-head .is-signal { color: var(--signal); }
-
-.vulnlist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.45rem; }
-
-/* A finding card. The left rule encodes the verdict: a muted hairline for a
-   non-reached finding, the amber signal for a reachable one. */
-.vuln {
-  padding: 0.5rem 0.6rem;
-  border: 1px solid var(--hair);
-  border-left: 2px solid var(--muted);
-  border-radius: var(--radius);
-  background: var(--ground-sink);
-}
-.vuln--reachable {
-  border-left-color: var(--signal);
-  background: linear-gradient(90deg, var(--alert-soft), var(--ground-sink) 72%);
-}
-/* A reachable finding is actionable: clicking it lights its path. */
-.vuln--reachable { cursor: pointer; }
-.vuln--reachable:hover { border-color: var(--alert); }
-.vuln--reachable:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
-
-.vuln__top { display: flex; align-items: baseline; justify-content: space-between; gap: 0.5rem; }
-.vuln__name { font: 600 0.82rem/1.25 var(--f-mono); color: var(--ink); word-break: break-all; }
-.vuln__ver { color: var(--signal); font-weight: 500; }
-.vuln__cve { margin-top: 0.25rem; font: 500 0.7rem/1.3 var(--f-mono); color: var(--alert-ink); word-break: break-all; }
-
-.vuln__tags { margin-top: 0.3rem; display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; }
-.tag {
-  font: 500 0.6rem/1 var(--f-mono);
-  letter-spacing: 0.04em;
-  padding: 0.18rem 0;
-  border-radius: 2px;
-  border: none;
-  color: var(--ink-dim);
-  text-transform: uppercase;
-}
-.tag--sev { color: var(--alert-ink); }
-.tag--sev-critical { color: var(--alert-ink); font-weight: 700; }
-.tag--kev { color: var(--alert-ink); font-weight: 700; }
-.tag--reach { color: var(--signal-ink); }
-
-/* Advisory exploitability-triage badges — a verdict distinct from the severity
-   and reachability tags: "exploitable" (the code calls the vulnerable surface),
-   "likely safe" (it demonstrably does not), or "unsure". */
-.tri {
-  font: 600 0.58rem/1 var(--f-mono);
-  letter-spacing: 0.05em;
-  padding: 0.18rem 0;
-  border-radius: 2px;
-  border: none;
-  color: var(--ink-dim);
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-.tri--affected { color: var(--alert-ink); font-weight: 700; }
-.tri--safe { color: var(--safe-ink); }
-.tri--uncertain { color: var(--ink-mut); }
-
-/* Per-CVE triage rationale under a finding row in the left rail. */
-.cve__triage {
-  margin-top: 0.3rem;
-  font: 400 0.7rem/1.45 var(--f-body);
-  color: var(--ink-dim);
-  border-left: 2px solid var(--panel-edge);
-  padding-left: 0.5rem;
-}
-.cve__triage-h {
-  font: 600 0.58rem/1 var(--f-mono);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--ink-mut);
-  margin-right: 0.3rem;
-}
-
-/* Exploitability section in the dependency detail panel. */
-.tri-lead { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; margin-bottom: 0.35rem; }
-.tri-conf {
-  font: 500 0.62rem/1 var(--f-mono);
-  letter-spacing: 0.04em;
-  color: var(--ink-mut);
-  text-transform: uppercase;
-}
-.tri-detail { margin-top: 0.4rem; }
-
-/* Advisory dynamic-usage badges (dependency detail panel): a quiet, cyan-family
-   family distinct from the red/amber of severity/triage — this tier describes
-   usage, it is not a severity signal. */
-.use {
-  font: 600 0.58rem/1 var(--f-mono);
-  letter-spacing: 0.05em;
-  padding: 0.18rem 0;
-  border-radius: 2px;
-  border: none;
-  color: var(--ink-dim);
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-.use--infra      { color: var(--dep); }
-.use--dynamic    { color: var(--signal-ink); }
-.use--dev        { color: var(--ink-mut); }
-.use--transitive { color: var(--fn); }
-.use--none       { color: var(--ink-mut); }
-.use--uncertain  { color: var(--ink-mut); }
-
-/* Symbol-level reachability badges — DETERMINISTIC (not advisory). "confirmed"
-   means a resolved call reaches the vulnerable function (amber signal); a
-   package-only reach is dim; no path is the green all-clear. Parallels .use/.tri. */
-.sym {
-  font: 600 0.58rem/1 var(--f-mono);
-  letter-spacing: 0.05em;
-  padding: 0.18rem 0;
-  border-radius: 2px;
-  border: none;
-  color: var(--ink-dim);
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-.sym--confirmed { color: var(--signal-ink); }
-.sym--package   { color: var(--ink-mut); }
-.sym--none      { color: var(--safe-ink); }
-
-/* Taint badges — DETERMINISTIC. "tainted" is the strongest signal on the page:
-   attacker input provably reaches the call, so it wears the filled alert glow
-   (parallels .tri--affected). "not_proven" is a quiet, dim note. */
-.taint {
-  font: 600 0.58rem/1 var(--f-mono);
-  letter-spacing: 0.05em;
-  padding: 0.18rem 0;
-  border-radius: 2px;
-  border: none;
-  color: var(--ink-dim);
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-.taint--tainted { color: var(--alert-ink); font-weight: 700; }
-.taint--none { color: var(--ink-mut); }
-
-/* Deterministic escalation ladder (dependency datasheet): reachable -> vulnerable
-   function reached -> exploitable. Each rung is a status dot + the stage name +
-   a detail badge; a reached rung lights in its tone, the rest stay dim. */
-.escal { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.1rem; }
-.escal__step {
-  position: relative;
-  display: flex;
-  align-items: flex-start;
-  gap: 0.6rem;
-  padding: 0.35rem 0 0.35rem 0.1rem;
-}
-/* A connecting spine between the dots, so the three rungs read as one ladder. */
-.escal__step::before {
-  content: "";
-  position: absolute;
-  left: 4px; top: 1.1rem; bottom: -0.35rem;
-  width: 1px;
-  background: var(--hair);
-}
-.escal__step:last-child::before { display: none; }
-.escal__dot {
-  flex: none;
-  width: 9px; height: 9px;
-  margin-top: 0.3rem;
-  border-radius: 50%;
-  border: 1.5px solid var(--muted);
-  background: var(--ground-sink);
-  z-index: 1;
-}
-.escal__text { display: flex; flex-direction: column; gap: 0.25rem; }
-.escal__label {
-  font: 500 0.78rem/1.2 var(--f-mono);
-  color: var(--ink-mut);
-}
-.escal__detail { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; }
-.escal__none { font: 500 0.66rem/1 var(--f-mono); color: var(--ink-mut); text-transform: uppercase; letter-spacing: 0.05em; }
-/* A proven rung lights up, strongest at the dangerous end. */
-.escal__step.is-on .escal__label { color: var(--ink); }
-.escal__step--reach .escal__dot { border-color: var(--signal); background: var(--signal); box-shadow: 0 0 6px var(--signal-glow); }
-.escal__step--sym .escal__dot   { border-color: var(--signal); background: var(--signal); box-shadow: 0 0 7px var(--signal-glow); }
-.escal__step--taint .escal__dot { border-color: var(--alert); background: var(--alert); box-shadow: 0 0 9px var(--alert-glow); }
-.escal__step--taint.is-on .escal__label { color: var(--alert-ink); }
-
-/* The taint evidence trail: attacker source -> node path -> vulnerable sink. */
-.taint-ev {
-  margin-top: 0.1rem;
-  padding: 0.5rem 0.6rem;
-  border: 1px solid var(--hair);
-  border-left: 2px solid var(--alert);
-  border-radius: var(--radius);
-  background: linear-gradient(90deg, var(--alert-soft), var(--ground-sink) 72%);
-}
-.taint-ev__h {
-  font: 600 0.58rem/1 var(--f-mono);
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--alert-ink);
-  margin-bottom: 0.35rem;
-}
-.taint-ev__flow { font: 400 0.68rem/1.5 var(--f-mono); color: var(--ink-dim); word-break: break-word; }
-.taint-ev__src  { color: var(--alert-ink); font-weight: 600; }
-.taint-ev__sink { color: var(--alert-ink); font-weight: 600; }
-.taint-ev__arrow { color: var(--ink-mut); }
-.taint-ev .path-steps { color: var(--ink-mut); }
-.taint-ev .dim-note { margin-top: 0.3rem; }
-
-/* Evidence list under the usage section: file:line + a trimmed snippet. */
-.evlist { list-style: none; margin: 0.4rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 0.45rem; }
-.ev__loc { font: 500 0.68rem/1.3 var(--f-mono); color: var(--ink-dim); word-break: break-all; }
-
-.vuln__path {
-  margin-top: 0.35rem;
-  font: 400 0.66rem/1.4 var(--f-mono);
-  color: var(--ink-dim);
-}
-.vuln__path b { color: var(--signal); font-weight: 600; }
-.vuln__path .path-steps { color: var(--ink-mut); word-break: break-all; }
-.vuln__verdict { margin-top: 0.35rem; font: 400 0.66rem/1.4 var(--f-mono); color: var(--ink-mut); }
-
-.vuln-note { font-size: 0.78rem; color: var(--ink-dim); line-height: 1.45; margin: 0; }
-.vuln-note--warn { color: var(--alert-ink); }
-
-/* ---------------------------------------------------------------- filters */
-.filters { display: flex; flex-wrap: wrap; gap: 0.4rem; }
-.chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  padding: 0.35rem 0.6rem;
-  border: 1px solid var(--hair);
-  border-radius: var(--radius);
-  background: var(--ground-sink);
-  color: var(--ink-dim);
-  cursor: pointer;
-  font: 500 0.72rem/1 var(--f-mono);
-  letter-spacing: 0.02em;
-  transition: color 0.15s, border-color 0.15s, opacity 0.15s;
-}
-.chip[aria-pressed="true"] { color: var(--ink); border-color: var(--panel-edge); }
-.chip[aria-pressed="false"] { opacity: 0.5; }
-.chip i { width: 9px; height: 9px; border-radius: 50%; }
-
-/* "View" menu: the developer-oriented node-kind toggles, collapsed into an
-   unobtrusive disclosure so they no longer crowd the funnel + graph up front. */
-.viewmenu { display: block; }
-.viewmenu__sum {
-  list-style: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  cursor: pointer;
-  color: var(--ink-mut);
-}
-.viewmenu__sum::-webkit-details-marker { display: none; }
-.viewmenu__sum:hover .panel__h { color: var(--ink); }
-.viewmenu__sum .panel__h { margin: 0; }
-.viewmenu__gear { font-size: 0.8rem; line-height: 1; transition: transform 0.2s; }
-.viewmenu[open] .viewmenu__gear { transform: rotate(60deg); }
-.viewmenu__note { margin: 0.45rem 0 0.55rem; }
-.viewmenu .filters { margin-top: 0.1rem; }
-.viewmenu__sum:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
-
-/* ---------------------------------------------------------------- stage */
-.stage {
-  position: relative;
-  background: var(--ground-sink);
-  overflow: hidden;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-/* The canvas sits below an optional focused-view banner; absolute overlays
-   (graph, grid, legend, hint, tooltip) anchor to this box, not the whole stage. */
-.stage__canvas {
-  position: relative;
-  flex: 1;
-  min-height: 0;
-}
-
-/* Focused-view notice: shown only when a large repo is reduced to its
-   security-relevant subgraph. A hairline strip, not a modal — it states the
-   curation plainly and gets out of the way. */
-.stage__banner {
-  display: flex;
-  align-items: baseline;
-  gap: 0.6rem 0.9rem;
-  flex-wrap: wrap;
-  padding: 0.6rem 1.1rem;
-  border-bottom: 1px solid var(--panel-edge);
-  background: linear-gradient(90deg, var(--alert-soft), rgba(14,42,69,0.6) 60%);
-  font: 400 0.74rem/1.4 var(--f-mono);
-  color: var(--ink-dim);
-}
-.stage__banner[hidden] { display: none; }
-.stage__banner .banner__lead {
+  margin: 0 0 0.2rem;
+  font-family: var(--f-display);
+  font-size: 0.95rem;
   font-weight: 600;
   color: var(--ink);
-  letter-spacing: 0.01em;
 }
-.stage__banner .banner__lead::before {
-  content: "";
-  display: inline-block;
-  width: 7px; height: 7px;
-  margin-right: 0.5rem;
-  background: var(--alert);
-  box-shadow: 0 0 8px var(--alert-glow);
-  vertical-align: 0.08em;
+.panel__note { margin: 0 0 0.7rem; font-size: 0.72rem; color: var(--ink-dim); line-height: 1.4; }
+
+/* vulnerable-endpoints list */
+.eplist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.45rem; }
+.eplist .ep {
+  display: flex;
+  flex-direction: column;
+  gap: 0.28rem;
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--panel-edge);
+  background: rgba(14, 42, 69, 0.55);
+  border-radius: var(--radius);
+  padding: 0.55rem 0.6rem;
+  cursor: pointer;
+  color: var(--ink);
+  font-family: var(--f-body);
+  transition: border-color 0.15s ease, background 0.15s ease;
 }
-.stage__banner b { color: var(--signal); font-weight: 600; }
-.stage__banner .banner__full { color: var(--ink-mut); }
+.eplist .ep:hover { border-color: var(--signal); }
+.eplist .ep[aria-pressed="true"] { border-color: var(--signal); background: var(--signal-soft); }
+.ep__route { display: flex; align-items: baseline; gap: 0.4rem; flex-wrap: wrap; }
+.ep__method {
+  font-family: var(--f-mono);
+  font-size: 0.66rem;
+  font-weight: 600;
+  color: var(--signal-ink);
+  letter-spacing: 0.03em;
+}
+.ep__path { font-family: var(--f-mono); font-size: 0.78rem; color: var(--ink); word-break: break-all; }
+.ep__vuln { display: flex; align-items: center; gap: 0.35rem; font-size: 0.72rem; color: var(--ink-dim); flex-wrap: wrap; }
+.ep__dep { font-weight: 600; color: var(--ink); }
+.ep__empty { font-size: 0.78rem; color: var(--ink-dim); line-height: 1.5; margin: 0; }
+
+/* small verdict pill, shared by the list and the pop-out */
+.vv {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 0.12rem 0.4rem;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+.vv--exploit { background: var(--alert); color: #1a0a06; }
+.vv--reach   { background: var(--signal-soft); color: var(--signal-ink); border: 1px solid var(--signal); }
+.vv--notreached { background: var(--slate-soft); color: var(--slate-ink); border: 1px solid var(--slate-ink); }
+.vv--likely  { background: var(--infer-soft); color: var(--infer-ink); border: 1px solid var(--infer); }
+.vv--danger  { background: var(--danger-soft); color: var(--danger-ink); border: 1px solid var(--danger); }
+.vv--public  { background: var(--signal-soft); color: var(--signal-ink); border: 1px dashed var(--signal); }
+
+.ep__public {
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: var(--signal-ink);
+  border: 1px dashed var(--signal);
+  border-radius: 3px;
+  padding: 0.08rem 0.32rem;
+}
+
+/* ----------------------------------------------------------------- stage */
+.stage {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--ground-sink);
+}
+.stage__banner {
+  padding: 0.4rem 1rem;
+  font-size: 0.72rem;
+  color: var(--ink-dim);
+  border-bottom: 1px solid var(--hair);
+  background: rgba(8, 26, 44, 0.8);
+}
+.stage__banner b { color: var(--signal-ink); }
+.banner__full { color: var(--ink-mut); margin-left: 0.5rem; }
+
+.stage__canvas { position: relative; flex: 1; min-height: 0; overflow: hidden; }
 .stage__grid {
   position: absolute;
   inset: 0;
-  pointer-events: none;
   background-image:
     linear-gradient(var(--grid) 1px, transparent 1px),
-    linear-gradient(90deg, var(--grid) 1px, transparent 1px),
-    radial-gradient(ellipse at 50% 42%, rgba(111,184,224,0.07), transparent 62%);
-  background-size: 28px 28px, 28px 28px, 100% 100%;
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 34px 34px, 34px 34px;
+  pointer-events: none;
 }
-#graph { position: absolute; inset: 0; }
+#graph { position: absolute; inset: 0; outline: none; }
 
-/* A quiet left-to-right flow caption in the top-left of the canvas, naming the
-   three layers so the diagram reads as a pipeline without a heavy legend box. */
 .stage__flow {
   position: absolute;
-  left: 1rem; top: 0.85rem;
+  left: 50%;
+  bottom: 0.5rem;
+  transform: translateX(-50%);
   margin: 0;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  font: 500 0.64rem/1 var(--f-mono);
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--ink-mut);
-  pointer-events: none;
-}
-.stage__flow span { color: var(--signal); opacity: 0.8; }
-
-/* Legend: a slim footer strip under the canvas — off the graph, always legible,
-   never overlapping. Wraps to a second row only on a narrow viewport. */
-.legend {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.4rem 1.1rem;
-  padding: 0.5rem 1.1rem;
-  border-top: 1px solid var(--hair);
-  background: rgba(8, 26, 44, 0.6);
-}
-.legend__item { display: flex; align-items: center; gap: 0.45rem; font: 400 0.66rem/1 var(--f-mono); color: var(--ink-dim); white-space: nowrap; }
-.dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
-.dot--ep  { background: transparent; border: 2px solid var(--signal); }
-.dot--dep { background: var(--dep); }
-.dot--fn  { background: transparent; border: 1.5px solid var(--fn); }
-.dot--mut { background: var(--muted); }
-.dot--sig { background: var(--signal); box-shadow: 0 0 7px var(--signal-glow); }
-.dot--vuln { background: var(--dep); border: 2px solid var(--alert); }
-.dot--unsure { background: repeating-linear-gradient(135deg, var(--alert) 0 1.5px, var(--dep) 1.5px 3px); border: 2px solid var(--alert); }
-.dot--tainted { background: var(--alert); border: 2px solid var(--alert); }
-
-.dot--trans { background: transparent; border: 1.5px solid var(--dep); }
-.dot--inferred {
-  width: 16px; height: 0;
-  border-radius: 0;
-  border-top: 2px dashed var(--infer);
-}
-.dot--likely { background: transparent; border: 2px dashed var(--infer); }
-/* ADVISORY attack-surface swatch — a double magenta ring, matching the node marker. */
-.dot--danger { background: transparent; border: 2px double var(--danger); }
-
-/* "Legend ⌄" expander: a quiet pill that reveals the advanced keys. */
-.legend__toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-  padding: 0.22rem 0.5rem;
-  border: 1px solid var(--hair);
-  border-radius: 999px;
-  background: transparent;
-  color: var(--ink-mut);
-  font: 500 0.62rem/1 var(--f-mono);
+  font-size: 0.62rem;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  cursor: pointer;
-  transition: color 0.15s, border-color 0.15s;
-}
-.legend__toggle:hover { color: var(--ink); border-color: var(--panel-edge); }
-.legend__toggle:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
-.legend__caret { font-size: 0.9em; transition: transform 0.15s; }
-.legend.is-expanded .legend__caret { transform: rotate(180deg); }
-
-/* Core vulnerability keys (exploitable, vulnerable·not-reached): shown once an
-   audit bundle is loaded — they are part of the compact core, not the expander. */
-.legend__item--vuln { display: none; }
-body.has-vulns .legend__item--vuln { display: flex; }
-
-/* Advanced keys: hidden by default. Revealed only when the legend is EXPANDED
-   AND the key's layer is ACTIVE (not merely available). "function" is always
-   available once expanded; the others follow their live layer. */
-.legend__item--adv { display: none; }
-.legend.is-expanded .legend__item--fn { display: flex; }
-body.has-vulns .legend.is-expanded .legend__item--unsure { display: flex; }
-body.has-transitive .legend.is-expanded .legend__item--transitive { display: flex; }
-/* inferred keys — only while the Likely view is on. */
-body.reach-likely .legend.is-expanded .legend__item--inferred { display: flex; }
-/* attack-surface key — only while the danger markers are live on the graph. */
-body.has-danger .legend.is-expanded .legend__item--danger { display: flex; }
-
-/* ---------------------------------------------------------------- exposure overlay
-   ADVISORY "exposure" layer (live /api/enrichment, ACME demo only). A separate,
-   clearly-labelled context layer — kept visually apart from the deterministic
-   vulnerability verdicts (amber = reachable, red = exploitable), so it is never
-   mistaken for one. Everything here is new; no vuln rule is touched. */
-
-/* Entry-point list: a wrapped chip row spanning the button's two columns. */
-.ep__expo { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.15rem; }
-.expo-chips { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; }
-.expo-chips--drawer { margin-bottom: 0.1rem; }
-
-/* Shared exposure chip — neutral by default so it cannot read as a vuln tag. */
-.expo {
-  display: inline-flex; align-items: center; gap: 0.28rem;
-  padding: 0.16rem 0.42rem;
-  border: 1px solid var(--hair);
-  border-radius: 999px;
-  font: 600 0.56rem/1 var(--f-mono);
-  letter-spacing: 0.08em; text-transform: uppercase;
-  color: var(--ink-dim);
-  white-space: nowrap;
-}
-/* internet-facing = the attack surface: amber (NOT red — red is a verdict). */
-.expo--public   { color: var(--signal-ink); border-color: rgba(242,177,52,0.5); background: var(--signal-soft); }
-/* internal = cool blue, muted. */
-.expo--internal { color: var(--dep); border-color: rgba(111,184,224,0.45); background: rgba(111,184,224,0.08); }
-/* unknown = quiet, dashed "unverified". */
-.expo--unknown  { color: var(--ink-mut); border-style: dashed; }
-/* auth required = a small lock chip (CSS-drawn padlock shackle). */
-.expo--auth     { color: var(--ink); border-color: var(--panel-edge); }
-.expo--auth::before {
-  content: ""; flex: none;
-  width: 0.46rem; height: 0.4rem;
-  border: 1.2px solid currentColor; border-bottom: 0;
-  border-top-left-radius: 0.46rem; border-top-right-radius: 0.46rem;
-}
-/* origin + confidence = the quietest tag. */
-.expo-tag {
-  display: inline-flex; align-items: center;
-  padding: 0.14rem 0.38rem;
-  font: 500 0.56rem/1 var(--f-mono);
-  letter-spacing: 0.04em;
-  color: var(--ink-mut);
-  border: 1px dashed var(--hair);
-  border-radius: 2px;
-  white-space: nowrap;
-}
-
-/* Drawer exposure section — a cool dashed card (echoes the advisory summary
-   card, but cool-toned) so it clearly reads as context, not a verdict. */
-.exposure-card {
-  display: flex; flex-direction: column; gap: 0.5rem;
-  padding: 0.6rem 0.7rem;
-  border: 1px dashed rgba(111,184,224,0.4);
-  border-radius: var(--radius);
-  background: rgba(111,184,224,0.06);
-}
-.advisory-flag--expo { border-color: var(--dep); color: var(--dep); }
-
-/* Legend: exposure swatches + the overlay toggle, shown only when the demo view
-   actually carries enrichment data (body.has-exposure, set by app.js). */
-.dot--expo-public   { background: var(--signal-soft); border: 2px solid var(--signal); }
-.dot--expo-internal { background: rgba(111,184,224,0.12); border: 2px solid var(--dep); }
-.dot--expo-auth     { background: transparent; border: 1.5px solid var(--ink-dim); border-radius: 50% 50% 2px 2px; }
-.dot--expo-doc      { background: linear-gradient(135deg, var(--signal) 0 50%, var(--dep) 50% 100%); }
-/* Exposure swatches are advanced keys — shown only when the legend is expanded
-   AND the exposure overlay is actually on. */
-body.has-exposure:not(.exposure-off) .legend.is-expanded .legend__item--exposure { display: flex; }
-.exp-toggle {
-  display: none;
-  align-items: center; gap: 0.4rem;
-  padding: 0.3rem 0.6rem;
-  border: 1px solid var(--panel-edge);
-  border-radius: 999px;
-  background: rgba(111,184,224,0.06);
-  color: var(--ink-dim);
-  font: 500 0.64rem/1 var(--f-mono);
-  cursor: pointer;
-  transition: color 0.15s, border-color 0.15s;
-}
-body.has-exposure .exp-toggle { display: inline-flex; }
-.exp-toggle:hover { color: var(--ink); border-color: var(--dep); }
-.exp-toggle:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
-.exp-toggle__dot { width: 9px; height: 9px; border-radius: 50%; flex: none; background: var(--dep); box-shadow: 0 0 6px rgba(111,184,224,0.5); }
-.exp-toggle[aria-pressed="false"] { color: var(--ink-mut); }
-.exp-toggle[aria-pressed="false"] .exp-toggle__dot { background: transparent; border: 1.5px solid var(--ink-mut); box-shadow: none; }
-
-/* Defensive: with the overlay toggled off, hide any exposure UI still in the
-   DOM (renders also skip it, so this is belt-and-braces). */
-body.exposure-off .ep__expo,
-body.exposure-off .exposure-sec { display: none; }
-
-/* ---------------------------------------------------------------- layers (overlay controls)
-   One compact HUD group in the canvas top-right that holds every optional overlay
-   control (Proven/Likely, Exposure, Danger Overview). The group itself shows only
-   when the current scan carries at least one layer's data, and each control shows
-   only when ITS layer's data is present — so the controls never imply data that
-   is not there. Re-housing + gating only; no handler or verdict is touched. */
-.layers {
-  position: absolute;
-  right: 1rem; top: 0.85rem;
-  z-index: 16;
-  display: none;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 0.4rem;
-  max-width: 15rem;
-  pointer-events: none; /* children re-enable; empty gaps never block the canvas */
-}
-body.has-inferred .layers,
-body.has-exposure .layers,
-body.has-danger .layers { display: flex; }
-.layers > *:not(.layers__lbl) { pointer-events: auto; }
-.layers__lbl {
-  font: 600 0.55rem/1 var(--f-mono);
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
   color: var(--ink-mut);
   pointer-events: none;
 }
+.stage__flow span { color: var(--signal); margin: 0 0.25rem; }
 
-/* ---------------------------------------------------------------- reach mode (Phase 2)
-   PROVEN / LIKELY toggle. PROVEN is the deterministic graph; LIKELY adds
-   AI-inferred (dashed violet) edges + markers. Shown only when the current scan
-   carries inferred enrichment (body.has-inferred); flows inside the Layers group. */
-.reachmode {
-  display: none;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 0.35rem;
-  max-width: 15rem;
-  pointer-events: none; /* only the buttons + caption are interactive targets */
-}
-body.has-inferred #reachmode { display: flex; }
-.reachmode__seg {
-  display: inline-flex;
-  pointer-events: auto;
-  border: 1px solid var(--panel-edge);
-  border-radius: 999px;
-  background: rgba(8, 26, 44, 0.82);
-  overflow: hidden;
-}
-.reachmode__btn {
-  appearance: none;
-  border: 0;
-  margin: 0;
-  padding: 0.3rem 0.72rem;
-  background: transparent;
-  color: var(--ink-dim);
-  font: 600 0.62rem/1 var(--f-mono);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  cursor: pointer;
-  transition: color 0.15s, background 0.15s;
-}
-.reachmode__btn:hover:not([disabled]) { color: var(--ink); }
-.reachmode__btn:focus-visible { outline: 2px solid var(--infer); outline-offset: -2px; }
-/* PROVEN selected: amber, matching the deterministic reachability signal. */
-.reachmode__btn#reach-proven[aria-pressed="true"] {
-  background: var(--signal); color: var(--ground);
-}
-/* LIKELY selected: violet, matching the inferred overlay accent. */
-.reachmode__btn#reach-likely[aria-pressed="true"] {
-  background: var(--infer); color: var(--ground);
-}
-.reachmode__btn[disabled] { cursor: default; opacity: 0.45; }
-.reachmode__cap {
-  margin: 0;
-  pointer-events: none; /* never blocks panning the canvas beneath it */
-  max-width: 15rem;
-  padding: 0.3rem 0.5rem;
-  border-radius: var(--radius);
-  background: rgba(8, 26, 44, 0.78);
-  text-align: right;
-  font: 400 0.6rem/1.4 var(--f-mono);
-  color: var(--ink-mut);
-}
-/* In the Likely view the caption reads as the active advisory accent. */
-.reachmode[data-mode="likely"] .reachmode__cap { color: var(--infer-ink); }
-/* Inert: no inferred data for this scan — keep it present but clearly passive. */
-.reachmode.is-inert { opacity: 0.62; }
-.reachmode.is-inert .reachmode__cap { color: var(--ink-mut); }
-
-/* ---------------------------------------------------------------- likely-reachable drawer (Phase 2)
-   ADVISORY "Likely reachable (inferred)" section — a dashed VIOLET card, echoing
-   the exposure card's cool-advisory styling but in the inferred accent, so it is
-   never read as a deterministic verdict. Sits below the (unchanged) Status. */
-.advisory-flag--likely { border-color: var(--infer); color: var(--infer); }
-.likely-card {
-  display: flex; flex-direction: column; gap: 0.6rem;
-  padding: 0.65rem 0.75rem;
-  border: 1px dashed rgba(169, 139, 240, 0.5);
-  border-radius: var(--radius);
-  background: var(--infer-soft);
-}
-.likely-card .prose strong { color: var(--infer-ink); font-weight: 600; }
-.likely-card .prose b { color: var(--infer-ink); font-weight: 600; }
-.likely-path { display: flex; flex-direction: column; gap: 0.3rem; }
-.likely-path__k {
-  font: 600 0.56rem/1 var(--f-mono);
-  letter-spacing: 0.1em; text-transform: uppercase;
-  color: var(--infer-ink);
-}
-.likely-path .path-steps {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem;
-  font: 500 0.68rem/1.4 var(--f-mono);
-  color: var(--ink-dim);
-  word-break: break-word;
-}
-.likely-path .path-step {
-  padding: 0.12rem 0.4rem;
-  border: 1px solid rgba(169, 139, 240, 0.4);
-  border-radius: 2px;
-  background: rgba(169, 139, 240, 0.08);
-}
-.likely-path .path-arr { color: var(--infer); }
-.likely-edge .ctxitem__detail code {
-  font: 500 0.7rem/1.3 var(--f-mono);
-  color: var(--infer-ink);
-  word-break: break-all;
-}
-
-/* ---------------------------------------------------------------- attack surface (Tier-A AI)
-   ADVISORY code-level attack surface. A magenta/rose layer held apart from every
-   deterministic hue, so AI-identified code-level HYPOTHESES are never mistaken for
-   proven/exploitable verdicts. Everything here is additive; no deterministic rule
-   is touched. Three surfaces: the canvas toggle, the drawer section, and the
-   Danger Overview panel. */
-
-/* Severity chip — graded by danger severity, in the magenta family (never a
-   deterministic-verdict tag). */
-.dsev {
-  display: inline-flex; align-items: center;
-  padding: 0.14rem 0.42rem;
-  border: 1px solid currentColor;
-  border-radius: 999px;
-  font: 700 0.56rem/1 var(--f-mono);
-  letter-spacing: 0.08em; text-transform: uppercase;
-  white-space: nowrap;
-}
-.dsev b { font-weight: 700; margin-left: 0.2rem; }
-.dsev--critical { color: var(--danger-crit); background: rgba(255,46,134,0.12); }
-.dsev--high     { color: var(--danger-high); background: rgba(255,95,162,0.1); }
-.dsev--medium   { color: var(--danger-med);  background: rgba(255,132,184,0.08); }
-.dsev--low      { color: var(--danger-low);  background: rgba(229,155,196,0.08); }
-.dsev--unrated  { color: var(--ink-mut); border-style: dashed; }
-
-/* The "AI · UNVERIFIED" flag on the drawer section header, in the danger accent. */
-.advisory-flag--danger { border-color: var(--danger); color: var(--danger); }
-
-/* Drawer "Attack surface" card — a dashed magenta card, echoing the exposure /
-   likely advisory cards but in the danger accent, so it reads as an unverified
-   lead distinct from the deterministic verdicts. */
-.attack-card {
-  display: flex; flex-direction: column; gap: 0.6rem;
-  padding: 0.65rem 0.75rem;
-  border: 1px dashed rgba(255, 79, 163, 0.5);
-  border-radius: var(--radius);
-  background: var(--danger-soft);
-}
-.attack-banner {
-  margin: 0;
-  font: 700 0.58rem/1.3 var(--f-mono);
-  letter-spacing: 0.1em; text-transform: uppercase;
-  color: var(--danger-ink);
-}
-
-/* One finding — a compact detail block, shared by the drawer + the overview. */
-.dfind {
-  display: flex; flex-direction: column; gap: 0.4rem;
-  padding: 0.55rem 0.6rem;
-  border: 1px solid var(--hair);
-  border-left: 2px solid var(--danger);
-  border-radius: var(--radius);
-  background: rgba(8, 26, 44, 0.45);
-}
-.dfind__head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
-.dfind__class {
-  font: 600 0.68rem/1 var(--f-mono);
-  letter-spacing: 0.04em; text-transform: uppercase;
-  color: var(--danger-ink);
-}
-.dfind__conf {
-  font: 500 0.58rem/1 var(--f-mono);
-  letter-spacing: 0.04em;
-  color: var(--ink-mut);
-}
-.dfind__title { margin: 0; font: 500 0.82rem/1.45 var(--f-body); color: var(--ink); }
-.dfind__ep { margin: 0; font: 400 0.7rem/1.4 var(--f-mono); color: var(--ink-dim); word-break: break-word; }
-.dfind__loc { margin: 0; font: 500 0.7rem/1.4 var(--f-mono); color: var(--ink); word-break: break-all; }
-.dfind__fn { color: var(--ink-dim); }
-.dfind__k {
-  margin-right: 0.35rem;
-  font-size: 0.54rem; letter-spacing: 0.14em; text-transform: uppercase;
-  color: var(--ink-mut);
-}
-.dfind__rationale { font-size: 0.8rem; }
-.dfind__rationale.md, .dfind__rationale p { color: var(--ink-dim); margin: 0; }
-.dfind__flow { margin: 0; font: 400 0.7rem/1.5 var(--f-mono); color: var(--ink-dim); word-break: break-word; }
-.dfind__flow code { color: var(--danger-ink); }
-.dfind__snip { border-left-color: var(--danger); }
-
-/* "Open in Danger Overview" link in the drawer section. */
-.danger-open {
-  align-self: flex-start;
-  appearance: none;
-  margin-top: 0.1rem;
-  padding: 0.34rem 0.7rem;
-  border: 1px solid var(--danger);
-  border-radius: 999px;
-  background: transparent;
-  color: var(--danger-ink);
-  font: 600 0.64rem/1 var(--f-mono);
-  letter-spacing: 0.04em;
-  cursor: pointer;
-  transition: color 0.15s, background 0.15s;
-}
-.danger-open:hover { background: var(--danger-soft); color: #fff; }
-.danger-open:focus-visible { outline: 2px solid var(--danger); outline-offset: 2px; }
-
-/* Danger Overview toggle — a magenta pill, shown only when the current view
-   carries AI-identified findings. Flows inside the Layers group (top-right). */
-.dangerbtn {
-  display: inline-flex; align-items: center; gap: 0.45rem;
-  padding: 0.4rem 0.75rem;
-  border: 1px solid var(--danger);
-  border-radius: 999px;
-  background: rgba(8, 26, 44, 0.82);
-  backdrop-filter: blur(3px);
-  color: var(--danger-ink);
-  font: 600 0.68rem/1 var(--f-mono);
-  letter-spacing: 0.04em;
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
-}
-.dangerbtn[hidden] { display: none; }
-.dangerbtn:hover { background: var(--danger-soft); color: #fff; }
-.dangerbtn:focus-visible { outline: 2px solid var(--danger); outline-offset: 2px; }
-.dangerbtn[aria-pressed="true"] { background: var(--danger); color: var(--ground); }
-.dangerbtn__warn { font-size: 0.9rem; line-height: 1; }
-.dangerbtn__count {
-  min-width: 1.1rem; padding: 0 0.3rem;
-  border-radius: 999px;
-  background: var(--danger);
-  color: var(--ground);
-  font: 700 0.6rem/1.35 var(--f-mono);
-  text-align: center;
-}
-.dangerbtn__count:empty { display: none; }
-.dangerbtn[aria-pressed="true"] .dangerbtn__count { background: var(--ground); color: var(--danger-ink); }
-
-/* Danger Overview panel — overlays the canvas; a scrollable, framed list of all
-   AI-identified code-level hypotheses across the public surface. */
-.dangerview {
-  position: absolute;
-  inset: 0;
-  z-index: 25;
-  display: flex;
-  flex-direction: column;
-  background: linear-gradient(180deg, rgba(8,26,44,0.98), rgba(11,34,57,0.98));
-  backdrop-filter: blur(2px);
-}
-.dangerview[hidden] { display: none; }
-.dangerview:focus { outline: none; }
-.dangerview__head {
-  display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem;
-  padding: 0.9rem 1.1rem;
-  border-bottom: 1px solid var(--danger);
-  background: var(--danger-soft);
-}
-.dangerview__title {
-  margin: 0;
-  font: 600 1.05rem/1.2 var(--f-display);
-  color: var(--danger-ink);
-  display: flex; align-items: center; gap: 0.45rem;
-}
-.dangerview__warn { color: var(--danger); }
-.dangerview__frame {
-  margin: 0.3rem 0 0;
-  font: 400 0.7rem/1.45 var(--f-mono);
-  color: var(--ink-dim);
-}
-.dangerview__close {
-  flex: none;
-  appearance: none;
-  padding: 0.4rem 0.75rem;
-  border: 1px solid var(--panel-edge);
-  border-radius: 999px;
-  background: rgba(8, 26, 44, 0.6);
-  color: var(--ink-dim);
-  font: 600 0.66rem/1 var(--f-mono);
-  letter-spacing: 0.04em;
-  cursor: pointer;
-  transition: color 0.15s, border-color 0.15s;
-}
-.dangerview__close:hover { color: var(--ink); border-color: var(--danger); }
-.dangerview__close:focus-visible { outline: 2px solid var(--danger); outline-offset: 2px; }
-.dangerview__summary {
-  padding: 0.75rem 1.1rem;
-  border-bottom: 1px solid var(--hair);
-}
-.dover-sum__counts { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.8rem; }
-.dover-sum__total { font: 400 0.9rem/1.2 var(--f-body); color: var(--ink); }
-.dover-sum__total b { font-weight: 700; color: var(--danger-ink); font-size: 1.05rem; }
-.dover-sum__eps { font: 400 0.74rem/1.2 var(--f-mono); color: var(--ink-dim); }
-.dover-sum__sev { /* reuses .dsev */ }
-.dangerview__body {
-  flex: 1; min-height: 0;
-  overflow-y: auto;
-  padding: 0.9rem 1.1rem 1.3rem;
-  display: flex; flex-direction: column; gap: 1rem;
-}
-.dover-group {
-  display: flex; flex-direction: column; gap: 0.55rem;
-  padding: 0.7rem 0.8rem;
-  border: 1px solid var(--panel-edge);
-  border-radius: var(--radius);
-  background: var(--panel);
-}
-.dover-group.is-focus { border-color: var(--danger); box-shadow: 0 0 0 1px var(--danger-glow); }
-.dover-group__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.5rem 0.75rem; }
-.dover-group__ep { margin: 0; font: 600 0.85rem/1.3 var(--f-mono); color: var(--ink); word-break: break-word; }
-.dover-group__expo {
-  font: 600 0.56rem/1 var(--f-mono);
-  letter-spacing: 0.08em; text-transform: uppercase;
-  color: var(--ink-dim);
-  padding: 0.14rem 0.42rem;
-  border: 1px solid var(--hair); border-radius: 999px;
-}
-.dover-group__count { margin-left: auto; font: 500 0.68rem/1 var(--f-mono); color: var(--ink-mut); }
-
-/* ---------------------------------------------------------------- tooltip */
-.tooltip {
-  position: absolute;
-  z-index: 20;
-  max-width: 24rem;
-  padding: 0.5rem 0.65rem;
-  border: 1px solid var(--panel-edge);
-  border-radius: var(--radius);
-  background: rgba(8, 26, 44, 0.95);
-  font: 400 0.72rem/1.35 var(--f-mono);
-  color: var(--ink);
-  pointer-events: none;
-  transform: translate(-50%, -115%);
-}
-.tooltip b { color: var(--signal); font-weight: 600; }
-.tooltip .t-vuln { color: var(--alert-ink); font-size: 0.66rem; }
-.tooltip .t-id { color: var(--ink-mut); font-size: 0.66rem; word-break: break-all; }
-
-/* ---------------------------------------------------------------- zoom controls */
-/* A compact schematic selector in the corner. The wheel does the real zooming;
-   these are discrete nudges and a one-tap "fit everything". */
+/* zoom */
 .zoomctl {
   position: absolute;
-  right: 1rem; bottom: 1rem;
+  right: 0.7rem;
+  bottom: 0.7rem;
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--hair);
-  border-radius: var(--radius);
-  overflow: hidden;
-  background: rgba(8, 26, 44, 0.82);
-  backdrop-filter: blur(3px);
+  gap: 0.3rem;
 }
 .zoomctl__btn {
   width: 2rem; height: 2rem;
-  display: grid; place-items: center;
-  border: 0;
-  border-top: 1px solid var(--hair);
-  background: transparent;
-  color: var(--ink-dim);
-  font: 500 1rem/1 var(--f-mono);
+  border: 1px solid var(--panel-edge);
+  background: rgba(14, 42, 69, 0.85);
+  color: var(--ink);
+  border-radius: var(--radius);
   cursor: pointer;
-  transition: color 0.15s, background 0.15s;
+  font-size: 1rem;
+  line-height: 1;
 }
-.zoomctl__btn:first-child { border-top: 0; }
-.zoomctl__btn:hover { color: var(--ink); background: var(--signal-soft); }
-.zoomctl__btn:active { background: rgba(242,177,52,0.28); }
-.zoomctl__btn--fit { font-size: 0.86rem; color: var(--ink-mut); }
+.zoomctl__btn:hover { border-color: var(--signal); color: var(--signal-ink); }
 
-/* ---------------------------------------------------------------- detail panel */
-/* The spec sheet. A title-block callout for whichever node is selected: the
-   engineering-drawing metaphor extended to a single part's datasheet. */
-/* The datasheet drawer. Collapsed to zero and hidden until a node is selected,
-   then it slides in from the right. */
+/* one-line legend key */
+.keystrip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem 0.95rem;
+  padding: 0.45rem 1rem;
+  border-top: 1px solid var(--hair);
+  background: rgba(8, 26, 44, 0.65);
+}
+.keystrip .k { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.66rem; color: var(--ink-dim); }
+.keystrip .k--ai { color: var(--ink-mut); }
+.kdot { width: 11px; height: 11px; border-radius: 50%; display: inline-block; flex: none; }
+.kdot--exploit { background: var(--alert); }
+.kdot--reach { background: var(--signal); }
+.kdot--vuln { background: var(--slate); box-shadow: 0 0 0 1.5px var(--slate-ink); }
+.kdot--likely { background: transparent; border: 2px dashed var(--infer); }
+.kdot--danger { background: transparent; border: 2px dashed var(--danger); }
+.kdot--public { background: transparent; border: 2px dotted #AFC3D6; }
+
+/* ----------------------------------------------------------------- tooltip */
+.tooltip {
+  position: absolute;
+  z-index: 60;
+  transform: translate(-50%, calc(-100% - 10px));
+  max-width: 20rem;
+  padding: 0.4rem 0.6rem;
+  background: rgba(8, 26, 44, 0.97);
+  border: 1px solid var(--panel-edge);
+  border-radius: var(--radius);
+  font-size: 0.74rem;
+  line-height: 1.35;
+  color: var(--ink);
+  pointer-events: none;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.5);
+}
+.tooltip b { font-weight: 600; }
+.tooltip .t-ai { color: var(--infer-ink); }
+.tooltip .t-danger { color: var(--danger-ink); }
+.tooltip .t-exploit { color: var(--alert-ink); font-weight: 600; }
+
+/* ----------------------------------------------------------------- pop-out */
 .detail {
-  border-left: 1px solid var(--panel-edge);
+  border-left: 1px solid var(--hair);
   background: var(--panel);
-  overflow-x: hidden;
   overflow-y: auto;
-  min-width: 0;
   min-height: 0;
-  transform: translateX(14px);
-  opacity: 0;
-  transition: transform 0.18s ease, opacity 0.16s ease;
+  min-width: 0;
 }
-.layout.has-detail .detail { transform: none; opacity: 1; }
-.detail__inner { display: flex; flex-direction: column; min-height: 100%; }
+.detail__inner { min-width: var(--detail-w); }
 
-/* Empty state — an invitation, in the interface's voice. */
-.detail__empty {
-  margin: auto;
-  padding: 2rem 1.4rem;
-  text-align: center;
-  color: var(--ink-dim);
-}
-.detail__empty .d-mark {
+.detail__empty { padding: 1.4rem 1.1rem; color: var(--ink-dim); }
+.detail__empty h2 { font-family: var(--f-display); font-size: 0.95rem; color: var(--ink); margin: 0 0 0.4rem; }
+.detail__empty p { font-size: 0.78rem; line-height: 1.5; margin: 0; }
+.d-mark {
   display: block;
-  width: 26px; height: 26px;
-  margin: 0 auto 0.85rem;
-  border: 1.5px solid var(--panel-edge);
-  border-radius: 5px;
-  position: relative;
+  width: 24px; height: 24px;
+  margin-bottom: 0.7rem;
+  border-radius: 50%;
+  border: 2px solid var(--panel-edge);
 }
-.detail__empty .d-mark::after {
-  content: "";
-  position: absolute; inset: 7px;
-  border: 1.5px solid var(--dep);
-  border-radius: 2px;
-}
-.detail__empty h2 { margin: 0 0 0.4rem; font: 600 0.95rem/1.2 var(--f-display); color: var(--ink); }
-.detail__empty p { margin: 0; font-size: 0.8rem; line-height: 1.5; }
 
-/* Head: a kind-coded accent bar, the kind eyebrow, the node's name, close. */
 .detail__head {
-  position: sticky; top: 0; z-index: 2;
-  padding: 1rem 1.2rem 0.85rem;
+  position: relative;
+  padding: 0.95rem 1.1rem 0.7rem;
   border-bottom: 1px solid var(--hair);
   border-left: 3px solid var(--kind, var(--muted));
-  background: linear-gradient(180deg, rgba(14,42,69,0.97), rgba(14,42,69,0.9));
-  backdrop-filter: blur(3px);
 }
-.detail__kind {
-  display: inline-flex; align-items: center; gap: 0.45rem;
-  font: 600 0.6rem/1 var(--f-mono);
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-  color: var(--kind, var(--ink-mut));
-}
-.detail__kind::before {
-  content: ""; width: 7px; height: 7px; border-radius: 2px;
-  background: var(--kind, var(--muted));
-}
-.detail__title {
-  margin: 0.5rem 0 0;
-  font: 600 1.02rem/1.25 var(--f-mono);
-  color: var(--ink);
-  word-break: break-word;
-  padding-right: 1.8rem;
-}
+.detail__kind { font-size: 0.62rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-mut); }
+.detail__title { font-family: var(--f-mono); font-size: 0.95rem; font-weight: 600; margin: 0.25rem 0 0; color: var(--ink); word-break: break-word; }
 .detail__close {
-  position: absolute; top: 0.75rem; right: 0.8rem;
+  position: absolute;
+  right: 0.6rem; top: 0.6rem;
   width: 1.7rem; height: 1.7rem;
-  display: grid; place-items: center;
-  border: 1px solid var(--hair);
-  border-radius: var(--radius);
-  background: var(--ground-sink);
+  border: 1px solid var(--panel-edge);
+  background: transparent;
   color: var(--ink-dim);
-  font: 400 1rem/1 var(--f-mono);
+  border-radius: var(--radius);
   cursor: pointer;
-  transition: color 0.15s, border-color 0.15s;
+  font-size: 1.1rem;
+  line-height: 1;
 }
-.detail__close:hover { color: var(--ink); border-color: var(--panel-edge); }
+.detail__close:hover { color: var(--ink); border-color: var(--signal); }
 
-.detail__body { padding: 0.9rem 1.1rem 1.3rem; display: flex; flex-direction: column; gap: 0.9rem; }
-
-/* A labelled section inside the datasheet. */
-.dsec { display: flex; flex-direction: column; gap: 0.45rem; }
-.dsec__h {
-  margin: 0;
-  font: 600 0.62rem/1 var(--f-mono);
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--ink-mut);
-}
-.dsec__h .dsec__count { color: var(--ink-mut); font-weight: 500; }
-/* A reused .use badge sitting in a section header (e.g. "Package  transitive"). */
-.dsec__h .use { margin-left: 0.5rem; vertical-align: middle; }
-
-/* Key/value rows (signature, source, ecosystem …). */
-.kv { display: grid; grid-template-columns: auto 1fr; gap: 0.3rem 0.8rem; align-items: baseline; }
-.kv dt { font: 500 0.66rem/1.3 var(--f-mono); letter-spacing: 0.04em; color: var(--ink-mut); text-transform: uppercase; }
-.kv dd { margin: 0; font: 400 0.76rem/1.4 var(--f-mono); color: var(--ink); word-break: break-word; }
-.kv dd.is-signal { color: var(--signal); }
-
-.mono { font: 400 0.76rem/1.5 var(--f-mono); color: var(--ink); word-break: break-word; }
-.prose { font: 400 0.82rem/1.55 var(--f-body); color: var(--ink-dim); margin: 0; }
-.prose--quote {
-  border-left: 2px solid var(--hair);
-  padding-left: 0.7rem;
-  color: var(--ink);
-}
-.dim-note { font: 400 0.76rem/1.5 var(--f-body); color: var(--ink-mut); margin: 0; }
-
-/* A code block for a signature. */
-.codeblock {
-  padding: 0.55rem 0.7rem;
-  border: 1px solid var(--hair);
-  border-left: 2px solid var(--fn);
-  border-radius: var(--radius);
-  background: var(--ground-sink);
-  font: 500 0.76rem/1.5 var(--f-mono);
-  color: var(--ink);
-  overflow-x: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-/* Badges — exposure / authentication / provenance. Risk tone when the value
-   widens the attack surface (internet-facing, no auth); quiet otherwise. */
-.badges { display: flex; flex-wrap: wrap; gap: 0.4rem; }
-.badge {
-  display: inline-flex; align-items: baseline; gap: 0.4rem;
-  padding: 0.32rem 0.5rem;
-  border: 1px solid var(--hair);
-  border-radius: var(--radius);
-  background: var(--ground-sink);
-  font: 500 0.72rem/1 var(--f-mono);
-  color: var(--ink);
-}
-.badge__k { font-size: 0.56rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-mut); }
-.badge--risk { color: var(--alert-ink); }
-.badge--risk .badge__k { color: var(--alert-ink); }
-.badge--ok { border-color: rgba(120,178,224,0.4); }
-
-
-/* Context items grouped by category. */
-.ctxgroup { display: flex; flex-direction: column; gap: 0.4rem; }
-.ctxgroup__h {
-  font: 600 0.58rem/1 var(--f-mono);
-  letter-spacing: 0.12em; text-transform: uppercase;
-  color: var(--dep);
-}
-.ctxlist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.4rem; }
-.ctxitem {
-  padding: 0.45rem 0.55rem;
-  border: 1px solid var(--hair);
-  border-left: 2px solid var(--dep);
-  border-radius: var(--radius);
-  background: var(--ground-sink);
-}
-.ctxitem__detail { font: 500 0.76rem/1.3 var(--f-mono); color: var(--ink); }
-.ctxitem__access { margin-top: 0.15rem; font: 400 0.72rem/1.4 var(--f-body); color: var(--ink-dim); }
-
-/* A cited snippet of untrusted doc text — always rendered as text. */
-.snip { margin-top: 0.35rem; }
-.snip__src {
-  display: inline-block; margin-bottom: 0.2rem;
-  font: 500 0.6rem/1 var(--f-mono);
-  letter-spacing: 0.04em;
-  color: var(--ink-mut);
-}
-.snip__src::before { content: "“ "; }
-.snip__text {
-  font: 400 0.68rem/1.45 var(--f-mono);
-  color: var(--ink-dim);
-  background: rgba(8,26,44,0.5);
-  border-radius: 2px;
-  padding: 0.3rem 0.45rem;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-/* Clamp long snippets/docstrings until expanded. */
-.clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
-.more {
-  margin-top: 0.3rem;
-  border: 0; background: transparent;
-  padding: 0;
-  font: 500 0.66rem/1 var(--f-mono);
-  letter-spacing: 0.04em;
-  color: var(--signal);
-  cursor: pointer;
-}
-.more:hover { text-decoration: underline; }
-
-/* Doc references. */
-.docref { padding-left: 0.1rem; }
-.docref__src {
-  font: 500 0.64rem/1 var(--f-mono);
-  color: var(--signal);
-}
-
-/* Trace affordance + CVE list reuse the rail card look. */
-.btn-trace {
-  display: inline-flex; align-items: center; gap: 0.45rem;
-  padding: 0.45rem 0.7rem;
-  border: 1px solid var(--signal);
-  border-radius: var(--radius);
-  background: var(--signal-soft);
-  color: var(--signal);
-  font: 600 0.72rem/1 var(--f-mono);
-  letter-spacing: 0.03em;
-  cursor: pointer;
-  transition: background 0.15s;
+.pop { padding: 1rem 1.1rem; display: flex; flex-direction: column; gap: 0.75rem; }
+.pop__badge {
   align-self: flex-start;
-}
-.btn-trace::before {
-  content: ""; width: 7px; height: 7px; border-radius: 50%;
-  background: var(--signal); box-shadow: 0 0 7px var(--signal-glow);
-}
-.btn-trace:hover { background: rgba(242,177,52,0.26); }
-.btn-trace[disabled] { opacity: 0.45; cursor: default; border-color: var(--hair); color: var(--ink-mut); }
-.btn-trace[disabled]::before { background: var(--muted); box-shadow: none; }
-
-/* Reachability verdict line. */
-.verdict {
-  display: inline-flex; align-items: center; gap: 0.45rem;
-  font: 500 0.76rem/1.3 var(--f-mono);
-}
-.verdict::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
-.verdict--reach { color: var(--signal-ink); }
-.verdict--reach::before { background: var(--signal); box-shadow: 0 0 7px var(--signal-glow); }
-.verdict--maybe { color: var(--ink-dim); }
-.verdict--maybe::before { background: var(--dep); }
-/* Confident "unreachable" — the sound, fully-resolved verdict: good news, so green. */
-.verdict--safe { color: var(--safe-ink); }
-.verdict--safe::before { background: var(--safe); box-shadow: 0 0 6px rgba(79, 178, 134, 0.5); }
-
-/* Mini CVE cards inside the dependency datasheet. */
-.cvelist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
-.cve {
-  padding: 0.5rem 0.6rem;
-  border: 1px solid var(--hair);
-  border-left: 2px solid var(--alert);
-  border-radius: var(--radius);
-  background: var(--ground-sink);
-}
-.cve__id { font: 600 0.74rem/1.3 var(--f-mono); color: var(--alert-ink); word-break: break-all; }
-.cve__sum { margin-top: 0.2rem; font: 400 0.72rem/1.4 var(--f-body); color: var(--ink-dim); }
-.cve__fix { margin-top: 0.25rem; font: 400 0.68rem/1.3 var(--f-mono); color: var(--ink-mut); }
-.cve__fix b { color: var(--dep); font-weight: 600; }
-
-/* ---------------------------------------------------------------- disclosures */
-/* One consistent expand/collapse affordance everywhere: a real <details> with a
-   rotating chevron, so depth is always exactly one keyboard-reachable click
-   away and the default view stays compact. */
-summary { cursor: pointer; list-style: none; }
-summary::-webkit-details-marker { display: none; }
-summary:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; border-radius: 2px; }
-
-/* The chevron: a small caret that points right when closed, down when open. */
-.disc__chev {
-  flex: none;
-  width: 0; height: 0;
-  border-top: 4px solid transparent;
-  border-bottom: 4px solid transparent;
-  border-left: 5px solid var(--ink-mut);
-  transition: transform 0.15s ease;
-}
-details[open] > summary .disc__chev { transform: rotate(90deg); }
-
-/* Generic disclosure used inside the datasheet ("Details & sources", etc.). */
-.disc { border-top: 1px solid var(--hair); padding-top: 0.6rem; }
-.disc__sum {
-  display: flex; align-items: center; gap: 0.5rem;
-  font: 600 0.66rem/1 var(--f-mono);
-  letter-spacing: 0.16em; text-transform: uppercase;
-  color: var(--ink-dim);
-}
-.disc__sum:hover { color: var(--ink); }
-.disc__sum .disc__chev { border-left-color: var(--signal); }
-.disc__body { display: flex; flex-direction: column; gap: 0.7rem; margin-top: 0.7rem; }
-
-/* Minimal dependency drawer: Status badges on one line, a condensed attacker-flow
-   line, and collapsed per-CVE disclosures (CVE id + severity badge in the row). */
-.statusline { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; }
-.status-flow { margin: 0.5rem 0 0; font: 400 0.74rem/1.5 var(--f-body); color: var(--ink-dim); }
-.status-flow code { font: 500 0.68rem/1 var(--f-mono); color: var(--alert-ink); }
-.cve-disc { border-top: 1px solid var(--hair); padding-top: 0.55rem; }
-.cve-disc .disc__sum { justify-content: flex-start; gap: 0.5rem; text-transform: none; letter-spacing: 0; }
-.cve-disc__id {
-  flex: 1 1 auto;
-  font: 600 0.72rem/1.2 var(--f-mono);
-  letter-spacing: 0; text-transform: none;
-  color: var(--ink); word-break: break-all;
-}
-.kv--cve { margin-top: 0.1rem; }
-
-/* ---------------------------------------------------------------- dependency groups (findings) */
-.deplist--vuln { gap: 0.4rem; }
-.depgroup {
-  border: 1px solid var(--hair);
-  border-left: 2px solid var(--muted);
-  border-radius: var(--radius);
-  background: var(--ground-sink);
-  overflow: hidden;
-}
-.depgroup--reachable {
-  border-left-color: var(--signal);
-  background: linear-gradient(90deg, var(--alert-soft), var(--ground-sink) 72%);
-}
-.depgroup__sum {
-  display: grid;
-  grid-template-columns: auto 1fr;
+  display: inline-flex;
   align-items: center;
-  gap: 0.35rem 0.55rem;
-  padding: 0.5rem 0.6rem;
-}
-.depgroup__sum:hover { background: rgba(120, 178, 224, 0.05); }
-.depgroup__name {
-  grid-column: 2;
-  font: 600 0.82rem/1.2 var(--f-mono);
-  color: var(--ink);
-  word-break: break-all;
-}
-.depgroup__ver { color: var(--signal); font-weight: 500; }
-.depgroup__tags {
-  grid-column: 2;
-  display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center;
-}
-.depgroup__count {
-  font: 500 0.6rem/1 var(--f-mono);
+  gap: 0.4rem;
+  font-size: 0.72rem;
+  font-weight: 700;
   letter-spacing: 0.04em;
-  padding: 0.22rem 0.4rem;
-  border-radius: 2px;
-  border: 1px solid var(--hair);
-  color: var(--ink-dim);
-}
-.depgroup__body {
-  padding: 0.15rem 0.6rem 0.6rem;
-  border-top: 1px solid var(--hair);
-}
-.depgroup__body .cvelist { margin-top: 0.55rem; }
-/* A reachable CVE inside an expanded group wears the amber rule. */
-.cve--reachable { border-left-color: var(--signal); }
-
-/* ---------------------------------------------------------------- entry-point groups */
-.eplist--grouped { gap: 0.35rem; }
-.eplist--inner { margin-top: 0.4rem; padding-left: 0.35rem; gap: 0.35rem; }
-.epgroup {
-  border: 1px solid var(--hair);
-  border-left: 2px solid var(--muted);
-  border-radius: var(--radius);
-  background: var(--ground-sink);
-}
-.epgroup__sum {
-  display: flex; align-items: center; gap: 0.5rem;
-  padding: 0.5rem 0.6rem;
-}
-.epgroup__sum:hover { background: rgba(120, 178, 224, 0.05); }
-.epgroup__name {
-  flex: 1;
-  font: 500 0.82rem/1.2 var(--f-mono);
-  color: var(--ink);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.epgroup__count {
-  font: 500 0.64rem/1 var(--f-mono);
-  padding: 0.18rem 0.4rem;
-  border-radius: 2px;
-  border: 1px solid var(--hair);
-  color: var(--ink-dim);
-}
-.epgroup[open] > .epgroup__sum { border-bottom: 1px solid var(--hair); }
-.epgroup[open] > .epgroup__sum .epgroup__name { color: var(--signal); }
-.epgroup > .eplist--inner { padding: 0.4rem 0.5rem 0.5rem; margin-top: 0; }
-
-/* ---------------------------------------------------------------- assessment summary (primary) */
-/* The one block shown by default for an endpoint: the integrated agent summary
-   and its sources, clearly marked advisory. Everything else sits in a disclosure. */
-.advisory-flag {
-  margin-left: 0.5rem;
-  font: 600 0.54rem/1 var(--f-mono);
-  letter-spacing: 0.1em;
-  padding: 0.14rem 0.36rem;
-  border: 1px solid var(--signal);
-  border-radius: 2px;
-  color: var(--signal);
   text-transform: uppercase;
-}
-.summary-card {
-  display: flex; flex-direction: column; gap: 0.5rem;
-  padding: 0.65rem 0.75rem;
-  border: 1px dashed var(--signal);
+  padding: 0.3rem 0.6rem;
   border-radius: var(--radius);
-  background: var(--signal-soft);
 }
-.summary-lead {
-  margin: 0;
-  font: 400 0.84rem/1.55 var(--f-body);
+.pop__badge--exploit { background: var(--alert); color: #1a0a06; }
+.pop__badge--reach   { background: var(--signal-soft); color: var(--signal-ink); border: 1px solid var(--signal); }
+.pop__badge--notreached { background: var(--slate-soft); color: var(--slate-ink); border: 1px solid var(--slate-ink); }
+.pop__badge--likely  { background: var(--infer-soft); color: var(--infer-ink); border: 1px solid var(--infer); }
+.pop__badge--danger  { background: var(--danger-soft); color: var(--danger-ink); border: 1px solid var(--danger); }
+.pop__badge--public  { background: var(--signal-soft); color: var(--signal-ink); border: 1px dashed var(--signal); }
+.pop__badge--neutral { background: rgba(120, 178, 224, 0.12); color: var(--ink-dim); border: 1px solid var(--panel-edge); }
+
+.pop__title { font-size: 0.86rem; font-weight: 600; color: var(--ink); margin: 0; line-height: 1.35; }
+.pop__line { font-size: 0.82rem; line-height: 1.5; color: var(--ink-dim); margin: 0; }
+.pop__line b, .pop__line strong { color: var(--ink); font-weight: 600; }
+.pop__fix {
+  font-size: 0.8rem;
+  line-height: 1.45;
   color: var(--ink);
-}
-.sources-line {
   margin: 0;
-  font: 400 0.7rem/1.4 var(--f-mono);
-  color: var(--ink-dim);
-  word-break: break-word;
-}
-.sources-line__k {
-  margin-right: 0.45rem;
-  font-size: 0.56rem; letter-spacing: 0.14em; text-transform: uppercase;
-  color: var(--ink-mut);
-}
-.advisory-foot {
-  margin: 0;
-  padding-top: 0.1rem;
-  font: 400 0.66rem/1.4 var(--f-body);
-  color: var(--ink-dim);
-}
-
-/* Function source line (qualified name · path:line · method). */
-.src-line {
-  margin: 0;
-  font: 400 0.7rem/1.4 var(--f-mono);
-  color: var(--ink-dim);
-  word-break: break-word;
-}
-.src-line__loc { color: var(--ink); }
-
-/* ---------------------------------------------------------------- responsive */
-@media (max-width: 860px) {
-  .titleblock { flex-wrap: wrap; gap: 0.6rem 1rem; }
-  .titleblock__load { flex-wrap: wrap; }
-  .viewswitch { flex-wrap: wrap; }
-
-  /* Funnel wraps to two rows rather than squashing; arrows drop out when wrapped. */
-  .funnel { flex-wrap: wrap; gap: 0.4rem; padding: 0.6rem 1rem; }
-  .funnel__stage { flex: 1 1 8rem; }
-  .funnel__arrow { display: none; }
-  .funnel__num { font-size: 1.4rem; }
-
-  /* Stack the three panes; the detail drawer becomes a full-width row. */
-  .layout, .layout.has-detail { grid-template-columns: 1fr; }
-  .rail {
-    border-right: none;
-    border-bottom: 1px solid var(--panel-edge);
-    max-height: none;
-    overflow: visible;
-  }
-  .panel--filters { margin-top: 0; }
-  .stage { min-height: 70vh; }
-  .detail {
-    border-left: none;
-    border-top: 1px solid var(--panel-edge);
-    overflow: visible;
-    transform: none;
-    opacity: 1;
-  }
-  .layout:not(.has-detail) .detail { display: none; }
-  .detail__head { position: static; }
-}
-
-@media (max-width: 520px) {
-  .funnel__stage { flex: 1 1 6rem; }
-  .funnel__num { font-size: 1.2rem; }
-  /* On a phone the Layers controls stay; the reach caption would crowd the
-     narrow canvas, so it drops out. */
-  .layers { top: 0.6rem; right: 0.6rem; max-width: 11rem; }
-  .reachmode__cap { display: none; }
-  /* The "More" scans panel spans the selector rather than overflowing the edge. */
-  .moremenu { position: static; }
-  .moremenu__panel { right: auto; left: 0; }
-}
-
-/* ---------------------------------------------------------------- AI attack analysis */
-/* Live, model-generated narrative in the dependency drawer. A Meta-blue to violet
-   accent marks the AI badge; everything else follows the drawer palette. */
-.ai-sec { --meta: #4C9DFF; --meta-2: #8C7BFF; }
-.ai-body { display: flex; flex-direction: column; gap: 0.5rem; min-width: 0; }
-.ai-head, .ai-loading { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.6rem; margin: 0; }
-.ai-badge {
-  display: inline-flex; align-items: center; gap: 0.4rem;
-  padding: 0.28rem 0.55rem 0.28rem 0.45rem;
-  font: 600 0.6rem/1.2 var(--f-mono);
-  letter-spacing: 0.06em; text-transform: uppercase;
-  color: #D6E6FF;
-  background: linear-gradient(90deg, rgba(76, 157, 255, 0.18), rgba(140, 123, 255, 0.18));
-  border: 1px solid rgba(110, 150, 255, 0.45);
-  border-radius: 999px;
-}
-.ai-badge__mark {
-  width: 0.62rem; height: 0.62rem; flex: none;
-  background: linear-gradient(135deg, var(--meta), var(--meta-2));
-  border-radius: 50%;
-  box-shadow: 0 0 6px rgba(120, 140, 255, 0.6);
-}
-.ai-loading__txt { font: 400 0.76rem/1.4 var(--f-body); color: var(--ink-dim); }
-.ai-loading .ai-badge__mark { animation: ai-pulse 1.2s ease-in-out infinite; }
-@keyframes ai-pulse { 0%, 100% { opacity: 0.45; } 50% { opacity: 1; } }
-.ai-prov { font: 500 0.58rem/1 var(--f-mono); letter-spacing: 0.05em; text-transform: uppercase; }
-.ai-prov--live { color: var(--safe-ink); }
-.ai-prov--offline { color: var(--ink-mut); }
-/* Deterministic VScan verdict, shown above the model narrative so the
-   authoritative result always sits beside the prose it may contradict. */
-.ai-verdict { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem 0.5rem; margin: 0; }
-.ai-verdict__k { font: 500 0.58rem/1 var(--f-mono); letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-mut); }
-.ai-verdict__v {
-  padding: 0.28rem 0.55rem;
-  font: 700 0.62rem/1.25 var(--f-mono);
-  letter-spacing: 0.07em; text-transform: uppercase;
-  border: 1px solid var(--vc, var(--hair));
-  border-radius: var(--radius);
-  color: var(--vc-ink, var(--ink));
-  background: var(--vc-soft, transparent);
-  overflow-wrap: anywhere;
-}
-.ai-verdict--exploit { --vc: var(--alert);  --vc-ink: var(--alert-ink);  --vc-soft: var(--alert-soft); }
-.ai-verdict--reach   { --vc: var(--signal); --vc-ink: var(--signal-ink); --vc-soft: var(--signal-soft); }
-.ai-verdict--safe    { --vc: var(--dep);    --vc-ink: var(--dep);        --vc-soft: rgba(111, 184, 224, 0.16); }
-.ai-narr { color: var(--ink); overflow-wrap: anywhere; }
-.ai-fix {
-  display: flex; flex-direction: column; gap: 0.25rem;
   padding: 0.5rem 0.65rem;
-  border: 1px solid var(--hair);
-  border-left: 2px solid var(--meta);
+  border-left: 2px solid var(--signal);
+  background: var(--signal-soft);
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+.pop__fix b { color: var(--signal-ink); }
+.pop__advisory { font-size: 0.68rem; color: var(--ink-mut); line-height: 1.4; margin: 0; font-style: italic; }
+
+.askbtn {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.2rem;
+  text-decoration: none;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--infer-ink);
+  border: 1px solid var(--infer);
+  background: var(--infer-soft);
+  padding: 0.45rem 0.8rem;
   border-radius: var(--radius);
+  cursor: pointer;
+  transition: background 0.15s ease;
 }
-.ai-fix__k { font: 600 0.6rem/1 var(--f-mono); letter-spacing: 0.16em; text-transform: uppercase; color: var(--meta); }
-.ai-fix__v { overflow-wrap: anywhere; }
+.askbtn:hover { background: rgba(169, 139, 240, 0.22); }
 
-/* Rendered Markdown (md.js) inside the AI narrative / fix. Same rules live in
-   chat.css under .bubble--md: the two pages' stylesheets are self-contained. */
-.md { overflow-wrap: anywhere; min-width: 0; }
-.md > :first-child { margin-top: 0; }
-.md > :last-child { margin-bottom: 0; }
-.md-p { margin: 0 0 0.55rem; }
-.md strong { color: var(--ink); font-weight: 600; }
-.md em { font-style: italic; }
-.md-h { margin: 0.7rem 0 0.3rem; font: 600 0.86rem/1.3 var(--f-display); color: var(--ink); letter-spacing: 0.005em; }
-.md-h1 { font-size: 0.94rem; }
-.md-h3 { font-size: 0.82rem; }
-.md-ul, .md-ol { margin: 0 0 0.55rem; padding-left: 1.2rem; }
-.md-ul li, .md-ol li { margin: 0.15rem 0; padding-left: 0.1rem; }
-.md-ul li::marker { color: #6E96FF; }
-.md-ol li::marker { color: #6E96FF; font-family: var(--f-mono); font-size: 0.9em; }
-.md-code {
-  padding: 0.08em 0.38em;
-  font: 500 0.88em/1.4 var(--f-mono);
-  color: #D6E6FF;
-  background: rgba(76, 157, 255, 0.12);
-  border: 1px solid rgba(110, 150, 255, 0.28);
-  border-radius: 3px;
-  overflow-wrap: anywhere;
-}
-.md-pre {
-  margin: 0.2rem 0 0.65rem; padding: 0.6rem 0.75rem;
-  overflow-x: auto; max-width: 100%;
-  background: var(--ground-sink, #081A2C);
-  border: 1px solid var(--hair);
-  border-left: 2px solid #6E96FF;
-  border-radius: var(--radius);
-}
-.md-pre code { font: 400 0.76rem/1.55 var(--f-mono); color: var(--ink); white-space: pre; background: none; border: 0; padding: 0; }
-.md-link { color: var(--dep); text-decoration: underline; text-decoration-color: rgba(111, 184, 224, 0.4); text-underline-offset: 2px; overflow-wrap: anywhere; }
-.md-link:hover { text-decoration-color: currentColor; }
-
-/* ---------------------------------------------------------------- vs. a conventional scanner */
-/* One quiet line under the funnel: the noise-reduction story, in numbers computed
-   from the loaded bundle. A hairline meter carries the same % in the Meta accent. */
-.noise {
-  position: relative;
-  margin: 0;
-  padding: 0.5rem 1.4rem 0.6rem;
-  font: 400 0.78rem/1.45 var(--f-body);
-  color: var(--ink-dim);
-  border-bottom: 1px solid var(--panel-edge);
-  background: rgba(8, 26, 44, 0.45);
-}
-.noise[hidden] { display: none; }
-.noise b { font-weight: 600; color: var(--ink); }
-.noise .noise__pct {
-  background: linear-gradient(90deg, #4C9DFF, #8C7BFF);
-  -webkit-background-clip: text; background-clip: text;
-  -webkit-text-fill-color: transparent; color: #8C9DFF;
-}
-.noise::after {
-  content: ""; position: absolute; left: 1.4rem; right: 1.4rem; bottom: 0;
-  height: 2px; border-radius: 2px;
-  background: linear-gradient(90deg, #4C9DFF 0, #8C7BFF var(--noise-removed, 0%), rgba(120, 178, 224, 0.14) var(--noise-removed, 0%));
-  opacity: 0.8;
-}
-
-/* ---------------------------------------------------------------- Meta mark (header) */
-.meta-mark {
-  display: inline-flex; align-items: center; gap: 0.4rem;
-  align-self: center;
-  padding: 0.22rem 0.55rem 0.22rem 0.45rem;
-  font: 600 0.56rem/1.2 var(--f-mono);
-  letter-spacing: 0.06em; text-transform: uppercase;
-  color: #D6E6FF; white-space: nowrap;
-  background: linear-gradient(90deg, rgba(76, 157, 255, 0.16), rgba(140, 123, 255, 0.16));
-  border: 1px solid rgba(110, 150, 255, 0.4);
-  border-radius: 999px;
-}
-.meta-mark__dot {
-  width: 0.55rem; height: 0.55rem; flex: none; border-radius: 50%;
-  background: linear-gradient(135deg, #4C9DFF, #8C7BFF);
-  box-shadow: 0 0 6px rgba(120, 140, 255, 0.6);
-}
+/* ----------------------------------------------------------------- responsive */
 @media (max-width: 860px) {
-  .titleblock__id { flex-wrap: wrap; row-gap: 0.4rem; }
-  .noise { padding: 0.5rem 1rem 0.6rem; }
-  .noise::after { left: 1rem; right: 1rem; }
-}
-.ai-note { font-style: italic; }
-@media (max-width: 520px) {
-  .ai-head, .ai-loading { gap: 0.35rem 0.5rem; }
+  .layout, .layout.has-detail { grid-template-columns: 1fr; }
+  .rail { border-right: none; border-bottom: 1px solid var(--hair); max-height: 15rem; }
+  .stage__canvas { min-height: 22rem; }
+  .detail { border-left: none; border-top: 1px solid var(--hair); }
+  .layout:not(.has-detail) .detail { display: none; }
+  .detail__inner { min-width: 0; }
 }
 
-/* ---------------------------------------------------------------- motion */
+@media (max-width: 520px) {
+  .titleblock { padding: 0.55rem 0.8rem; }
+  .funnel { padding: 0.5rem 0.8rem 0.1rem; }
+  .noise { padding: 0.1rem 0.8rem 0.4rem; }
+  .scanname { max-width: 100%; }
+  .funnel__stage { min-width: 4.4rem; }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  * { transition: none !important; animation: none !important; }
+  * { transition: none !important; }
 }

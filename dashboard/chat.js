@@ -228,4 +228,17 @@
 
   autosize();
   input.focus();
+
+  /* Bridge from the dashboard's "Ask the agent" buttons: a ?q=<question> in the
+     URL pre-fills the composer and auto-sends it once, so a pop-out can hand the
+     conversation a grounded question. Any extra text the user types still routes
+     through the same send flow. */
+  try {
+    var q = new URLSearchParams(location.search).get("q");
+    if (q && q.trim()) {
+      input.value = q;
+      autosize();
+      send(q);
+    }
+  } catch (e) { /* no URLSearchParams / blocked — the page still works manually */ }
 })();
