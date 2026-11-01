@@ -401,6 +401,19 @@
          so the dashed hypothesis does not vanish under a selection. */
       { selector: 'edge[inferred].dim', style: { "opacity": 0.2 }},
 
+      /* The resolved hops that complete a likely-reachable dep's path (entry ->
+         function -> ... -> the function with the inferred hop). Drawn dashed
+         VIOLET so the whole likely path reads as one continuous inferred chain
+         spanning the graph, not just the final hop. These are the SAME resolved
+         edges the proven paths use (flagged, not duplicated), so .lit — declared
+         after this — still wins and shows them cool on a proven trace. */
+      { selector: 'edge[onlikely = 1]', style: {
+        "line-style": "dashed", "line-dash-pattern": [6, 4], "curve-style": "straight",
+        "line-color": INFER, "width": 1.6, "opacity": 0.8,
+        "target-arrow-shape": "triangle", "target-arrow-color": INFER, "arrow-scale": 0.6
+      }},
+      { selector: 'edge[onlikely = 1].dim', style: { "opacity": 0.2 }},
+
       /* off the call-flow spine (unreached functions, module/file/doc) — kept
          visible but visually secondary. Declared before .dim so an active trace
          still dims these further; .lit/.focus come later and override it. */
@@ -435,19 +448,21 @@
         "border-color": ALERT_INK, "border-width": 3.5,
         "overlay-color": ALERT, "overlay-opacity": 0.24, "overlay-padding": 8
       }},
-      /* A lit LIKELY-reachable dep stays VIOLET (advisory), never the cool proven
-         glow or the red proven-reached endpoint — declared last so it wins over
-         node.lit / node.lit[vuln=1] when a likely dep's inferred path is lit. */
-      { selector: 'node.lit[likely = 1]', style: {
-        "background-fill": "solid", "background-color": INFER,
-        "border-color": "#B9A9F7", "border-width": 2.5,
-        "overlay-color": INFER, "overlay-opacity": 0.22, "overlay-padding": 8
+      /* VIOLET path highlight (.litv) — used when a likely-reachable dep's full
+         AI-inferred chain is lit. Kept separate from the cool proven .lit so a
+         segment shared with a proven path stays cool on a proven trace but reads
+         violet (advisory) on a likely-path highlight. Never read as proven. */
+      { selector: "node.litv", style: {
+        "background-fill": "solid", "background-color": INFER, "border-color": "#CDBEFA",
+        "color": "#D9CEFB", "border-width": 2.5, "opacity": 1,
+        "overlay-color": INFER, "overlay-opacity": 0.22, "overlay-padding": 7
       }},
-      /* A lit inferred HOP stays violet + dashed (never the cool proven line), so
-         an AI-inferred likely path reads as advisory even when highlighted. */
-      { selector: 'edge[inferred].lit', style: {
-        "line-style": "dashed", "line-color": INFER, "target-arrow-color": INFER,
-        "opacity": 1, "width": 2.2,
+      { selector: 'node.litv[kind = "entrypoint"]', style: { "width": 46, "height": 46, "overlay-padding": 9 } },
+      { selector: "edge.litv", style: {
+        "line-style": "dashed", "line-dash-pattern": [6, 4], "curve-style": "straight",
+        "line-color": INFER, "target-arrow-color": INFER,
+        "target-arrow-shape": "triangle", "arrow-scale": 0.8,
+        "width": 2.4, "opacity": 1,
         "overlay-color": INFER, "overlay-opacity": 0.14, "overlay-padding": 2
       }},
 
@@ -457,7 +472,7 @@
       { selector: "edge.focus", style: { "curve-style": "straight", "line-color": "#6FB8E0", "opacity": 0.9, "width": 1.6 } },
 
       /* a lit, focused or selected node shows its full label, not an ellipsis */
-      { selector: "node.lit, node.focus, node.selected", style: { "text-wrap": "wrap", "text-max-width": 200, "z-index": 30 } },
+      { selector: "node.lit, node.litv, node.focus, node.selected", style: { "text-wrap": "wrap", "text-max-width": 200, "z-index": 30 } },
 
       /* the node whose datasheet is open in the detail panel — a bright halo so
          it's obvious which part the panel describes. Declared last to win. */
@@ -819,7 +834,7 @@
 
   /* ---------------------------------------------------------------- trace lighting */
   function clearHighlight() {
-    cy.elements().removeClass("lit dim focus");
+    cy.elements().removeClass("lit litv dim focus");
     el.stage.classList.remove("is-traced");
   }
 
@@ -902,14 +917,16 @@
     el.stage.classList.add("is-traced");
     cy.elements().addClass("dim");
     var via = likely.via, lit = 0;
+    // Violet (.litv) highlight for the whole inferred chain — kept distinct from
+    // the cool proven .lit so the advisory likely path never reads as proven.
     for (var i = 0; i < via.length; i++) {
       var n = cy.getElementById(via[i]);
-      if (n && n.length) { n.removeClass("dim").addClass("lit"); lit++; }
+      if (n && n.length) { n.removeClass("dim").addClass("litv"); lit++; }
     }
     for (var j = 0; j < via.length - 1; j++) {
       (function (a, b) {
         cy.edges().forEach(function (ed) {
-          if (ed.source().id() === a && ed.target().id() === b) ed.removeClass("dim").addClass("lit");
+          if (ed.source().id() === a && ed.target().id() === b) ed.removeClass("dim").addClass("litv");
         });
       })(via[j], via[j + 1]);
     }
@@ -2291,16 +2308,34 @@
   function refreshInferredElements() {
     if (!cy) return;
     cy.edges("[inferred]").remove();
-    if (!inferredEdges.length) return;
-    var toAdd = [];
+    cy.edges('[onlikely = 1]').data("onlikely", 0); // reset before re-flagging
+    var toAdd = [], inferredPair = {};
+    // Genuine AI-inferred call edges (the reflective function -> dep hops).
     inferredEdges.forEach(function (ie, i) {
       if (!ie || !model.index[ie.src] || !model.index[ie.dst]) return;
+      inferredPair[ie.src + "\u0000" + ie.dst] = true;
       toAdd.push({ group: "edges", data: {
         id: "inf\u0000" + ie.src + "\u0000" + ie.dst + "\u0000" + i,
         source: ie.src, target: ie.dst, kind: "calls", inferred: 1
       }});
     });
     if (toAdd.length) cy.add(toAdd);
+    // Complete each likely-reachable dep's path so the violet chain spans the
+    // whole graph: flag the RESOLVED hops on its `via` (entry -> ... -> the
+    // function that holds the inferred hop) so they render dashed violet too.
+    // These are the real resolved edges (flagged, not duplicated), so the data
+    // model, the trace and the counts are untouched. The final hop is already the
+    // inferred overlay edge above, so it is skipped here.
+    likelyReachable.forEach(function (l) {
+      var via = (l && Array.isArray(l.via)) ? l.via : [];
+      for (var k = 0; k < via.length - 1; k++) {
+        var s = via[k], d = via[k + 1];
+        if (inferredPair[s + "\u0000" + d]) continue; // the genuine inferred hop
+        cy.edges().forEach(function (ed) {
+          if (ed.source().id() === s && ed.target().id() === d) ed.data("onlikely", 1);
+        });
+      }
+    });
   }
 
   function hasInferredData() {
