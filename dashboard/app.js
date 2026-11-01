@@ -128,7 +128,7 @@
   var repoCounts = {};        // kind -> count across the FULL repo (header "Repository totals")
 
   // Bundles fetched for the header switcher, cached by view key so switching
-  // re-renders instantly without re-fetching (redash is 6+ MB).
+  // re-renders instantly without re-fetching.
   var bundleCache = {};
 
   var el = {
@@ -154,10 +154,7 @@
     zoomOut: document.getElementById("zoom-out"),
     zoomFit: document.getElementById("zoom-fit"),
     viewDemo: document.getElementById("view-demo"),
-    viewRedash: document.getElementById("view-redash"),
-    viewTransitive: document.getElementById("view-transitive"),
-    viewPlugin: document.getElementById("view-pluginreports"),
-    viewSample: document.getElementById("view-sample")
+    viewPlugin: document.getElementById("view-pluginreports")
   };
 
   /* ---------------------------------------------------------------- model */
@@ -582,7 +579,7 @@
   var LANE_H = 84;      // y-spacing between stacked nodes within a column
   var OFF_COL_W = 150;  // off-spine shelf column width
   var OFF_ROW_H = 52;   // off-spine shelf row height
-  // A single call-depth column with very many nodes (e.g. redash's ~50 entry
+  // A single call-depth column with very many nodes (e.g. a ~50 entry
   // points) would stack into one absurdly tall strip, so the whole diagram
   // shrinks to a sliver when fitted. Past MAX_ROWS a layer wraps into a few
   // vertical sub-columns — a tidy block that keeps the left-to-right layering
@@ -1821,7 +1818,7 @@
     // The current view's repo rides the query string so the backend explains THIS
     // scan's finding, not whichever one is primary server-side (otherwise a
     // non-primary view gets a foreign verdict + foreign file paths). Views with no
-    // live repo (redash/transitive/healthy/file loads) have no live analysis —
+    // live repo (file loads) have no live analysis —
     // skip the fetch rather than hit the primary by omission (mirrors enrichment).
     var repo = currentRepo;
     if (!repo) { show(aiNoteHtml("Live AI analysis isn't available for this scan.")); return; }
@@ -2910,10 +2907,7 @@
   /* ---------------------------------------------------------------- views */
   function setActiveView(which) {
     el.viewDemo.setAttribute("aria-pressed", which === "demo" ? "true" : "false");
-    el.viewRedash.setAttribute("aria-pressed", which === "redash" ? "true" : "false");
-    el.viewTransitive.setAttribute("aria-pressed", which === "transitive" ? "true" : "false");
     if (el.viewPlugin) el.viewPlugin.setAttribute("aria-pressed", which === "pluginreports" ? "true" : "false");
-    el.viewSample.setAttribute("aria-pressed", which === "sample" ? "true" : "false");
   }
 
   // The inline sample (vulnerable-app) — always available, and the only option
@@ -2943,15 +2937,9 @@
     demo:   { file: "demo-bundle.json",   label: "ACME API · layered Flask service · audit", btn: el.viewDemo,
               repo: "acme-api",
               hint: "Open the dashboard from a local web server to load the ACME API demo bundle." },
-    redash: { file: "redash-bundle.json", label: "redash · real-world repo (200 deps) · audit", btn: el.viewRedash,
-              hint: "Open the dashboard from a local web server to load the redash bundle." },
-    transitive: { file: "transitive-bundle.json", label: "transitive-app · npm direct+transitive", btn: el.viewTransitive,
-              hint: "Open the dashboard from a local web server to load the transitive-app bundle." },
     pluginreports: { file: "plugin-reports-bundle.json", label: "Plugin Reports · reflective Jinja2 render · audit", btn: el.viewPlugin,
               repo: "plugin-reports",
-              hint: "Open the dashboard from a local web server to load the Plugin Reports bundle." },
-    sample: { file: "healthy-bundle.json", label: "Healthy API · modern FastAPI service · audit", btn: el.viewSample,
-              hint: "Open the dashboard from a local web server to load the Healthy API bundle." }
+              hint: "Open the dashboard from a local web server to load the Plugin Reports bundle." }
   };
   var viewToken = 0; // latest requested view wins if fetches resolve out of order
 
@@ -2982,10 +2970,7 @@
     });
   }
 
-  el.viewSample.addEventListener("click", function () { showBundle("sample"); });
   el.viewDemo.addEventListener("click", function () { showBundle("demo"); });
-  el.viewRedash.addEventListener("click", function () { showBundle("redash"); });
-  el.viewTransitive.addEventListener("click", function () { showBundle("transitive"); });
   if (el.viewPlugin) el.viewPlugin.addEventListener("click", function () { showBundle("pluginreports"); });
 
   // The Proven/Likely toggle, the Exposure toggle, the Danger Overview panel and
@@ -2993,22 +2978,6 @@
   // always on and folded into the node visual language + the hover tooltip, and
   // deep detail is delegated to the chat agent. Their functions remain for the
   // data pipeline but have no controls to wire here.
-
-  // "More" scan dropdown: collapse it after a choice, and on an outside click /
-  // Escape. The scan buttons inside keep their own ids + handlers. Chrome only.
-  var moreMenu = document.getElementById("moremenu");
-  if (moreMenu) {
-    var morePanel = moreMenu.querySelector(".moremenu__panel");
-    if (morePanel) morePanel.addEventListener("click", function () {
-      setTimeout(function () { moreMenu.open = false; }, 0);
-    });
-    document.addEventListener("click", function (e) {
-      if (moreMenu.open && !moreMenu.contains(e.target)) moreMenu.open = false;
-    });
-    document.addEventListener("keydown", function (e) {
-      if ((e.key === "Escape" || e.key === "Esc") && moreMenu.open) moreMenu.open = false;
-    });
-  }
 
   /* ---------------------------------------------------------------- boot */
   // Default to the served demo bundle (a small, clean showcase app whose deep

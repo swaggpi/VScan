@@ -34,24 +34,10 @@
         <button class="seg" id="view-pluginreports" type="button" aria-pressed="false">
           <span class="seg__name">Plugin Reports</span>
         </button>
-        <details class="moremenu" id="moremenu">
-          <summary class="seg seg--more">More <span class="moremenu__caret" aria-hidden="true">⌄</span></summary>
-          <div class="moremenu__panel" role="group" aria-label="More scans">
-            <button class="seg seg--menu" id="view-redash" type="button" aria-pressed="false">
-              <span class="seg__name">redash</span>
-            </button>
-            <button class="seg seg--menu" id="view-transitive" type="button" aria-pressed="false">
-              <span class="seg__name">transitive-app</span>
-            </button>
-            <button class="seg seg--menu" id="view-sample" type="button" aria-pressed="false">
-              <span class="seg__name">Healthy API</span>
-            </button>
-            <label class="seg seg--menu seg--file" id="view-file">
-              <input type="file" id="file" accept=".json,application/json" />
-              <span class="seg__name">Load a scan</span>
-            </label>
-          </div>
-        </details>
+        <label class="seg seg--file" id="view-file">
+          <input type="file" id="file" accept=".json,application/json" />
+          <span class="seg__name">Load a scan</span>
+        </label>
       </div>
       <a class="askvscan" id="askvscan" href="chat.html">Ask VScan <span aria-hidden="true">→</span></a>
       <span class="scanname" id="scanname">starting…</span>
