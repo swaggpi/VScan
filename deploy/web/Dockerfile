@@ -25,9 +25,14 @@ WORKDIR /app
 COPY . /app
 RUN pip install ".[mcp]"
 
-# The demo repo the service warms on startup resolves to this in-container path
-# (overridable via the VSCAN_DEMO_REPO env var).
-ENV VSCAN_DEMO_REPO=/app/samples/acme-api \
+# The demo repos the service warms on startup resolve to these in-container
+# paths. ``VSCAN_DEMO_REPOS`` (comma-separated) warms both, with acme-api first
+# so it stays the PRIMARY (what /api/health reports and the no-param
+# /api/enrichment serves); plugin-reports is the secondary demo scan.
+# ``VSCAN_DEMO_REPO`` is kept as the single-repo fallback (acme-api) but is
+# overridden by ``VSCAN_DEMO_REPOS`` when both are set. All overridable via env.
+ENV VSCAN_DEMO_REPOS="/app/samples/acme-api,/app/samples/plugin-reports" \
+    VSCAN_DEMO_REPO=/app/samples/acme-api \
     PORT=8000
 
 EXPOSE 8000

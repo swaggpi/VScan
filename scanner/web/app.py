@@ -40,7 +40,7 @@ from pydantic import BaseModel
 
 from scanner.agent import LLMClient
 from scanner.correlate import report
-from scanner.enrich import exposure_overlay
+from scanner.enrich import exposure_overlay, infer_edges, likely_reachability
 from scanner.mcp import state
 from scanner.taint import compute_taint
 from scanner.web import chat as chat_mod
@@ -77,6 +77,14 @@ class _ScanState:
     # built (the overlay then stays ``{}`` rather than failing the endpoint).
     exposure: dict[str, Any] | None = None
     exposure_note: str | None = None
+    # Advisory, additive Phase-2 INFERRED-EDGE tier (see scanner.enrich.edges):
+    # grounded inferred ``calls`` edges filling unresolved call sites, plus the
+    # "likely-reachable" dependencies they would surface on a throwaway augmented
+    # COPY of the graph. Warmed in the SAME background step as the exposure
+    # overlay, from the cached deterministic graph/reachability/correlation. They
+    # NEVER enter the graph findings/taint/verdicts read; ``None`` until warmed.
+    inferred_edges: list[dict[str, Any]] | None = None
+    likely_reachable: list[dict[str, Any]] | None = None
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def snapshot(self) -> dict[str, Any]:
@@ -122,12 +130,24 @@ class _ScanState:
             return list(self.findings)
 
     def set_exposure(
-        self, exposure: dict[str, Any], *, note: str | None = None
+        self,
+        exposure: dict[str, Any],
+        *,
+        note: str | None = None,
+        inferred_edges: list[dict[str, Any]] | None = None,
+        likely_reachable: list[dict[str, Any]] | None = None,
     ) -> None:
-        """Cache the advisory exposure overlay (and an optional degrade note)."""
+        """Cache the advisory enrichment overlays (and an optional degrade note).
+
+        The exposure overlay and the Phase-2 inferred-edge / likely-reachability
+        lists are cached together under one lock so the ``/api/enrichment``
+        endpoint never sees a half-warmed state.
+        """
         with self.lock:
             self.exposure = exposure
             self.exposure_note = note
+            self.inferred_edges = inferred_edges
+            self.likely_reachable = likely_reachable
 
     def exposure_snapshot(self) -> tuple[dict[str, Any] | None, str | None]:
         """Return ``(exposure_copy_or_None, note)`` under the lock.
@@ -138,6 +158,19 @@ class _ScanState:
         with self.lock:
             exposure = dict(self.exposure) if self.exposure is not None else None
             return exposure, self.exposure_note
+
+    def enrichment_lists_snapshot(
+        self,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Return ``(inferred_edges, likely_reachable)`` copies under the lock.
+
+        Each defaults to ``[]`` when not warmed, so the endpoint always carries
+        both Phase-2 keys even if only the exposure overlay was cached.
+        """
+        with self.lock:
+            inferred = list(self.inferred_edges) if self.inferred_edges else []
+            likely = list(self.likely_reachable) if self.likely_reachable else []
+            return inferred, likely
 
 
 def _demo_repo_path() -> str:
@@ -211,14 +244,36 @@ def _warm_exposure_overlay(repo_path: str) -> dict[str, Any]:
     return exposure_overlay(graph, reach, corr, LLMClient())
 
 
+def _warm_inferred_edges(
+    repo_path: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Build the advisory Phase-2 inferred-edge overlay + likely reachability.
+
+    Reuses the SAME cached graph/reachability/correlation the warm scan
+    populated (no re-scan, no extra network): the model (when ``LLM_*`` is
+    configured) maps unresolved call sites to grounded candidate node ids, and
+    :func:`scanner.enrich.likely_reachability` diffs an AUGMENTED COPY of the
+    graph against the proven reachability. Read-only and additive -- the inferred
+    edges never enter the cached graph that findings/taint/verdicts read, so the
+    canonical pipeline's output is byte-identical whether or not this ran.
+    Returns ``(inferred_edges, likely_reachable)``.
+    """
+    graph, corr = state.get_correlation(repo_path, offline=False)
+    _, reach = state.get_reachability(repo_path)
+    inferred = infer_edges(graph, reach, corr, LLMClient())
+    likely = likely_reachability(graph, inferred, reach)
+    return inferred, likely["likely_reachable"]
+
+
 def _run_warm_scan(scan_state: _ScanState, repo_path: str) -> None:
     """Background worker: warm the scan and record ready/degraded. Never raises.
 
     Once the scan is ready (so health/explain/chat are live immediately), the
-    SAME background thread goes on to warm the advisory exposure overlay and
-    cache it on the scan state. The overlay is additive and never affects the
-    scan result; any failure degrades to an empty overlay with a note rather
-    than crashing the thread or the server.
+    SAME background thread goes on to warm the advisory enrichment overlays --
+    the exposure overlay AND the Phase-2 inferred-edge overlay + likely
+    reachability -- and cache them together on the scan state. Every overlay is
+    additive and never affects the scan result; any failure degrades to empty
+    overlays with a note rather than crashing the thread or the server.
     """
     try:
         result = _warm_scan(repo_path)
@@ -231,10 +286,17 @@ def _run_warm_scan(scan_state: _ScanState, repo_path: str) -> None:
         findings=result["findings"],
     )
     try:
-        scan_state.set_exposure(_warm_exposure_overlay(repo_path))
-    except Exception as exc:  # noqa: BLE001 - advisory overlay degrades, never crashes
+        exposure = _warm_exposure_overlay(repo_path)
+        inferred, likely = _warm_inferred_edges(repo_path)
         scan_state.set_exposure(
-            {}, note=f"exposure overlay unavailable: {type(exc).__name__}: {exc}"
+            exposure, inferred_edges=inferred, likely_reachable=likely
+        )
+    except Exception as exc:  # noqa: BLE001 - advisory overlays degrade, never crash
+        scan_state.set_exposure(
+            {},
+            note=f"enrichment overlay unavailable: {type(exc).__name__}: {exc}",
+            inferred_edges=[],
+            likely_reachable=[],
         )
 
 
@@ -378,29 +440,50 @@ def explain(req: ExplainRequest) -> dict[str, Any]:
 
 
 @app.get("/api/enrichment")
-def enrichment() -> dict[str, Any]:
-    """Return the advisory, additive per-entry-point EXPOSURE overlay.
+def enrichment(repo: str | None = None) -> dict[str, Any]:
+    """Return the advisory, additive per-entry-point enrichment for one repo.
 
-    The overlay (see :mod:`scanner.enrich.exposure`) is warmed on a background
-    thread AFTER the primary scan is ready, so this endpoint reports:
+    Each warmed scan gets its OWN overlays (see :mod:`scanner.enrich.exposure`
+    and :mod:`scanner.enrich.edges`) warmed on its background thread AFTER that
+    scan is ready. The optional ``repo`` query param selects which warmed scan
+    to report, matched against ``app.state.scans`` by the basename of each
+    scan's ``repo_path`` (e.g. ``acme-api``, ``plugin-reports``). With no param
+    this reports the PRIMARY scan exactly as before. The endpoint reports:
 
-    * 503 ``"scan not ready"`` while the scan is still warming OR the overlay is
-      still being built (there is nothing to serve yet);
-    * 200 ``{"repo", "exposure": {<ep_id>: {...}}}`` once the overlay is ready
-      (with an extra ``"note"`` if it degraded to an empty overlay on error).
+    * 404 ``"unknown repo"`` when a ``repo`` is given but no warmed scan matches;
+    * 503 ``"scan not ready"`` while the selected scan is still warming OR its
+      overlays are still being built (there is nothing to serve yet);
+    * 200 ``{"repo", "exposure": {<ep_id>: {...}}, "inferred_edges": [...],
+      "likely_reachable": [...]}`` once the overlays are ready (with an extra
+      ``"note"`` if they degraded to empty overlays on error).
 
     It is a pure reader of cached state and never 500s: the overlay computation
-    already degrades to an empty overlay with a note, and nothing here raises.
-    The overlay is ADVISORY -- it never changes any finding's reachable /
-    confirmed / tainted state or verdict.
+    already degrades to empty overlays with a note, and nothing here raises. All
+    overlays are ADVISORY -- they never change any finding's reachable /
+    confirmed / tainted state or verdict; ``likely_reachable`` is a lead, never a
+    proven reachability result.
     """
-    scan_state: _ScanState | None = getattr(app.state, "scan", None)
+    if repo is None:
+        scan_state: _ScanState | None = getattr(app.state, "scan", None)
+    else:
+        scans: list[_ScanState] = getattr(app.state, "scans", [])
+        scan_state = next(
+            (s for s in scans if _repo_name(s.repo_path) == repo), None
+        )
+        if scan_state is None:
+            raise HTTPException(status_code=404, detail="unknown repo")
     if scan_state is None:
         raise HTTPException(status_code=503, detail="scan not ready")
     exposure, note = scan_state.exposure_snapshot()
     if exposure is None:
         raise HTTPException(status_code=503, detail="scan not ready")
-    payload: dict[str, Any] = {"repo": scan_state.repo, "exposure": exposure}
+    inferred_edges, likely_reachable = scan_state.enrichment_lists_snapshot()
+    payload: dict[str, Any] = {
+        "repo": scan_state.repo,
+        "exposure": exposure,
+        "inferred_edges": inferred_edges,
+        "likely_reachable": likely_reachable,
+    }
     if note:
         payload["note"] = note
     return payload

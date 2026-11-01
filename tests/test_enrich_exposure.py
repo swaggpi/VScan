@@ -380,3 +380,105 @@ def test_endpoint_200_with_note_on_degraded_overlay():
     out = app_mod.enrichment()
     assert out["exposure"] == {}
     assert out["note"].startswith("exposure overlay unavailable")
+
+
+# -- per-repo routing (?repo= selects a warmed scan by repo_path basename) -----
+
+
+def _scan_for_repo(
+    repo_path: str,
+    status: str,
+    exposure: dict[str, Any] | None = None,
+    inferred_edges: list[dict[str, Any]] | None = None,
+    likely_reachable: list[dict[str, Any]] | None = None,
+):
+    from scanner.web.app import _ScanState, _repo_name
+
+    state = _ScanState(repo=_repo_name(repo_path), repo_path=repo_path)
+    if status == "ready":
+        state.set_ready(findings_total=0, exploitable=0, findings=[])
+    if exposure is not None:
+        state.set_exposure(
+            exposure,
+            inferred_edges=inferred_edges,
+            likely_reachable=likely_reachable,
+        )
+    return state
+
+
+def test_endpoint_no_param_returns_primary_unchanged():
+    # With multiple warmed scans, no ``repo`` param still serves the primary
+    # (app.state.scan == the first scan) exactly as before.
+    from scanner.web import app as app_mod
+
+    primary_overlay = {EP_PUBLIC: {"label": "primary", "value": "internet-facing"}}
+    secondary_overlay = {EP_PUBLIC: {"label": "secondary", "value": "internal"}}
+    primary = _scan_for_repo(
+        "/app/samples/acme-api", "ready", exposure=primary_overlay
+    )
+    secondary = _scan_for_repo(
+        "/app/samples/plugin-reports", "ready", exposure=secondary_overlay
+    )
+    app_mod.app.state.scan = primary
+    app_mod.app.state.scans = [primary, secondary]
+
+    out = app_mod.enrichment()
+    assert out["repo"] == "acme-api"
+    assert out["exposure"] == primary_overlay
+
+
+def test_endpoint_repo_param_selects_secondary_scan():
+    # ``?repo=plugin-reports`` returns the SECONDARY scan's own overlays,
+    # matched by the basename of its repo_path.
+    from scanner.web import app as app_mod
+
+    primary_overlay = {EP_PUBLIC: {"label": "primary", "value": "internet-facing"}}
+    secondary_overlay = {EP_PUBLIC: {"label": "secondary", "value": "internal"}}
+    primary = _scan_for_repo(
+        "/app/samples/acme-api", "ready", exposure=primary_overlay
+    )
+    secondary = _scan_for_repo(
+        "/app/samples/plugin-reports",
+        "ready",
+        exposure=secondary_overlay,
+        inferred_edges=[{"from": "n:a", "to": "n:b"}],
+        likely_reachable=[{"dependency_id": DEP_YAML}],
+    )
+    app_mod.app.state.scan = primary
+    app_mod.app.state.scans = [primary, secondary]
+
+    out = app_mod.enrichment(repo="plugin-reports")
+    assert out["repo"] == "plugin-reports"
+    assert out["exposure"] == secondary_overlay
+    assert out["inferred_edges"] == [{"from": "n:a", "to": "n:b"}]
+    assert out["likely_reachable"] == [{"dependency_id": DEP_YAML}]
+
+
+def test_endpoint_unknown_repo_404():
+    from fastapi import HTTPException
+
+    from scanner.web import app as app_mod
+
+    primary = _scan_for_repo("/app/samples/acme-api", "ready", exposure={})
+    app_mod.app.state.scan = primary
+    app_mod.app.state.scans = [primary]
+    with pytest.raises(HTTPException) as exc:
+        app_mod.enrichment(repo="does-not-exist")
+    assert exc.value.status_code == 404
+    assert exc.value.detail == "unknown repo"
+
+
+def test_endpoint_repo_matched_but_overlay_not_ready_503():
+    # The repo matches by basename, but its enrichment has not been cached yet.
+    from fastapi import HTTPException
+
+    from scanner.web import app as app_mod
+
+    primary = _scan_for_repo("/app/samples/acme-api", "ready", exposure={})
+    secondary = _scan_for_repo("/app/samples/plugin-reports", "ready")
+    app_mod.app.state.scan = primary
+    app_mod.app.state.scans = [primary, secondary]
+    with pytest.raises(HTTPException) as exc:
+        app_mod.enrichment(repo="plugin-reports")
+    assert exc.value.status_code == 503
+    assert exc.value.detail == "scan not ready"

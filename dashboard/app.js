@@ -34,6 +34,12 @@
   // Severity accent used on the canvas (cytoscape styles are canvas-rendered, so
   // they take literal colors, not CSS custom properties). Mirrors --alert.
   var ALERT = "#F2654E";
+  // AI-inferred accent (Phase 2): a violet held apart from the amber reachability
+  // signal and the red vulnerability accent, so an inferred edge / likely-reachable
+  // marker can never be mistaken for a proven-reachable or exploitable verdict.
+  // Mirrors --infer. INFER_INK is the lighter label tint.
+  var INFER = "#A98BF0";
+  var INFER_INK = "#C6B2F6";
 
   var cy = null;
   var graphFitEles = null;  // the collection runLayout framed, reused on refit
@@ -59,16 +65,34 @@
   var usageByDep = {};        // dep node id -> usage entry, built from `usage`
   var selectedNodeId = null;  // node whose datasheet the detail panel shows
 
-  // ADVISORY exposure overlay — live from GET /api/enrichment, for the ACME
-  // "demo" scan only. Purely additive context on entry points (internet-facing
-  // vs internal, auth, doc/AI provenance); it never touches the deterministic
-  // vulnerability verdicts/colors/graph. Empty for every other view and whenever
-  // the backend is absent, so the dashboard renders exactly as it does today.
+  // ADVISORY enrichment overlays — live from GET /api/enrichment?repo=<name>, for
+  // the scans backed by a live warm repo (ACME "demo" → acme-api, "pluginreports"
+  // → plugin-reports). Purely additive; they never touch the deterministic
+  // vulnerability verdicts/colors/graph or the reachability model. Three overlays
+  // ride together per repo:
+  //   • exposure       — Phase 1: internet-facing vs internal, auth, provenance;
+  //   • inferred_edges — Phase 2: AI-inferred call edges (dashed violet, Likely view);
+  //   • likely_reachable — Phase 2: deps the AI believes a public route likely reaches
+  //                        even though static analysis resolved no path (a LEAD, never
+  //                        a proven/exploitable result).
+  // Empty for every other view and whenever the backend is absent, so the
+  // dashboard renders exactly as it does today.
   var exposure = {};              // entrypoint id -> exposure record for the CURRENT view
-  var exposureOn = true;          // overlay visible? (legend toggle)
-  var currentViewKey = null;      // which switcher view is live; overlay only for "demo"
-  var EXP_CACHE = { fetched: false, data: null }; // one fetch, cached across view switches
+  var exposureOn = true;          // exposure overlay visible? (legend toggle)
+  var currentViewKey = null;      // which switcher view is live
+  var currentRepo = null;         // the live repo name for the current view, or null
+  // Per-repo cache: one fetch each, kept across view switches so re-visiting a
+  // view re-renders instantly. repo -> { fetched, exposure, inferred, likely }.
+  var ENRICH = {};
   var expToggleBtn = null;        // the legend's show/hide-overlay toggle
+
+  // Phase-2 current-view enrichment, pointed at the live repo's cache entry by
+  // applyViewEnrichment(). Never fed into buildModel()/trace()/computeDepths(),
+  // so reachability verdicts, the funnel and the exploitable counts are unchanged.
+  var inferredEdges = [];         // [{src,dst,symbol,origin,confidence,rationale,sources}]
+  var likelyReachable = [];       // [{dependency_id,name,confidence,via:[node ids]}]
+  var likelyByDep = {};           // dep node id -> likely_reachable entry
+  var reachMode = "proven";       // "proven" (default) | "likely"
 
   // Focused-view state. When a loaded graph exceeds LARGE_GRAPH we render only
   // the security-relevant subgraph; these hold the full-repo totals and the
@@ -106,6 +130,7 @@
     viewDemo: document.getElementById("view-demo"),
     viewRedash: document.getElementById("view-redash"),
     viewTransitive: document.getElementById("view-transitive"),
+    viewPlugin: document.getElementById("view-pluginreports"),
     viewSample: document.getElementById("view-sample")
   };
 
@@ -279,6 +304,21 @@
         "width": 44, "height": 44, "font-weight": 600
       }},
 
+      /* ADVISORY likely-reachable marker (Phase 2, "Likely" view only). A dep the
+         AI believes a public route likely reaches even though static analysis
+         resolved no path. A DASHED VIOLET ring + violet label — deliberately
+         UNLIKE the solid-red exploitable node, the red/blue striped "unsure" node
+         and the amber lit trace, so it reads as a separate, weaker, advisory
+         signal. The dep keeps its real vuln state underneath; this only re-skins
+         the ring while the Likely view is on (the `likely` flag is 0 in Proven
+         view). Declared AFTER the vuln rules so it wins over the red ring, but
+         BEFORE .dim/.lit/.focus/.selected so a trace or selection still overrides. */
+      { selector: 'node[likely = 1]', style: {
+        "border-color": INFER, "border-width": 3.5, "border-style": "dashed",
+        "color": INFER_INK,
+        "overlay-color": INFER, "overlay-opacity": 0.16, "overlay-padding": 7
+      }},
+
       // Connections are thin, straight lines between layers — like the synapses
       // of a feed-forward network. No arrowheads by default (direction is the
       // vertical layering, and the amber trace shows the climb when lit).
@@ -303,6 +343,23 @@
       // flow, so they read as dotted hairlines. Derived purely from edge.kind —
       // present in any bundle, independent of the live exposure overlay.
       { selector: 'edge[kind = "documents"]', style: { "line-style": "dotted" }},
+
+      /* ADVISORY inferred call edges (Phase 2, "Likely" view only). An AI-inferred
+         call the structural scan could not resolve (e.g. a reflective getattr).
+         DASHED and VIOLET so it reads clearly apart from the solid deterministic
+         call spine — a hypothesis, not a proven edge. Hidden (display:none) in
+         Proven view and excluded from the layout, so Proven renders exactly as
+         before. These edges are display-only: they are NOT added to the data model
+         or the reachability trace, so verdicts and counts never change. */
+      { selector: 'edge[inferred]', style: {
+        "line-style": "dashed", "line-dash-pattern": [6, 4],
+        "line-color": INFER, "width": 1.8, "opacity": 0.85,
+        "curve-style": "straight",
+        "target-arrow-shape": "triangle", "target-arrow-color": INFER, "arrow-scale": 0.7
+      }},
+      /* Keep an inferred edge faintly visible even when a trace dims the graph,
+         so the dashed hypothesis does not vanish under a selection. */
+      { selector: 'edge[inferred].dim', style: { "opacity": 0.2 }},
 
       /* off the call-flow spine (unreached functions, module/file/doc) — kept
          visible but visually secondary. Declared before .dim so an active trace
@@ -550,6 +607,7 @@
     var adj = {};
     spine.forEach(function (n) { adj[n.id()] = []; });
     cy.edges(":visible").forEach(function (e) {
+      if (e.data("inferred")) return; // advisory overlay — never shifts the layout
       var s = e.source().id(), t = e.target().id();
       if (inSpine[s] && inSpine[t]) { adj[s].push(t); adj[t].push(s); }
     });
@@ -1705,6 +1763,75 @@
     });
   }
 
+  // ADVISORY "Likely reachable (inferred)" drawer section (Phase 2). Shown for a
+  // dependency the AI flagged in `likely_reachable`: static analysis resolved no
+  // path to it, but the AI inferred one. It renders the inferred `via` path as
+  // readable labels and the contributing inferred edges' symbol + rationale +
+  // source citations. It states plainly that this is a LEAD — it never makes the
+  // finding proven-reachable or exploitable and never changes the verdict above.
+  // Returns "" when the dep is not in likely_reachable (fully additive). All
+  // server text is escaped via esc().
+  function likelyReachableSectionHtml(depId) {
+    var l = likelyByDep[depId];
+    if (!l) return "";
+    var via = Array.isArray(l.via) ? l.via : [];
+    var viaSet = {};
+    via.forEach(function (id) { viaSet[id] = true; });
+    var viaLabels = via.map(function (id) {
+      var m = model.index[id];
+      return '<span class="path-step">' + esc(m ? labelFor(m) : id) + '</span>';
+    });
+    // Contributing inferred edges: those that land on this dep, or that connect two
+    // nodes on the inferred `via` path.
+    var contribs = (inferredEdges || []).filter(function (ie) {
+      if (!ie) return false;
+      return ie.dst === depId || (viaSet[ie.src] && viaSet[ie.dst]);
+    });
+
+    var html = '<section class="dsec likely-sec"><h2 class="dsec__h">Likely reachable (inferred) ' +
+      '<span class="advisory-flag advisory-flag--likely">Advisory' +
+      (l.confidence ? ' · ' + esc(l.confidence) + ' confidence' : '') + '</span></h2>' +
+      '<div class="likely-card">';
+    html += '<p class="prose">Static analysis did <strong>not</strong> resolve a path to this ' +
+      'package, so its deterministic verdict above stands. The AI inferred a likely path ' +
+      '(shown as dashed violet edges in the <b>Likely</b> view). This is an <strong>advisory ' +
+      'lead</strong> — it does <strong>not</strong> make the finding proven-reachable or ' +
+      'exploitable, and it never changes the verdict or the funnel counts.</p>';
+    if (viaLabels.length) {
+      html += '<div class="likely-path"><span class="likely-path__k">Inferred path</span>' +
+        '<div class="path-steps">' +
+        viaLabels.join(' <span class="path-arr" aria-hidden="true">&rarr;</span> ') +
+        '</div></div>';
+    }
+    if (contribs.length) {
+      html += '<div class="ctxgroup"><div class="ctxgroup__h">Inferred call' +
+        (contribs.length === 1 ? "" : "s") + ' <span class="dsec__count">' + contribs.length +
+        '</span></div><ul class="ctxlist">';
+      contribs.forEach(function (ie) {
+        html += '<li class="ctxitem likely-edge">';
+        if (ie.symbol) {
+          html += '<div class="ctxitem__detail"><code>' + esc(ie.symbol) + '</code></div>';
+        }
+        if (ie.rationale) {
+          html += '<p class="prose prose--quote clamp">' + esc(ie.rationale) + '</p>' + moreBtn();
+        }
+        var srcs = Array.isArray(ie.sources) ? ie.sources : [];
+        srcs.forEach(function (s) {
+          var where = (s && (s.file || s.doc)) || "source";
+          html += '<div class="snip"><span class="snip__src">' + esc(where) + '</span>' +
+            '<div class="snip__text clamp">' + esc(String((s && s.snippet) || "").trim()) +
+            '</div>' + moreBtn() + '</div>';
+        });
+        html += '</li>';
+      });
+      html += '</ul></div>';
+    }
+    html += '<p class="advisory-foot">AI-inferred reachability — a weaker, advisory signal than a ' +
+      'proven static path. The impact funnel and the exploitable count do not include it.</p>' +
+      '</div></section>';
+    return html;
+  }
+
   // The MINIMAL dependency drawer: exactly four sections — Package details,
   // Status (escalation verdict as compact badges + one condensed line), Quick
   // summary (the dep-level agent reasoning synthesised from triage + usage), and
@@ -1767,6 +1894,11 @@
       html += '<span class="verdict verdict--maybe">No findings matched</span>';
     }
     html += '</section>';
+
+    // (b1) Likely reachable (inferred) — ADVISORY, directly below the deterministic
+    // Status so the proven verdict always reads first. Empty unless the dep is in
+    // the current view's likely_reachable overlay.
+    html += likelyReachableSectionHtml(n.id);
 
     // (b2) AI attack analysis — a LIVE call to POST /api/explain for the lead
     // finding. Rendered as a loading placeholder here; wireDetail() starts the
@@ -1940,13 +2072,13 @@
 
   /* ---------------------------------------------------------------- exposure overlay
      Advisory "exposure" layer. Where the data comes from: a single GET
-     /api/enrichment (same-origin), fired only for the ACME "demo" view and
-     cached in EXP_CACHE across view switches (the backend only has the ACME
-     scan). On 503 ("scan not ready") a couple of retries back off; on 404 / a
-     non-ACME view / offline / any network error the overlay simply never
-     appears — no error UI, no console spam. Stale fetches are dropped by a
-     viewToken + currentViewKey check, so switching bundles can't paint the
-     wrong overlay. Everything here is additive context on entry points. */
+     /api/enrichment?repo=<name> (same-origin), fired per live-repo view (ACME
+     "demo" and "pluginreports") and cached per repo in ENRICH across view
+     switches. On 503 ("scan not ready") a couple of retries back off; on 404 /
+     a view with no live repo / offline / any network error the overlay simply
+     never appears — no error UI, no console spam. Stale fetches are dropped by a
+     viewToken + currentViewKey check, so switching bundles can't paint the wrong
+     overlay. Everything here is additive context on entry points. */
 
   var EXP_VALUE = {
     "internet-facing": { cls: "expo--public",   label: "PUBLIC" },
@@ -2030,21 +2162,50 @@
     });
   }
 
-  // Point `exposure` at the cached map for the demo view, or clear it otherwise.
-  // Called BEFORE a (re)render so the synchronous pass already carries badges
-  // when the cache is warm.
-  function applyViewExposure(key) {
-    currentViewKey = key;
-    exposure = (key === "demo" && EXP_CACHE.data) ? EXP_CACHE.data : {};
+  // The per-repo cache entry (created on demand).
+  function enrichEntry(repo) {
+    if (!repo) return null;
+    return ENRICH[repo] ||
+      (ENRICH[repo] = { fetched: false, exposure: null, inferred: [], likely: [] });
+  }
+  function buildLikelyIndex() {
+    likelyByDep = {};
+    (likelyReachable || []).forEach(function (l) {
+      if (l && l.dependency_id) likelyByDep[l.dependency_id] = l;
+    });
   }
 
-  // Fire the one enrichment fetch for the demo view (no-op once fetched).
-  function ensureExposure(token) {
-    if (EXP_CACHE.fetched) { updateExposureLegend(); return; }
-    if (typeof fetch !== "function") { EXP_CACHE.fetched = true; EXP_CACHE.data = null; return; }
+  // Point the current-view enrichment (exposure + inferred + likely) at the cached
+  // entry for this view's repo, or clear it when the view has no live repo. Resets
+  // the Proven/Likely toggle to its default (Proven) on every view switch. Called
+  // BEFORE a (re)render so a synchronous pass already carries the overlays when the
+  // cache is warm.
+  function applyViewEnrichment(key) {
+    currentViewKey = key;
+    currentRepo = (key && BUNDLES[key] && BUNDLES[key].repo) || null;
+    reachMode = "proven";
+    var entry = currentRepo && ENRICH[currentRepo];
+    exposure = (entry && entry.exposure) ? entry.exposure : {};
+    inferredEdges = (entry && entry.inferred) ? entry.inferred : [];
+    likelyReachable = (entry && entry.likely) ? entry.likely : [];
+    buildLikelyIndex();
+  }
+
+  // Fire the one enrichment fetch for a live-repo view (no-op once fetched). The
+  // repo rides the query string so one backend can serve several warm scans;
+  // ACME ("acme-api") also works with no param, so this stays backward-compatible.
+  function ensureEnrichment(key, token) {
+    var repo = (BUNDLES[key] && BUNDLES[key].repo) || null;
+    if (!repo) { updateExposureLegend(); updateReachModeUI(); return; }
+    var entry = enrichEntry(repo);
+    if (entry.fetched) { afterEnrichment(key, repo, token); return; }
+    if (typeof fetch !== "function") {
+      entry.fetched = true; updateExposureLegend(); updateReachModeUI(); return;
+    }
     var tries = 0;
     function attempt() {
-      fetch("/api/enrichment", { headers: { "Accept": "application/json" } }).then(function (r) {
+      fetch("/api/enrichment?repo=" + encodeURIComponent(repo),
+            { headers: { "Accept": "application/json" } }).then(function (r) {
         if (r.status === 503) {                         // scan not ready — retry a couple times
           if (++tries < 3) { setTimeout(attempt, 500 * tries); return null; }
           throw new Error("not ready");
@@ -2053,31 +2214,132 @@
         return r.json();
       }).then(function (d) {
         if (d === null) return;                         // a 503 retry is already scheduled
-        EXP_CACHE.fetched = true;
-        EXP_CACHE.data = (d && d.exposure && typeof d.exposure === "object") ? d.exposure : null;
-        afterExposure(token);
+        entry.fetched = true;
+        entry.exposure = (d && d.exposure && typeof d.exposure === "object") ? d.exposure : null;
+        entry.inferred = Array.isArray(d && d.inferred_edges) ? d.inferred_edges : [];
+        entry.likely = Array.isArray(d && d.likely_reachable) ? d.likely_reachable : [];
+        afterEnrichment(key, repo, token);
       }).catch(function () {
-        EXP_CACHE.fetched = true;
-        EXP_CACHE.data = null;                          // offline / network error — no overlay
-        afterExposure(token);
+        entry.fetched = true;
+        entry.exposure = null; entry.inferred = []; entry.likely = []; // degrade: no overlay
+        afterEnrichment(key, repo, token);
       });
     }
     attempt();
   }
 
-  // Apply the enrichment once it arrives, unless the user switched away mid-flight.
-  function afterExposure(token) {
-    if (token !== viewToken || currentViewKey !== "demo" || !EXP_CACHE.data) {
-      updateExposureLegend();
+  // Apply the enrichment once it arrives, unless the user switched away mid-flight
+  // (guarded by both the view token and the live view key, so a late response can
+  // never paint the wrong scan's overlay).
+  function afterEnrichment(key, repo, token) {
+    if (token !== viewToken || currentViewKey !== key) {
+      updateExposureLegend(); updateReachModeUI();
       return;
     }
-    exposure = EXP_CACHE.data;
+    var entry = enrichEntry(repo);
+    exposure = entry.exposure || {};
+    inferredEdges = entry.inferred || [];
+    likelyReachable = entry.likely || [];
+    buildLikelyIndex();
+    // Exposure side (Phase 1): repaint the route list + graph rings.
     renderEntryPoints();
     if (selectedEp) updateEpButtons(selectedEp);
     tintExposureNodes();
+    // Inferred side (Phase 2): the graph may have been built before the fetch
+    // resolved, so (re)inject the inferred edges, then apply the current mode.
+    refreshInferredElements();
+    applyReachMode();
     updateExposureLegend();
     var sel = selectedNodeId && model.index[selectedNodeId];
-    if (sel && sel.kind === "entrypoint") showDetail(sel); // repaint the open drawer with badges
+    if (sel) showDetail(sel); // repaint the open drawer with exposure + likely sections
+  }
+
+  /* ---------------------------------------------------------------- inferred edges / likely view
+     Phase 2 presentation layer. Inferred edges are added to cytoscape ONLY — never
+     to the data model — so trace(), computeDepths(), the funnel and every verdict
+     are computed on the deterministic graph exactly as before. The Proven/Likely
+     toggle just shows/hides these overlay edges and re-skins the likely-reachable
+     deps; it changes nothing about reachability or the counts. */
+
+  // (Re)inject the current view's inferred edges into the live graph. Idempotent:
+  // existing inferred edges are removed first, so it is safe to call after a fresh
+  // render AND again when a late enrichment response arrives. Endpoints already
+  // exist as real nodes (the bundle declares them), so no layout is needed.
+  function refreshInferredElements() {
+    if (!cy) return;
+    cy.edges("[inferred]").remove();
+    if (!inferredEdges.length) return;
+    var toAdd = [];
+    inferredEdges.forEach(function (ie, i) {
+      if (!ie || !model.index[ie.src] || !model.index[ie.dst]) return;
+      toAdd.push({ group: "edges", data: {
+        id: "inf\u0000" + ie.src + "\u0000" + ie.dst + "\u0000" + i,
+        source: ie.src, target: ie.dst, kind: "calls", inferred: 1
+      }});
+    });
+    if (toAdd.length) cy.add(toAdd);
+  }
+
+  function hasInferredData() {
+    return inferredEdges.length > 0 || Object.keys(likelyByDep).length > 0;
+  }
+
+  // Apply the current Proven/Likely mode to the graph: show/hide the inferred
+  // (dashed) edges and flag the likely-reachable deps so the violet marker style
+  // (and a LIKELY label) applies. Never touches vuln/vreach/tainted flags, so a
+  // dep's real verdict colour is preserved underneath.
+  function applyReachMode() {
+    var likely = reachMode === "likely";
+    document.body.classList.toggle("reach-likely", likely);
+    document.body.classList.toggle("reach-proven", !likely);
+    if (cy) {
+      cy.batch(function () {
+        cy.edges("[inferred]").style("display", likely ? "element" : "none");
+        cy.nodes().forEach(function (node) {
+          if (node.data("kind") !== "dependency") return;
+          var mark = likely && !!likelyByDep[node.id()];
+          node.data("likely", mark ? 1 : 0);
+          var m = model.index[node.id()];
+          if (m) node.data("label", mark ? labelFor(m) + "  ◇ LIKELY" : labelFor(m));
+        });
+      });
+    }
+    updateReachModeUI();
+  }
+
+  function setReachMode(mode) {
+    if (mode === reachMode) return;
+    if (mode === "likely" && !hasInferredData()) return; // inert without enrichment
+    reachMode = mode;
+    applyReachMode();
+    // The drawer's "Likely reachable (inferred)" copy is mode-independent, so no
+    // repaint is needed here (which also avoids re-firing the live AI fetch).
+  }
+
+  // Reflect mode + availability on the toggle control and its caption.
+  function updateReachModeUI() {
+    var ctrl = document.getElementById("reachmode");
+    if (!ctrl) return;
+    var has = hasInferredData();
+    ctrl.setAttribute("data-mode", reachMode);
+    ctrl.classList.toggle("is-inert", !has);
+    document.body.classList.toggle("has-inferred", has);
+    var pb = document.getElementById("reach-proven");
+    var lb = document.getElementById("reach-likely");
+    if (pb) pb.setAttribute("aria-pressed", String(reachMode === "proven"));
+    if (lb) {
+      lb.setAttribute("aria-pressed", String(reachMode === "likely"));
+      lb.disabled = !has;
+      lb.title = has ? "Show AI-inferred likely-reachable edges"
+                     : "No AI-inferred edges for this scan";
+    }
+    var cap = document.getElementById("reachmode-cap");
+    if (cap) {
+      cap.textContent = reachMode === "likely"
+        ? "Likely view · dashed violet edges and LIKELY markers are AI-inferred and advisory — verdicts and counts are unchanged."
+        : (has ? "Proven view · deterministic static paths only. Switch to Likely for AI-inferred edges."
+               : "Proven view · deterministic static paths only.");
+    }
   }
 
   // Build the legend's exposure swatches + the overlay toggle once, at boot.
@@ -2115,11 +2377,10 @@
     });
   }
 
-  // Show the exposure legend + toggle only when the demo view actually has
-  // enrichment data, and reflect the on/off state on the toggle + body.
+  // Show the exposure legend + toggle only when the current view actually has
+  // enrichment exposure data, and reflect the on/off state on the toggle + body.
   function updateExposureLegend() {
-    var has = currentViewKey === "demo" && !!EXP_CACHE.data &&
-      Object.keys(EXP_CACHE.data).length > 0;
+    var has = !!currentRepo && !!exposure && Object.keys(exposure).length > 0;
     document.body.classList.toggle("has-exposure", has);
     document.body.classList.toggle("exposure-off", has && !exposureOn);
     if (expToggleBtn) {
@@ -2215,6 +2476,10 @@
     renderDetailInitial();
     renderVulns();
     renderGraph();
+    // Phase-2 overlay: inject inferred edges (if any for this view) and apply the
+    // current Proven/Likely mode. No-op visuals when there is no enrichment.
+    refreshInferredElements();
+    applyReachMode();
     document.body.classList.toggle("has-vulns", !!(bundleMeta && findings.length));
     document.body.classList.toggle("has-transitive", model.nodes.some(isTransitiveDep));
     document.body.classList.toggle("is-focused", focusedMode);
@@ -2344,10 +2609,11 @@
     var reader = new FileReader();
     reader.onload = function () {
       try {
-        applyViewExposure(null); // a loaded file is not the ACME demo — no overlay
+        applyViewEnrichment(null); // a loaded file has no live repo — no enrichment
         loadAuto(JSON.parse(reader.result), f.name);
         setActiveView(null); // a loaded file is none of the switcher views
         updateExposureLegend();
+        updateReachModeUI();
       } catch (err) {
         el.scanname.textContent = "Could not read " + f.name +
           " — expected a scan graph (nodes array) or an audit bundle.";
@@ -2382,13 +2648,14 @@
     el.viewDemo.setAttribute("aria-pressed", which === "demo" ? "true" : "false");
     el.viewRedash.setAttribute("aria-pressed", which === "redash" ? "true" : "false");
     el.viewTransitive.setAttribute("aria-pressed", which === "transitive" ? "true" : "false");
+    if (el.viewPlugin) el.viewPlugin.setAttribute("aria-pressed", which === "pluginreports" ? "true" : "false");
     el.viewSample.setAttribute("aria-pressed", which === "sample" ? "true" : "false");
   }
 
   // The inline sample (vulnerable-app) — always available, and the only option
   // when the page is opened via file:// (no fetch).
   function showSample() {
-    applyViewExposure("sample"); // the inline sample is not the ACME demo — no overlay
+    applyViewEnrichment("sample"); // the inline sample has no live repo — no enrichment
     if (window.SAMPLE_BUNDLE && isBundle(window.SAMPLE_BUNDLE)) {
       loadBundle(window.SAMPLE_BUNDLE, "sample · vulnerable-app · audit");
     } else if (window.SAMPLE_GRAPH) {
@@ -2398,18 +2665,26 @@
     }
     setActiveView("sample");
     updateExposureLegend();
+    updateReachModeUI();
   }
 
   // Served bundles, fetched lazily on first use and cached. Each is rendered
   // through the normal path; focused mode for big graphs is decided by the
   // existing node-count threshold, not by which bundle this is.
+  // `repo` (optional) names the live warm scan behind a view, used for the
+  // /api/enrichment?repo=<name> overlay fetch. Views without one show no live
+  // enrichment (static bundle only).
   var BUNDLES = {
     demo:   { file: "demo-bundle.json",   label: "ACME API · layered Flask service · audit", btn: el.viewDemo,
+              repo: "acme-api",
               hint: "Open the dashboard from a local web server to load the ACME API demo bundle." },
     redash: { file: "redash-bundle.json", label: "redash · real-world repo (200 deps) · audit", btn: el.viewRedash,
               hint: "Open the dashboard from a local web server to load the redash bundle." },
     transitive: { file: "transitive-bundle.json", label: "transitive-app · npm direct+transitive", btn: el.viewTransitive,
               hint: "Open the dashboard from a local web server to load the transitive-app bundle." },
+    pluginreports: { file: "plugin-reports-bundle.json", label: "Plugin Reports · reflective Jinja2 render · audit", btn: el.viewPlugin,
+              repo: "plugin-reports",
+              hint: "Open the dashboard from a local web server to load the Plugin Reports bundle." },
     sample: { file: "healthy-bundle.json", label: "Healthy API · modern FastAPI service · audit", btn: el.viewSample,
               hint: "Open the dashboard from a local web server to load the Healthy API bundle." }
   };
@@ -2428,10 +2703,10 @@
            .then(function (b) { bundleCache[key] = b; return b; }));
     return ready.then(function (b) {
       if (token === viewToken) {
-        applyViewExposure(key);        // place the cached overlay (if any) before render
+        applyViewEnrichment(key);      // place the cached overlays (if any) before render
         loadBundle(b, spec.label);
-        if (key === "demo") ensureExposure(token);
-        else updateExposureLegend();
+        if (spec.repo) ensureEnrichment(key, token);
+        else { updateExposureLegend(); updateReachModeUI(); }
       }
       return true;
     }, function () {
@@ -2446,6 +2721,14 @@
   el.viewDemo.addEventListener("click", function () { showBundle("demo"); });
   el.viewRedash.addEventListener("click", function () { showBundle("redash"); });
   el.viewTransitive.addEventListener("click", function () { showBundle("transitive"); });
+  if (el.viewPlugin) el.viewPlugin.addEventListener("click", function () { showBundle("pluginreports"); });
+
+  // Proven / Likely toggle (Phase 2). Present always; inert (no-op) until the
+  // current view's enrichment carries inferred edges / likely-reachable deps.
+  var reachProvenBtn = document.getElementById("reach-proven");
+  var reachLikelyBtn = document.getElementById("reach-likely");
+  if (reachProvenBtn) reachProvenBtn.addEventListener("click", function () { setReachMode("proven"); });
+  if (reachLikelyBtn) reachLikelyBtn.addEventListener("click", function () { setReachMode("likely"); });
 
   /* ---------------------------------------------------------------- boot */
   // Default to the served demo bundle (a small, clean showcase app whose deep

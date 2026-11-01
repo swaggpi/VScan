@@ -41,6 +41,14 @@
   --safe:      #4FB286;  /* exploitability triage: likely unaffected */
   --safe-ink:  #7FD3AC;
 
+  /* AI-inferred reachability (Phase 2) — a violet held apart from amber
+     (reachable), red (exploitable) and green (triage-safe), so an inferred edge
+     or likely-reachable marker is never mistaken for a deterministic verdict. */
+  --infer:      #A98BF0;
+  --infer-soft: rgba(169, 139, 240, 0.14);
+  --infer-glow: rgba(169, 139, 240, 0.5);
+  --infer-ink:  #C6B2F6;
+
   --radius: 4px;
   --rail-w: 20rem;
   --detail-w: 21rem;
@@ -711,6 +719,18 @@ body.has-vulns .legend__item--vuln { display: flex; }
 .legend__item--transitive { display: none; }
 body.has-transitive .legend__item--transitive { display: flex; }
 
+/* AI-inferred legend rows (Phase 2) appear only when the current view carries
+   inferred enrichment. A dashed violet line for the inferred call edge, and a
+   dashed violet ring for the likely-reachable marker — matched to the canvas. */
+.dot--inferred {
+  width: 16px; height: 0;
+  border-radius: 0;
+  border-top: 2px dashed var(--infer);
+}
+.dot--likely { background: transparent; border: 2px dashed var(--infer); }
+.legend__item--inferred { display: none; }
+body.has-inferred .legend__item--inferred { display: flex; }
+
 /* ---------------------------------------------------------------- exposure overlay
    ADVISORY "exposure" layer (live /api/enrichment, ACME demo only). A separate,
    clearly-labelled context layer — kept visually apart from the deterministic
@@ -801,6 +821,110 @@ body.has-exposure .exp-toggle { display: inline-flex; }
    DOM (renders also skip it, so this is belt-and-braces). */
 body.exposure-off .ep__expo,
 body.exposure-off .exposure-sec { display: none; }
+
+/* ---------------------------------------------------------------- reach mode (Phase 2)
+   PROVEN / LIKELY toggle, a compact HUD in the canvas top-right. PROVEN is the
+   deterministic graph; LIKELY adds AI-inferred (dashed violet) edges + markers.
+   Always present; dimmed + non-interactive (.is-inert) when a scan carries no
+   inferred enrichment, so the control never implies data that is not there. */
+.reachmode {
+  position: absolute;
+  right: 1rem; top: 0.85rem;
+  z-index: 15;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.35rem;
+  max-width: 15rem;
+  pointer-events: none; /* only the buttons + caption are interactive targets */
+}
+.reachmode__seg {
+  display: inline-flex;
+  pointer-events: auto;
+  border: 1px solid var(--panel-edge);
+  border-radius: 999px;
+  background: rgba(8, 26, 44, 0.82);
+  overflow: hidden;
+}
+.reachmode__btn {
+  appearance: none;
+  border: 0;
+  margin: 0;
+  padding: 0.3rem 0.72rem;
+  background: transparent;
+  color: var(--ink-dim);
+  font: 600 0.62rem/1 var(--f-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+.reachmode__btn:hover:not([disabled]) { color: var(--ink); }
+.reachmode__btn:focus-visible { outline: 2px solid var(--infer); outline-offset: -2px; }
+/* PROVEN selected: amber, matching the deterministic reachability signal. */
+.reachmode__btn#reach-proven[aria-pressed="true"] {
+  background: var(--signal); color: var(--ground);
+}
+/* LIKELY selected: violet, matching the inferred overlay accent. */
+.reachmode__btn#reach-likely[aria-pressed="true"] {
+  background: var(--infer); color: var(--ground);
+}
+.reachmode__btn[disabled] { cursor: default; opacity: 0.45; }
+.reachmode__cap {
+  margin: 0;
+  pointer-events: none; /* never blocks panning the canvas beneath it */
+  max-width: 15rem;
+  padding: 0.3rem 0.5rem;
+  border-radius: var(--radius);
+  background: rgba(8, 26, 44, 0.78);
+  text-align: right;
+  font: 400 0.6rem/1.4 var(--f-mono);
+  color: var(--ink-mut);
+}
+/* In the Likely view the caption reads as the active advisory accent. */
+.reachmode[data-mode="likely"] .reachmode__cap { color: var(--infer-ink); }
+/* Inert: no inferred data for this scan — keep it present but clearly passive. */
+.reachmode.is-inert { opacity: 0.62; }
+.reachmode.is-inert .reachmode__cap { color: var(--ink-mut); }
+
+/* ---------------------------------------------------------------- likely-reachable drawer (Phase 2)
+   ADVISORY "Likely reachable (inferred)" section — a dashed VIOLET card, echoing
+   the exposure card's cool-advisory styling but in the inferred accent, so it is
+   never read as a deterministic verdict. Sits below the (unchanged) Status. */
+.advisory-flag--likely { border-color: var(--infer); color: var(--infer); }
+.likely-card {
+  display: flex; flex-direction: column; gap: 0.6rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px dashed rgba(169, 139, 240, 0.5);
+  border-radius: var(--radius);
+  background: var(--infer-soft);
+}
+.likely-card .prose strong { color: var(--infer-ink); font-weight: 600; }
+.likely-card .prose b { color: var(--infer-ink); font-weight: 600; }
+.likely-path { display: flex; flex-direction: column; gap: 0.3rem; }
+.likely-path__k {
+  font: 600 0.56rem/1 var(--f-mono);
+  letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--infer-ink);
+}
+.likely-path .path-steps {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem;
+  font: 500 0.68rem/1.4 var(--f-mono);
+  color: var(--ink-dim);
+  word-break: break-word;
+}
+.likely-path .path-step {
+  padding: 0.12rem 0.4rem;
+  border: 1px solid rgba(169, 139, 240, 0.4);
+  border-radius: 2px;
+  background: rgba(169, 139, 240, 0.08);
+}
+.likely-path .path-arr { color: var(--infer); }
+.likely-edge .ctxitem__detail code {
+  font: 500 0.7rem/1.3 var(--f-mono);
+  color: var(--infer-ink);
+  word-break: break-all;
+}
 
 /* ---------------------------------------------------------------- tooltip */
 .tooltip {
@@ -1315,6 +1439,9 @@ details[open] > summary .disc__chev { transform: rotate(90deg); }
 @media (max-width: 520px) {
   .funnel__stage { flex: 1 1 6rem; }
   .funnel__num { font-size: 1.2rem; }
+  /* On a phone the toggle stays; its caption would crowd the narrow canvas. */
+  .reachmode { top: 0.6rem; right: 0.6rem; }
+  .reachmode__cap { display: none; }
 }
 
 /* ---------------------------------------------------------------- AI attack analysis */

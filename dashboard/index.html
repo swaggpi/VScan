@@ -37,6 +37,9 @@
         <button class="seg" id="view-transitive" type="button" aria-pressed="false">
           <span class="seg__name">transitive-app</span>
         </button>
+        <button class="seg" id="view-pluginreports" type="button" aria-pressed="false">
+          <span class="seg__name">Plugin Reports</span>
+        </button>
         <button class="seg" id="view-sample" type="button" aria-pressed="false">
           <span class="seg__name">Healthy API</span>
         </button>
@@ -87,6 +90,17 @@
       <div class="stage__banner" id="banner" role="status" aria-live="polite" hidden></div>
       <div class="stage__canvas">
       <div class="stage__grid" aria-hidden="true"></div>
+      <!-- Proven / Likely toggle (Phase 2). PROVEN is the deterministic graph
+           exactly as today; LIKELY additionally shows AI-inferred (dashed violet)
+           call edges and marks likely-reachable deps. Inert when a scan carries no
+           inferred enrichment. Purely additive — verdicts/counts never change. -->
+      <div class="reachmode is-inert" id="reachmode" role="group" aria-label="Reachability mode" data-mode="proven">
+        <div class="reachmode__seg">
+          <button type="button" class="reachmode__btn" id="reach-proven" aria-pressed="true">Proven</button>
+          <button type="button" class="reachmode__btn" id="reach-likely" aria-pressed="false" disabled>Likely</button>
+        </div>
+        <p class="reachmode__cap" id="reachmode-cap">Proven view · deterministic static paths only.</p>
+      </div>
       <div id="graph" tabindex="0" role="application" aria-label="Repository code-path graph. Entry points on the left flow through functions to dependencies on the right. Select an entry point from the list to trace reachability."></div>
       <p class="stage__flow" aria-hidden="true">entry points <span>→</span> functions <span>→</span> dependencies</p>
       <div class="tooltip" id="tooltip" role="status" aria-live="polite" hidden></div>
@@ -106,6 +120,8 @@
         <span class="legend__item legend__item--vuln"><i class="dot dot--unsure"></i>reachable · unsure</span>
         <span class="legend__item legend__item--vuln"><i class="dot dot--tainted"></i>exploitable</span>
         <span class="legend__item legend__item--transitive"><i class="dot dot--trans"></i>transitive · off</span>
+        <span class="legend__item legend__item--inferred"><i class="dot dot--inferred"></i>inferred call · AI</span>
+        <span class="legend__item legend__item--inferred"><i class="dot dot--likely"></i>likely reachable · inferred</span>
       </div>
     </section>
 
