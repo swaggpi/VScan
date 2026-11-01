@@ -1020,14 +1020,22 @@
     if (exploit > 0 && pct > 99.9) pct = 99.9;
     var pctTxt = String(pct) + "%";
     var alerts = groupNum(total) + " alert" + (total === 1 ? "" : "s");
-    var verdict = exploit === 0
-      ? "VScan proves <b>none</b> are exploitable"
-      : exploit === total
+    var msg;
+    if (exploit === 0) {
+      // Honesty: with nothing proven-exploitable we state a TAINT-SCOPED result —
+      // zero dependencies with a proven exploit path — and never claim proof that
+      // none are exploitable or that the app is safe (this fires on the SSTI demo).
+      msg = 'A conventional scanner would flag <b>' + alerts + '</b>. ' +
+        'VScan found <b>0 dependencies with a proven exploit path</b> &mdash; ' +
+        'proven dependency taint paths only, not a guarantee the app is safe.';
+    } else {
+      var verdict = exploit === total
         ? "VScan proves <b>all " + groupNum(exploit) + "</b> " + (exploit === 1 ? "is" : "are") + " exploitable"
         : "VScan proves <b>" + groupNum(exploit) + "</b> " + (exploit === 1 ? "is" : "are") + " exploitable";
-    el.noise.innerHTML =
-      'A conventional scanner would flag <b>' + alerts + '</b>. ' + verdict +
-      (exploit === total ? "." : ' &mdash; <b class="noise__pct">' + pctTxt + ' noise removed.</b>');
+      msg = 'A conventional scanner would flag <b>' + alerts + '</b>. ' + verdict +
+        (exploit === total ? "." : ' &mdash; <b class="noise__pct">' + pctTxt + ' noise cut.</b>');
+    }
+    el.noise.innerHTML = msg;
     el.noise.style.setProperty("--noise-removed", pct + "%");
     el.noise.hidden = false;
   }
@@ -1094,6 +1102,12 @@
         focusedMeta.clustered + " more reach nothing vulnerable (grouped on the canvas).";
     } else {
       el.epNote.textContent = "Public routes the outside world can call.";
+    }
+    // While the per-repo overlays are still warming on the backend, say so — an
+    // absent exposure overlay should not read as "this scan has no exposure data".
+    var enEp = currentRepo && ENRICH[currentRepo];
+    if (enEp && ((enEp.warming && !enEp.fetched) || (enEp.attackWarming && !enEp.attackFetched))) {
+      el.epNote.textContent += "  ·  exposure & attack-surface analysis still warming…";
     }
 
     // Flat list for a handful of routes.
@@ -1648,6 +1662,12 @@
     // ADVISORY exposure block (live /api/enrichment, demo only) — clearly marked
     // as context, visually distinct from the deterministic vuln verdicts below.
     if (exposureOn && exposure[n.id]) html += exposureSectionHtml(exposure[n.id]);
+    else if (exposureOn) {
+      // No exposure finding for this route yet: if the overlay is still warming (or
+      // the server returned a degraded note), say so — don't look like "no exposure".
+      var en = currentRepo && ENRICH[currentRepo];
+      if (en) html += overlayWarmHtml(en.warming && !en.fetched, en.note, "Exposure");
+    }
 
     var res = trace(n.id);
     html += '<section class="dsec"><h2 class="dsec__h">Reaches <span class="dsec__count">' + res.deps.length + '</span></h2>';
@@ -1685,7 +1705,14 @@
     // code-level hypotheses for THIS route. Appended last and clearly framed, so
     // the deterministic Route/Reaches/assessment lead and the hypotheses read as a
     // separate, unverified lead. Absent (and so no-op) for any route without data.
-    html += attackSurfaceSectionHtml(n.id);
+    var atkHtml = attackSurfaceSectionHtml(n.id);
+    if (atkHtml) html += atkHtml;
+    else {
+      // No attack-surface finding for this route yet: surface warming/degraded state
+      // so an in-progress analysis never reads as a clean route.
+      var ea = currentRepo && ENRICH[currentRepo];
+      if (ea) html += overlayWarmHtml(ea.attackWarming && !ea.attackFetched, ea.attackNote, "Attack-surface");
+    }
 
     return html + '</div>';
   }
@@ -1806,6 +1833,13 @@
     function live() { return mySeq === aiSeq && document.body.contains(sec); }
     function show(h) { if (live()) body.innerHTML = h; }
     if (typeof fetch !== "function") { show(aiNoteHtml("AI analysis unavailable.")); return; }
+    // The current view's repo rides the query string so the backend explains THIS
+    // scan's finding, not whichever one is primary server-side (otherwise a
+    // non-primary view gets a foreign verdict + foreign file paths). Views with no
+    // live repo (redash/transitive/healthy/file loads) have no live analysis —
+    // skip the fetch rather than hit the primary by omission (mirrors enrichment).
+    var repo = currentRepo;
+    if (!repo) { show(aiNoteHtml("Live AI analysis isn't available for this scan.")); return; }
     var opts = {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1815,14 +1849,19 @@
       })
     };
     if (ctl) opts.signal = ctl.signal;
-    fetch("/api/explain", opts).then(function (r) {
-      if (r.status === 404) { show(aiNoteHtml("Live AI analysis is available for the ACME demo scan.")); return null; }
+    fetch("/api/explain?repo=" + encodeURIComponent(repo), opts).then(function (r) {
+      if (r.status === 404) { show(aiNoteHtml("Live AI analysis isn't available for this scan.")); return null; }
       if (r.status === 503) { show(aiNoteHtml("Scan still warming up — try again in a moment.")); return null; }
       if (!r.ok) throw new Error("http " + r.status);
       return r.json();
     }).then(function (d) {
       if (!d) return;
-      if (!d.narrative) throw new Error("empty");
+      // Degraded response (a `note`, no narrative): surface the note instead of a
+      // generic "unavailable" so warming/degraded never reads as a clean result.
+      if (!d.narrative) {
+        if (d.note) { show(aiNoteHtml(String(d.note))); return; }
+        throw new Error("empty");
+      }
       show(aiResultHtml(d));
     }).catch(function (e) {
       if (e && e.name === "AbortError") return;
@@ -2183,7 +2222,7 @@
     if (ex.authentication === "required") {
       html += '<span class="expo expo--auth" title="Authentication required">AUTH</span>';
     }
-    var origin = EXP_ORIGIN[ex.origin];
+    var origin = exposureOriginLabel(ex);
     var parts = [];
     if (origin) parts.push(esc(origin));
     if (ex.confidence) parts.push(esc(ex.confidence) + " confidence");
@@ -2198,7 +2237,7 @@
   // citations (doc path + snippet), all escaped, in a cool dashed card flagged
   // ADVISORY so it never reads as a deterministic verdict.
   function exposureSectionHtml(ex) {
-    var origin = EXP_ORIGIN[ex.origin] || "assessment";
+    var origin = exposureOriginLabel(ex) || "assessment";
     var html = '<section class="dsec exposure-sec"><h2 class="dsec__h">Exposure ' +
       '<span class="advisory-flag advisory-flag--expo">Advisory · ' + esc(origin) + '</span></h2>' +
       '<div class="exposure-card">' +
@@ -2233,12 +2272,44 @@
     });
   }
 
-  // The per-repo cache entry (created on demand).
+  // The per-repo cache entry (created on demand). `note`/`provenance` carry a
+  // degraded server note and the enrichment provenance; `warming`/`attackWarming`
+  // are true while a 503 poll is still in flight (so "warming" never looks like a
+  // clean result). `polling`/`attackPolling` guard against duplicate poll loops.
   function enrichEntry(repo) {
     if (!repo) return null;
     return ENRICH[repo] ||
       (ENRICH[repo] = { fetched: false, exposure: null, inferred: [], likely: [],
-                        attackFetched: false, attack: null });
+                        note: null, provenance: null, warming: false, polling: false,
+                        attackFetched: false, attack: null,
+                        attackNote: null, attackWarming: false, attackPolling: false });
+  }
+
+  // 503 ("scan not ready") backoff schedule. Per-repo overlays warm on the backend
+  // over MINUTES (sequential model calls), so a page opened during warm-up must keep
+  // polling on a widening interval — not cache empty after ~1.5s and show nothing
+  // until a manual reload. Widens to 30s and caps near ~3 min total, then degrades.
+  var WARM_RETRY_MS = [1500, 3000, 6000, 12000, 20000, 30000, 30000, 30000, 30000];
+
+  // The degraded/warming copy for an overlay drawer section that has no data yet:
+  // surface the server note, else a "still warming…" line — so a scan opened during
+  // warm-up or a degraded endpoint never looks identical to "nothing found".
+  function overlayWarmHtml(warming, note, label) {
+    if (note) return '<section class="dsec"><p class="dim-note">' + esc(String(note)) + '</p></section>';
+    if (warming) return '<section class="dsec"><p class="dim-note">' + esc(label + " analysis still warming…") + '</p></section>';
+    return "";
+  }
+
+  // The exposure origin tag: "doc-cited" vs "AI-inferred" by the finding's origin.
+  // But if NO model ran (provenance "offline-heuristic"), an inferred finding came
+  // from a heuristic, not the AI — so prefer a neutral "heuristic" label rather than
+  // implying a model produced it. Absent provenance keeps the plain origin label.
+  function exposureOriginLabel(ex) {
+    var base = EXP_ORIGIN[ex && ex.origin];
+    if (!base) return null;
+    var en = currentRepo && ENRICH[currentRepo];
+    if (en && en.provenance === "offline-heuristic" && ex && ex.origin === "inferred") return "heuristic";
+    return base;
   }
   function buildLikelyIndex() {
     likelyByDep = {};
@@ -2280,30 +2351,53 @@
     if (typeof fetch !== "function") {
       entry.fetched = true; updateExposureLegend(); updateReachModeUI(); return;
     }
+    if (entry.polling) { afterEnrichment(key, repo, token); return; } // a poll is already running
+    entry.polling = true;
     var tries = 0;
     function attempt() {
       fetch("/api/enrichment?repo=" + encodeURIComponent(repo),
             { headers: { "Accept": "application/json" } }).then(function (r) {
-        if (r.status === 503) {                         // scan not ready — retry a couple times
-          if (++tries < 3) { setTimeout(attempt, 500 * tries); return null; }
-          throw new Error("not ready");
+        if (r.status === 503) {                         // scan not ready — keep polling, widening
+          if (tries < WARM_RETRY_MS.length) {
+            entry.warming = true;
+            var delay = WARM_RETRY_MS[tries++];
+            reapplyEnrichment(repo);                    // reflect "warming" in the live view
+            setTimeout(attempt, delay);
+            return null;
+          }
+          throw new Error("not ready");                 // hard cap — give up, degrade
         }
         if (!r.ok) throw new Error("http " + r.status); // 404 / 5xx — degrade silently
         return r.json();
       }).then(function (d) {
         if (d === null) return;                         // a 503 retry is already scheduled
-        entry.fetched = true;
+        entry.fetched = true; entry.polling = false; entry.warming = false;
         entry.exposure = (d && d.exposure && typeof d.exposure === "object") ? d.exposure : null;
         entry.inferred = Array.isArray(d && d.inferred_edges) ? d.inferred_edges : [];
         entry.likely = Array.isArray(d && d.likely_reachable) ? d.likely_reachable : [];
-        afterEnrichment(key, repo, token);
+        entry.note = (d && typeof d.note === "string" && d.note) ? d.note : null;
+        entry.provenance = (d && typeof d.provenance === "string") ? d.provenance : null;
+        reapplyEnrichment(repo);                        // re-apply to whatever view is now live
       }).catch(function () {
-        entry.fetched = true;
+        entry.fetched = true; entry.polling = false; entry.warming = false;
         entry.exposure = null; entry.inferred = []; entry.likely = []; // degrade: no overlay
-        afterEnrichment(key, repo, token);
+        reapplyEnrichment(repo);
       });
     }
     attempt();
+  }
+
+  // Re-apply enrichment to the view that is live NOW (not the one that started the
+  // fetch), so a response arriving after a slow warm-up still paints — and a switch
+  // away is still respected, because afterEnrichment's own viewToken/currentViewKey
+  // guard passes only when the live view is this repo's.
+  function reapplyEnrichment(repo) {
+    if (currentRepo === repo && currentViewKey && BUNDLES[currentViewKey] &&
+        BUNDLES[currentViewKey].repo === repo) {
+      afterEnrichment(currentViewKey, repo, viewToken);
+    } else {
+      updateExposureLegend(); updateReachModeUI();
+    }
   }
 
   // Apply the enrichment once it arrives, unless the user switched away mid-flight
@@ -2600,30 +2694,51 @@
     var entry = enrichEntry(repo);
     if (entry.attackFetched) { afterAttackSurface(key, repo, token); return; }
     if (typeof fetch !== "function") { entry.attackFetched = true; updateDangerUI(); return; }
+    if (entry.attackPolling) { afterAttackSurface(key, repo, token); return; } // poll already running
+    entry.attackPolling = true;
     var tries = 0;
     function attempt() {
       fetch("/api/attack-surface?repo=" + encodeURIComponent(repo),
             { headers: { "Accept": "application/json" } }).then(function (r) {
-        if (r.status === 503) {                         // scan / analysis not ready — retry
-          if (++tries < 3) { setTimeout(attempt, 500 * tries); return null; }
-          throw new Error("not ready");
+        if (r.status === 503) {                         // analysis not ready — keep polling, widening
+          if (tries < WARM_RETRY_MS.length) {
+            entry.attackWarming = true;
+            var delay = WARM_RETRY_MS[tries++];
+            reapplyAttackSurface(repo);                 // reflect "warming" in the live view
+            setTimeout(attempt, delay);
+            return null;
+          }
+          throw new Error("not ready");                 // hard cap — give up, degrade
         }
         if (!r.ok) throw new Error("http " + r.status); // 404 / 5xx — degrade silently
         return r.json();
       }).then(function (d) {
         if (d === null) return;                         // a 503 retry is already scheduled
-        entry.attackFetched = true;
+        entry.attackFetched = true; entry.attackPolling = false; entry.attackWarming = false;
         entry.attack = (d && d.entrypoints && typeof d.entrypoints === "object")
           ? { entrypoints: d.entrypoints, summary: (d.summary && typeof d.summary === "object") ? d.summary : null }
           : null;
-        afterAttackSurface(key, repo, token);
+        entry.attackNote = (d && typeof d.note === "string" && d.note) ? d.note : null;
+        reapplyAttackSurface(repo);                     // re-apply to whatever view is now live
       }).catch(function () {
-        entry.attackFetched = true;
+        entry.attackFetched = true; entry.attackPolling = false; entry.attackWarming = false;
         entry.attack = null;                            // degrade: no markers, no overview
-        afterAttackSurface(key, repo, token);
+        reapplyAttackSurface(repo);
       });
     }
     attempt();
+  }
+
+  // Re-apply the attack surface to the view that is live NOW, so a response from a
+  // slow warm-up still paints; afterAttackSurface's viewToken/currentViewKey guard
+  // keeps a switch-away from painting the wrong scan.
+  function reapplyAttackSurface(repo) {
+    if (currentRepo === repo && currentViewKey && BUNDLES[currentViewKey] &&
+        BUNDLES[currentViewKey].repo === repo) {
+      afterAttackSurface(currentViewKey, repo, viewToken);
+    } else {
+      updateDangerUI();
+    }
   }
 
   // Apply the attack surface once it arrives, unless the user switched away
@@ -2686,7 +2801,15 @@
       '</div>';
 
     if (!ids.length) {
-      bodyEl.innerHTML = '<p class="dim-note">No AI-identified code-level risks for this scan.</p>';
+      // Distinguish "still warming" / degraded from a genuinely clean surface.
+      var ea = currentRepo && ENRICH[currentRepo];
+      if (ea && ea.attackWarming && !ea.attackFetched) {
+        bodyEl.innerHTML = '<p class="dim-note">Attack-surface analysis still warming…</p>';
+      } else if (ea && ea.attackNote) {
+        bodyEl.innerHTML = '<p class="dim-note">' + esc(String(ea.attackNote)) + '</p>';
+      } else {
+        bodyEl.innerHTML = '<p class="dim-note">No AI-identified code-level risks for this scan.</p>';
+      }
       return;
     }
     ids.sort(function (a, b) {

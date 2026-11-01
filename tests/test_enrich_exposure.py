@@ -295,6 +295,39 @@ def test_inferred_definite_claim_says_so_in_rationale():
     assert "inferred" in orphan["rationale"].lower()
 
 
+def test_shared_dep_internal_route_not_overclaimed_as_documented():
+    # An INTERNAL route shares a vulnerable dependency with a PUBLIC one. The
+    # dependency's exposure is judged internet-facing from the PUBLIC route's
+    # docs, but that verdict must NOT be presented as the internal route's OWN
+    # documented exposure (the over-claim the review found): the internal node
+    # caps at inferred/medium and the rationale says where it came from.
+    g = _graph()
+    reach = _reachability()
+    # requests (DEP_REQ) is now reachable from BOTH the public and internal EPs,
+    # so a single dependency-group assessment covers both routes.
+    reach.entrypoints[0].reachable_dependencies = [_reached(DEP_REQ, "requests")]
+    reach.entrypoints[1].reachable_dependencies = [_reached(DEP_REQ, "requests")]
+    overlay = exposure_overlay(g, reach, _correlation(), _OfflineClient())
+
+    public = overlay[EP_PUBLIC]
+    internal = overlay[EP_INTERNAL]
+
+    # Both inherit the group's internet-facing verdict ...
+    assert public["value"] == "internet-facing"
+    assert internal["value"] == "internet-facing"
+    # ... but only the PUBLIC route's OWN docs state it -> doc-grounded, high.
+    assert public["origin"] == "doc"
+    assert public["confidence"] == "high"
+    # The INTERNAL route's own docs ("internal use only") do NOT support the
+    # internet-facing value: never "doc-cited / high", only inferred / medium.
+    assert internal["origin"] == "inferred"
+    assert internal["confidence"] == "medium"
+    rationale = internal["rationale"].lower()
+    assert "inferred" in rationale and "another route" in rationale
+    # Its own real citation is still surfaced (we did not drop the evidence).
+    assert internal["sources"][0]["doc"] == "docs/internal.md"
+
+
 # -- cardinal rule: no mutation ----------------------------------------------
 
 

@@ -10,8 +10,9 @@ read-only MCP tools over the warmed primary scan (see :mod:`scanner.web.chat`).
 The set of demo repos comes from ``VSCAN_DEMO_REPOS`` (comma-separated) and
 defaults to the single ``VSCAN_DEMO_REPO`` (default ``/app/samples/acme-api`` --
 the in-container path). Each repo is warmed on its own background thread, and
-``/api/explain`` searches across every warmed scan, so extra demo scans can be
-added later with zero code change.
+the per-repo endpoints (explain / chat / enrichment / attack-surface) resolve an
+optional ``?repo=`` basename against the warmed scans (no param -> primary), so
+extra demo scans can be added later with zero code change.
 
 The scans reuse the MCP server's cached accessors verbatim
 (:mod:`scanner.mcp.state`) -- no scanning logic is reimplemented here. The
@@ -223,6 +224,28 @@ def _repo_name(repo_path: str) -> str:
     return os.path.basename(os.path.normpath(repo_path)) or repo_path
 
 
+def _resolve_scan(repo: str | None) -> "_ScanState | None":
+    """Select the warmed scan for an optional ``repo`` basename.
+
+    The single resolution shared by every per-repo endpoint (explain / chat /
+    enrichment / attack-surface): ``None`` selects the PRIMARY scan
+    (``app.state.scan``); a given ``repo`` is matched against ``app.state.scans``
+    by the basename of each scan's ``repo_path`` (see :func:`_repo_name`) and a
+    non-match raises 404 ``"unknown repo"``. Returns the matched scan -- which
+    may still be warming; the caller decides what "ready" means -- or ``None``
+    when there is no primary scan at all (startup race).
+    """
+    if repo is None:
+        return getattr(app.state, "scan", None)
+    scans: list[_ScanState] = getattr(app.state, "scans", [])
+    scan_state = next(
+        (s for s in scans if _repo_name(s.repo_path) == repo), None
+    )
+    if scan_state is None:
+        raise HTTPException(status_code=404, detail="unknown repo")
+    return scan_state
+
+
 def _warm_scan(repo_path: str) -> dict[str, Any]:
     """Run the REAL vscan scan for ``repo_path`` and return counts + findings.
 
@@ -370,9 +393,10 @@ def _run_warm_scan(scan_state: _ScanState, repo_path: str) -> None:
 async def _lifespan(app: FastAPI):
     """Kick off one warm scan per demo repo on daemon threads; never block startup.
 
-    ``app.state.scans`` holds every scan (what ``/api/explain`` searches);
-    ``app.state.scan`` aliases the first one so ``/api/health`` keeps reporting
-    the primary repo exactly as before.
+    ``app.state.scans`` holds every scan (what the per-repo endpoints resolve a
+    ``?repo=`` against); ``app.state.scan`` aliases the first one so
+    ``/api/health`` and the no-``repo`` endpoints keep reporting the primary
+    repo exactly as before.
     """
     repo_paths = _demo_repo_paths()
     scans = [
@@ -442,18 +466,24 @@ class ChatRequest(BaseModel):
 
 
 @app.post("/api/chat")
-def chat(req: ChatRequest) -> dict[str, Any]:
+def chat(req: ChatRequest, repo: str | None = None) -> dict[str, Any]:
     """Free-form advisory chat: the model answers by calling vscan's read-only
-    MCP tools over the warmed primary scan.
+    MCP tools over one warmed scan.
+
+    The optional ``repo`` query param selects which warmed scan grounds the
+    chat, resolved exactly like ``/api/enrichment?repo=`` (see
+    :func:`_resolve_scan`): no param -> the primary scan; a basename of a warmed
+    scan's ``repo_path`` -> that scan; an unknown ``repo`` -> 404 ``"unknown
+    repo"``. The agent then runs over the MATCHED scan's ``repo_path``.
 
     Returns 200 ``{"reply", "tool_calls", "model"}`` where ``tool_calls`` is the
     "tools used" trace (``{name, arguments, ok, summary}`` per executed tool).
-    503 ``"scan not ready"`` while the primary scan is still warming (or
+    503 ``"scan not ready"`` while the selected scan is still warming (or
     degraded): there is nothing to ground the chat on yet. Otherwise the loop
     runs via :func:`scanner.web.chat.run_chat`, which never raises -- an
     unavailable model or any mid-loop failure degrades to a graceful 200 reply.
     """
-    scan_state: _ScanState | None = getattr(app.state, "scan", None)
+    scan_state = _resolve_scan(repo)
     if scan_state is None or scan_state.current_status() != "ready":
         raise HTTPException(status_code=503, detail="scan not ready")
 
@@ -474,35 +504,38 @@ class ExplainRequest(BaseModel):
 
 
 @app.post("/api/explain")
-def explain(req: ExplainRequest) -> dict[str, Any]:
+def explain(req: ExplainRequest, repo: str | None = None) -> dict[str, Any]:
     """Return a live, grounded attack-narrative + remediation for one finding.
 
-    Looks the finding up by ``(dependency_id, vuln_id)`` across every warmed
-    scan and hands it to :func:`scanner.web.explain.explain_finding`, which
-    phrases the finding's own facts via the configured model (provenance
-    ``"llm"``) or a deterministic grounded template (``"offline-heuristic"``).
-    Never raises to the client:
+    The optional ``repo`` query param selects which warmed scan to look the
+    finding up in, resolved exactly like ``/api/enrichment?repo=`` (see
+    :func:`_resolve_scan`): no param -> the primary scan; a basename of a warmed
+    scan's ``repo_path`` -> that scan; an unknown ``repo`` -> 404 ``"unknown
+    repo"``. The finding is looked up in -- and its narrative computed against
+    (graph/reachability/correlation/findings) -- the MATCHED scan only, so the
+    same ``(dependency_id, vuln_id)`` in two repos never cross-resolves.
 
-    * 200 with the explanation when a matching finding is found in a ready scan;
-    * 503 ``"scan not ready"`` when no match is found yet but a scan is still
-      warming (the finding may still appear);
-    * 404 ``"finding not in live scan"`` when every scan has finished warming and
-      no finding matches.
+    The matched finding is handed to
+    :func:`scanner.web.explain.explain_finding`, which phrases the finding's own
+    facts via the configured model (provenance ``"llm"``) or a deterministic
+    grounded template (``"offline-heuristic"``). Never 500s:
+
+    * 200 with the explanation when the finding is found in the matched, ready scan;
+    * 503 ``"scan not ready"`` while the matched scan is still warming (or there
+      is no primary scan yet) -- the finding may still appear;
+    * 404 ``"finding not in live scan"`` when the matched scan is ready but no
+      finding matches.
     """
-    scans: list[_ScanState] = getattr(app.state, "scans", [])
-
-    for scan_state in scans:
-        if scan_state.current_status() != "ready":
-            continue
-        finding = explain_mod.find_finding(
-            scan_state.findings_snapshot(), req.dependency_id, req.vuln_id
-        )
-        if finding is not None:
-            return explain_mod.explain_finding(finding, LLMClient())
-
-    if any(scan_state.current_status() == "scanning" for scan_state in scans):
+    scan_state = _resolve_scan(repo)
+    if scan_state is None or scan_state.current_status() != "ready":
         raise HTTPException(status_code=503, detail="scan not ready")
-    raise HTTPException(status_code=404, detail="finding not in live scan")
+
+    finding = explain_mod.find_finding(
+        scan_state.findings_snapshot(), req.dependency_id, req.vuln_id
+    )
+    if finding is None:
+        raise HTTPException(status_code=404, detail="finding not in live scan")
+    return explain_mod.explain_finding(finding, LLMClient())
 
 
 @app.get("/api/enrichment")
@@ -529,15 +562,7 @@ def enrichment(repo: str | None = None) -> dict[str, Any]:
     confirmed / tainted state or verdict; ``likely_reachable`` is a lead, never a
     proven reachability result.
     """
-    if repo is None:
-        scan_state: _ScanState | None = getattr(app.state, "scan", None)
-    else:
-        scans: list[_ScanState] = getattr(app.state, "scans", [])
-        scan_state = next(
-            (s for s in scans if _repo_name(s.repo_path) == repo), None
-        )
-        if scan_state is None:
-            raise HTTPException(status_code=404, detail="unknown repo")
+    scan_state = _resolve_scan(repo)
     if scan_state is None:
         raise HTTPException(status_code=503, detail="scan not ready")
     exposure, note = scan_state.exposure_snapshot()
@@ -577,15 +602,7 @@ def attack_surface(repo: str | None = None) -> dict[str, Any]:
     True``); nothing here changes any finding's reachable/confirmed/tainted
     state or verdict.
     """
-    if repo is None:
-        scan_state: _ScanState | None = getattr(app.state, "scan", None)
-    else:
-        scans: list[_ScanState] = getattr(app.state, "scans", [])
-        scan_state = next(
-            (s for s in scans if _repo_name(s.repo_path) == repo), None
-        )
-        if scan_state is None:
-            raise HTTPException(status_code=404, detail="unknown repo")
+    scan_state = _resolve_scan(repo)
     if scan_state is None:
         raise HTTPException(status_code=503, detail="scan not ready")
     surface = scan_state.attack_surface_snapshot()

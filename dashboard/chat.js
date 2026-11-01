@@ -5,7 +5,10 @@
 (function () {
   "use strict";
 
-  var ENDPOINT = "/api/chat";
+  // The chat page is the PRIMARY-project assistant, so the repo is explicit on
+  // the endpoint — the backend resolves findings against this scan, not whichever
+  // one happens to be primary server-side.
+  var ENDPOINT = "/api/chat?repo=acme-api";
   var TIMEOUT_MS = 120000;
   var STARTERS = [
     "What's actually exploitable in this project?",

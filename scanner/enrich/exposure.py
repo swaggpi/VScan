@@ -36,7 +36,16 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from ..agent.assess import _context_source, _doc_evidence, assess_findings
+from ..agent.assess import (
+    _AUTH_PHRASES,
+    _context_source,
+    _doc_evidence,
+    _find_phrase,
+    _INTERNAL_PHRASES,
+    _NOAUTH_PHRASES,
+    _PUBLIC_PHRASES,
+    assess_findings,
+)
 
 if TYPE_CHECKING:  # avoid hard import cycles / heavy deps at import time
     from ..agent import Assessment, LLMClient
@@ -62,6 +71,16 @@ _AUTH_RANK = {"none": 2, "required": 1, "unknown": 0}
 _INFERRED_CLAUSE = (
     " No supporting documentation was cited for this entry point, so this is an "
     "inferred (not documentation-grounded) judgement."
+)
+
+# Appended when THIS entry point does have linked docs, but they do NOT state
+# the asserted exposure value -- the value was carried over from another route
+# that reaches the same vulnerable dependency. We must not present that as this
+# route's own documented exposure (grounding requirement).
+_SHARED_DEP_CLAUSE = (
+    " This exposure is inferred from another route that reaches the same "
+    "vulnerable dependency; this entry point's own linked documentation does "
+    "not establish it."
 )
 
 
@@ -153,17 +172,47 @@ def _aggregate(
     return value, authentication, rationale, provenance
 
 
-def _confidence(value: str, authentication: str, has_sources: bool) -> str:
+def _confidence(value: str, authentication: str, docs_support: bool) -> str:
     """Map the certainty of a verdict to ``high`` / ``medium`` / ``low``.
 
-    A definite exposure/auth verdict backed by cited docs is ``high``; the same
-    verdict with no cited doc (an inferred call) is ``medium``; with no definite
-    signal at all it is ``low``.
+    A definite exposure/auth verdict whose claim is stated by THIS entry point's
+    own cited docs (``docs_support``) is ``high``; the same verdict without that
+    support (inferred -- no doc, or a doc that does not state it) is ``medium``;
+    with no definite signal at all it is ``low``.
     """
     has_signal = value != "unknown" or authentication != "unknown"
     if not has_signal:
         return "low"
-    return "high" if has_sources else "medium"
+    return "high" if docs_support else "medium"
+
+
+def _docs_support_claim(
+    sources: list[dict[str, str]], value: str, authentication: str
+) -> bool:
+    """True iff THIS entry point's own doc snippets state the asserted signal.
+
+    The winning ``value`` / ``authentication`` for an entry point can be carried
+    over from a sibling route that reaches the same vulnerable dependency (the
+    agent layer judges a dependency's reaching entry points together). A claim is
+    only documentation-grounded for THIS route when the route's own cited
+    snippets actually contain the matching exposure/auth phrase (reusing the same
+    grounded, negation-aware phrase scan the offline assessment uses). The
+    exposure value is checked first; when exposure is ``unknown`` a definite
+    authentication verdict can still be doc-grounded on its own evidence.
+    """
+    if not sources:
+        return False
+    text = " ".join(s.get("snippet", "") for s in sources)
+    if value == "internet-facing":
+        return _find_phrase(text, _PUBLIC_PHRASES) is not None
+    if value == "internal":
+        return _find_phrase(text, _INTERNAL_PHRASES) is not None
+    # Exposure is unknown: fall back to grounding a definite auth verdict.
+    if authentication == "none":
+        return _find_phrase(text, _NOAUTH_PHRASES) is not None
+    if authentication == "required":
+        return _find_phrase(text, _AUTH_PHRASES) is not None
+    return False
 
 
 def exposure_overlay(
@@ -248,12 +297,27 @@ def exposure_overlay(
                     "and no documentation is linked to it; exposure is unknown."
                 )
 
-        origin = "doc" if sources else "inferred"
-        confidence = _confidence(value, authentication, bool(sources))
+        has_signal = value != "unknown" or authentication != "unknown"
+        # A definite signal is "doc-grounded" only when THIS route's own cited
+        # docs state it -- not merely because the route has some doc linked.
+        docs_support = _docs_support_claim(sources, value, authentication)
+        confidence = _confidence(value, authentication, docs_support)
 
-        # A definite claim with no doc citation must own that it is inferred.
-        if origin == "inferred" and (value != "unknown" or authentication != "unknown"):
-            rationale = rationale + _INFERRED_CLAUSE
+        if not has_signal:
+            # No definite exposure/auth to assert: the citation (if any) is still
+            # surfaced, but the verdict is an honest unknown/low.
+            origin = "doc" if sources else "inferred"
+        elif docs_support:
+            # This route's OWN docs state the asserted signal -> grounded.
+            origin = "doc"
+        else:
+            # A definite signal this route's own docs do NOT establish: either it
+            # has no docs at all, or its docs do not support the value (carried
+            # over from a sibling route sharing the vulnerable dependency). Never
+            # present that as documented -- it is inferred (capped at medium by
+            # ``_confidence``), and the rationale says where it came from.
+            origin = "inferred"
+            rationale = rationale + (_SHARED_DEP_CLAUSE if sources else _INFERRED_CLAUSE)
 
         overlay[ep_id] = {
             "label": label,
