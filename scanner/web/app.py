@@ -40,6 +40,7 @@ from pydantic import BaseModel
 
 from scanner.agent import LLMClient
 from scanner.correlate import report
+from scanner.enrich import exposure_overlay
 from scanner.mcp import state
 from scanner.taint import compute_taint
 from scanner.web import chat as chat_mod
@@ -68,6 +69,14 @@ class _ScanState:
     exploitable: int = 0
     findings: list[dict[str, Any]] = field(default_factory=list)
     error: str | None = None
+    # Advisory, additive Phase-1 EXPOSURE overlay (see scanner.enrich.exposure):
+    # per public entry point, whether the docs place it internet-facing vs.
+    # internal and whether it is auth-gated. Warmed on a background thread AFTER
+    # the scan is ready so health/explain/chat go live immediately; ``None``
+    # until ready. ``exposure_note`` carries a degrade reason if it could not be
+    # built (the overlay then stays ``{}`` rather than failing the endpoint).
+    exposure: dict[str, Any] | None = None
+    exposure_note: str | None = None
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def snapshot(self) -> dict[str, Any]:
@@ -111,6 +120,24 @@ class _ScanState:
         """Return a shallow copy of the cached findings list under the lock."""
         with self.lock:
             return list(self.findings)
+
+    def set_exposure(
+        self, exposure: dict[str, Any], *, note: str | None = None
+    ) -> None:
+        """Cache the advisory exposure overlay (and an optional degrade note)."""
+        with self.lock:
+            self.exposure = exposure
+            self.exposure_note = note
+
+    def exposure_snapshot(self) -> tuple[dict[str, Any] | None, str | None]:
+        """Return ``(exposure_copy_or_None, note)`` under the lock.
+
+        ``None`` means the overlay is not warmed yet (still scanning or still
+        computing); a dict (possibly ``{}`` with a note) means it is ready.
+        """
+        with self.lock:
+            exposure = dict(self.exposure) if self.exposure is not None else None
+            return exposure, self.exposure_note
 
 
 def _demo_repo_path() -> str:
@@ -168,8 +195,31 @@ def _warm_scan(repo_path: str) -> dict[str, Any]:
     }
 
 
+def _warm_exposure_overlay(repo_path: str) -> dict[str, Any]:
+    """Build the advisory per-entry-point EXPOSURE overlay for a warm repo.
+
+    Reuses the same cached graph/reachability/correlation accessors the warm
+    scan populated (no re-scan, no extra network), then promotes the agent
+    layer's advisory exposure judgement into an entry-point-keyed overlay (see
+    :func:`scanner.enrich.exposure.exposure_overlay`). Read-only and additive:
+    it never changes a finding's reachable/confirmed/tainted state or the graph.
+    The model is used iff ``LLM_*`` is configured; otherwise the overlay falls
+    back to the deterministic offline heuristic and still returns grounded data.
+    """
+    graph, corr = state.get_correlation(repo_path, offline=False)
+    _, reach = state.get_reachability(repo_path)
+    return exposure_overlay(graph, reach, corr, LLMClient())
+
+
 def _run_warm_scan(scan_state: _ScanState, repo_path: str) -> None:
-    """Background worker: warm the scan and record ready/degraded. Never raises."""
+    """Background worker: warm the scan and record ready/degraded. Never raises.
+
+    Once the scan is ready (so health/explain/chat are live immediately), the
+    SAME background thread goes on to warm the advisory exposure overlay and
+    cache it on the scan state. The overlay is additive and never affects the
+    scan result; any failure degrades to an empty overlay with a note rather
+    than crashing the thread or the server.
+    """
     try:
         result = _warm_scan(repo_path)
     except Exception as exc:  # noqa: BLE001 - degrade gracefully, never crash startup
@@ -180,6 +230,12 @@ def _run_warm_scan(scan_state: _ScanState, repo_path: str) -> None:
         exploitable=result["exploitable"],
         findings=result["findings"],
     )
+    try:
+        scan_state.set_exposure(_warm_exposure_overlay(repo_path))
+    except Exception as exc:  # noqa: BLE001 - advisory overlay degrades, never crashes
+        scan_state.set_exposure(
+            {}, note=f"exposure overlay unavailable: {type(exc).__name__}: {exc}"
+        )
 
 
 @asynccontextmanager
@@ -319,3 +375,32 @@ def explain(req: ExplainRequest) -> dict[str, Any]:
     if any(scan_state.current_status() == "scanning" for scan_state in scans):
         raise HTTPException(status_code=503, detail="scan not ready")
     raise HTTPException(status_code=404, detail="finding not in live scan")
+
+
+@app.get("/api/enrichment")
+def enrichment() -> dict[str, Any]:
+    """Return the advisory, additive per-entry-point EXPOSURE overlay.
+
+    The overlay (see :mod:`scanner.enrich.exposure`) is warmed on a background
+    thread AFTER the primary scan is ready, so this endpoint reports:
+
+    * 503 ``"scan not ready"`` while the scan is still warming OR the overlay is
+      still being built (there is nothing to serve yet);
+    * 200 ``{"repo", "exposure": {<ep_id>: {...}}}`` once the overlay is ready
+      (with an extra ``"note"`` if it degraded to an empty overlay on error).
+
+    It is a pure reader of cached state and never 500s: the overlay computation
+    already degrades to an empty overlay with a note, and nothing here raises.
+    The overlay is ADVISORY -- it never changes any finding's reachable /
+    confirmed / tainted state or verdict.
+    """
+    scan_state: _ScanState | None = getattr(app.state, "scan", None)
+    if scan_state is None:
+        raise HTTPException(status_code=503, detail="scan not ready")
+    exposure, note = scan_state.exposure_snapshot()
+    if exposure is None:
+        raise HTTPException(status_code=503, detail="scan not ready")
+    payload: dict[str, Any] = {"repo": scan_state.repo, "exposure": exposure}
+    if note:
+        payload["note"] = note
+    return payload

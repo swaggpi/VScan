@@ -59,6 +59,17 @@
   var usageByDep = {};        // dep node id -> usage entry, built from `usage`
   var selectedNodeId = null;  // node whose datasheet the detail panel shows
 
+  // ADVISORY exposure overlay — live from GET /api/enrichment, for the ACME
+  // "demo" scan only. Purely additive context on entry points (internet-facing
+  // vs internal, auth, doc/AI provenance); it never touches the deterministic
+  // vulnerability verdicts/colors/graph. Empty for every other view and whenever
+  // the backend is absent, so the dashboard renders exactly as it does today.
+  var exposure = {};              // entrypoint id -> exposure record for the CURRENT view
+  var exposureOn = true;          // overlay visible? (legend toggle)
+  var currentViewKey = null;      // which switcher view is live; overlay only for "demo"
+  var EXP_CACHE = { fetched: false, data: null }; // one fetch, cached across view switches
+  var expToggleBtn = null;        // the legend's show/hide-overlay toggle
+
   // Focused-view state. When a loaded graph exceeds LARGE_GRAPH we render only
   // the security-relevant subgraph; these hold the full-repo totals and the
   // curation counts the banner reports. Empty/false for small graphs.
@@ -216,6 +227,18 @@
         "width": 42, "height": 42, "color": "#F7CE78", "font-weight": 600
       }},
 
+      /* ADVISORY exposure overlay (live /api/enrichment, demo only): a subtle
+         ring marks where an entry point sits. INTERNAL gets a cool-blue ring,
+         distinct from the amber internet-facing default — the amber entrypoint
+         fill is untouched. Declared BEFORE the .dim/.lit/.focus/.selected rules
+         so an active trace or a selection still overrides this quiet ring. */
+      { selector: 'node[expo = "internal"]', style: {
+        "overlay-color": "#6FB8E0", "overlay-opacity": 0.18, "overlay-padding": 6
+      }},
+      { selector: 'node[expo = "public"]', style: {
+        "overlay-color": "#F2B134", "overlay-opacity": 0.12, "overlay-padding": 6
+      }},
+
       /* focused-view only: the compact stand-in for the entry points that reach
          no vulnerable dependency, so the canvas isn't N loose dots */
       { selector: 'node[kind = "epcluster"]', style: {
@@ -276,6 +299,10 @@
       { selector: 'edge[kind = "imports"], edge[kind = "contains"], edge[kind = "declares"], edge[kind = "documents"]', style: {
         "line-color": "#283F57", "width": 0.7, "opacity": 0.32
       }},
+      // `documents` edges are doc-provenance (a doc mentions a node), not code
+      // flow, so they read as dotted hairlines. Derived purely from edge.kind —
+      // present in any bundle, independent of the live exposure overlay.
+      { selector: 'edge[kind = "documents"]', style: { "line-style": "dotted" }},
 
       /* off the call-flow spine (unreached functions, module/file/doc) — kept
          visible but visually secondary. Declared before .dim so an active trace
@@ -342,7 +369,10 @@
         // Deterministic escalation flags: the vulnerable function was reached
         // (symbol_match=confirmed), and attacker input reaches it (taint=tainted).
         confirmed: vs && vs.symbolConfirmed ? 1 : 0,
-        tainted: vs && vs.tainted ? 1 : 0
+        tainted: vs && vs.tainted ? 1 : 0,
+        // ADVISORY exposure tag (entry points only, "" otherwise). Drives the
+        // subtle internal/public ring; never affects any vuln flag above.
+        expo: n.kind === "entrypoint" ? exposureTagFor(n.id) : ""
       }});
     });
     model.edges.forEach(function (e) {
@@ -914,6 +944,17 @@
     path.className = "ep__path";
     path.textContent = a.path || n.name || n.id;
     btn.appendChild(method); btn.appendChild(path);
+    // ADVISORY exposure chips, when the overlay is on and this route is enriched.
+    var ex = exposureOn ? exposure[n.id] : null;
+    if (ex) {
+      var chipHtml = exposureChips(ex, true);
+      if (chipHtml) {
+        var row = document.createElement("span");
+        row.className = "ep__expo expo-chips";
+        row.innerHTML = chipHtml; // built only from esc()'d values — safe
+        btn.appendChild(row);
+      }
+    }
     btn.addEventListener("click", function () {
       if (selectedEp === n.id) { resetView(); } else { lightTrace(n.id, false); }
     });
@@ -1485,6 +1526,10 @@
       (a.handler ? '<dt>Handler</dt><dd>' + esc(a.handler) + '</dd>' : "") +
       '</dl></section>';
 
+    // ADVISORY exposure block (live /api/enrichment, demo only) — clearly marked
+    // as context, visually distinct from the deterministic vuln verdicts below.
+    if (exposureOn && exposure[n.id]) html += exposureSectionHtml(exposure[n.id]);
+
     var res = trace(n.id);
     html += '<section class="dsec"><h2 class="dsec__h">Reaches <span class="dsec__count">' + res.deps.length + '</span></h2>';
     if (res.deps.length) {
@@ -1893,6 +1938,197 @@
     });
   }
 
+  /* ---------------------------------------------------------------- exposure overlay
+     Advisory "exposure" layer. Where the data comes from: a single GET
+     /api/enrichment (same-origin), fired only for the ACME "demo" view and
+     cached in EXP_CACHE across view switches (the backend only has the ACME
+     scan). On 503 ("scan not ready") a couple of retries back off; on 404 / a
+     non-ACME view / offline / any network error the overlay simply never
+     appears — no error UI, no console spam. Stale fetches are dropped by a
+     viewToken + currentViewKey check, so switching bundles can't paint the
+     wrong overlay. Everything here is additive context on entry points. */
+
+  var EXP_VALUE = {
+    "internet-facing": { cls: "expo--public",   label: "PUBLIC" },
+    "internal":        { cls: "expo--internal", label: "INTERNAL" },
+    "unknown":         { cls: "expo--unknown",  label: "unverified" }
+  };
+  var EXP_ORIGIN = { doc: "doc-cited", inferred: "AI-inferred" };
+
+  // Entry-point node's exposure tag for the graph ("public" | "internal" | "").
+  function exposureTagFor(id) {
+    var ex = exposureOn ? exposure[id] : null;
+    if (!ex) return "";
+    return ex.value === "internet-facing" ? "public" : (ex.value === "internal" ? "internal" : "");
+  }
+
+  // The exposure value badge. `compact` (entry-point list) drops the quiet
+  // "unverified" so the list stays uncluttered; the drawer shows it.
+  function exposureValueChip(ex, compact) {
+    var v = EXP_VALUE[ex.value];
+    if (!v) return "";
+    if (compact && ex.value !== "internet-facing" && ex.value !== "internal") return "";
+    return '<span class="expo ' + v.cls + '">' + esc(v.label) + '</span>';
+  }
+
+  // The chip row shared by the list and the drawer header: value badge, an AUTH
+  // lock chip when auth is required, and a quiet origin + confidence tag. Every
+  // piece is built only from esc()'d server text.
+  function exposureChips(ex, compact) {
+    if (!ex) return "";
+    var html = exposureValueChip(ex, compact);
+    if (ex.authentication === "required") {
+      html += '<span class="expo expo--auth" title="Authentication required">AUTH</span>';
+    }
+    var origin = EXP_ORIGIN[ex.origin];
+    var parts = [];
+    if (origin) parts.push(esc(origin));
+    if (ex.confidence) parts.push(esc(ex.confidence) + " confidence");
+    if (parts.length) {
+      html += '<span class="expo-tag" title="Advisory: exposure provenance and confidence">' +
+        parts.join(" · ") + '</span>';
+    }
+    return html;
+  }
+
+  // The drawer exposure section: the chip row, the rationale and the source
+  // citations (doc path + snippet), all escaped, in a cool dashed card flagged
+  // ADVISORY so it never reads as a deterministic verdict.
+  function exposureSectionHtml(ex) {
+    var origin = EXP_ORIGIN[ex.origin] || "assessment";
+    var html = '<section class="dsec exposure-sec"><h2 class="dsec__h">Exposure ' +
+      '<span class="advisory-flag advisory-flag--expo">Advisory · ' + esc(origin) + '</span></h2>' +
+      '<div class="exposure-card">' +
+      '<div class="expo-chips expo-chips--drawer">' + exposureChips(ex, false) + '</div>';
+    if (ex.rationale) {
+      html += '<p class="prose prose--quote clamp">' + esc(ex.rationale) + '</p>' + moreBtn();
+    }
+    var srcs = Array.isArray(ex.sources) ? ex.sources : [];
+    if (srcs.length) {
+      html += '<div class="ctxgroup"><div class="ctxgroup__h">Sources ' +
+        '<span class="dsec__count">' + srcs.length + '</span></div>';
+      srcs.forEach(function (s) {
+        html += '<div class="docref"><span class="docref__src">' + esc((s && s.doc) || "doc") + '</span>' +
+          '<div class="snip__text clamp">' + esc(String((s && s.snippet) || "").trim()) + '</div>' + moreBtn() + '</div>';
+      });
+      html += '</div>';
+    }
+    html += '<p class="advisory-foot">An advisory exposure assessment — where this route is reachable from and whether it needs auth. It adds context; it does not change the deterministic vulnerability verdicts.</p>' +
+      '</div></section>';
+    return html;
+  }
+
+  // Refresh the entry-point rings on the live graph when the overlay changes
+  // (toggle, or the fetch resolving after the first render).
+  function tintExposureNodes() {
+    if (!cy) return;
+    cy.batch(function () {
+      cy.nodes().forEach(function (node) {
+        if (node.data("kind") !== "entrypoint") return;
+        node.data("expo", exposureTagFor(node.id()));
+      });
+    });
+  }
+
+  // Point `exposure` at the cached map for the demo view, or clear it otherwise.
+  // Called BEFORE a (re)render so the synchronous pass already carries badges
+  // when the cache is warm.
+  function applyViewExposure(key) {
+    currentViewKey = key;
+    exposure = (key === "demo" && EXP_CACHE.data) ? EXP_CACHE.data : {};
+  }
+
+  // Fire the one enrichment fetch for the demo view (no-op once fetched).
+  function ensureExposure(token) {
+    if (EXP_CACHE.fetched) { updateExposureLegend(); return; }
+    if (typeof fetch !== "function") { EXP_CACHE.fetched = true; EXP_CACHE.data = null; return; }
+    var tries = 0;
+    function attempt() {
+      fetch("/api/enrichment", { headers: { "Accept": "application/json" } }).then(function (r) {
+        if (r.status === 503) {                         // scan not ready — retry a couple times
+          if (++tries < 3) { setTimeout(attempt, 500 * tries); return null; }
+          throw new Error("not ready");
+        }
+        if (!r.ok) throw new Error("http " + r.status); // 404 / 5xx — degrade silently
+        return r.json();
+      }).then(function (d) {
+        if (d === null) return;                         // a 503 retry is already scheduled
+        EXP_CACHE.fetched = true;
+        EXP_CACHE.data = (d && d.exposure && typeof d.exposure === "object") ? d.exposure : null;
+        afterExposure(token);
+      }).catch(function () {
+        EXP_CACHE.fetched = true;
+        EXP_CACHE.data = null;                          // offline / network error — no overlay
+        afterExposure(token);
+      });
+    }
+    attempt();
+  }
+
+  // Apply the enrichment once it arrives, unless the user switched away mid-flight.
+  function afterExposure(token) {
+    if (token !== viewToken || currentViewKey !== "demo" || !EXP_CACHE.data) {
+      updateExposureLegend();
+      return;
+    }
+    exposure = EXP_CACHE.data;
+    renderEntryPoints();
+    if (selectedEp) updateEpButtons(selectedEp);
+    tintExposureNodes();
+    updateExposureLegend();
+    var sel = selectedNodeId && model.index[selectedNodeId];
+    if (sel && sel.kind === "entrypoint") showDetail(sel); // repaint the open drawer with badges
+  }
+
+  // Build the legend's exposure swatches + the overlay toggle once, at boot.
+  // The static legend lives in index.html; we only append to it here.
+  function setupExposureLegend() {
+    var legend = document.querySelector(".legend");
+    if (!legend) return;
+    var t = document.createElement("button");
+    t.type = "button";
+    t.className = "exp-toggle";
+    t.setAttribute("aria-pressed", "true");
+    t.innerHTML = '<span class="exp-toggle__dot" aria-hidden="true"></span>' +
+      '<span class="exp-toggle__lbl">Exposure overlay</span>';
+    t.addEventListener("click", function () {
+      exposureOn = !exposureOn;
+      renderEntryPoints();
+      if (selectedEp) updateEpButtons(selectedEp);
+      tintExposureNodes();
+      var sel = selectedNodeId && model.index[selectedNodeId];
+      if (sel && sel.kind === "entrypoint") showDetail(sel);
+      updateExposureLegend();
+    });
+    expToggleBtn = t;
+    legend.appendChild(t);
+    [
+      ['<i class="dot dot--expo-public"></i>', "internet-facing (PUBLIC)"],
+      ['<i class="dot dot--expo-internal"></i>', "internal"],
+      ['<i class="dot dot--expo-auth"></i>', "auth required"],
+      ['<i class="dot dot--expo-doc"></i>', "doc-cited vs AI-inferred"]
+    ].forEach(function (it) {
+      var s = document.createElement("span");
+      s.className = "legend__item legend__item--exposure";
+      s.innerHTML = it[0] + esc(it[1]);
+      legend.appendChild(s);
+    });
+  }
+
+  // Show the exposure legend + toggle only when the demo view actually has
+  // enrichment data, and reflect the on/off state on the toggle + body.
+  function updateExposureLegend() {
+    var has = currentViewKey === "demo" && !!EXP_CACHE.data &&
+      Object.keys(EXP_CACHE.data).length > 0;
+    document.body.classList.toggle("has-exposure", has);
+    document.body.classList.toggle("exposure-off", has && !exposureOn);
+    if (expToggleBtn) {
+      expToggleBtn.setAttribute("aria-pressed", String(exposureOn));
+      var lbl = expToggleBtn.querySelector(".exp-toggle__lbl");
+      if (lbl) lbl.textContent = exposureOn ? "Exposure overlay" : "Exposure overlay · hidden";
+    }
+  }
+
   /* ---------------------------------------------------------------- graph events */
   function bindGraphEvents() {
     cy.on("tap", "node", function (evt) {
@@ -2108,8 +2344,10 @@
     var reader = new FileReader();
     reader.onload = function () {
       try {
+        applyViewExposure(null); // a loaded file is not the ACME demo — no overlay
         loadAuto(JSON.parse(reader.result), f.name);
         setActiveView(null); // a loaded file is none of the switcher views
+        updateExposureLegend();
       } catch (err) {
         el.scanname.textContent = "Could not read " + f.name +
           " — expected a scan graph (nodes array) or an audit bundle.";
@@ -2150,6 +2388,7 @@
   // The inline sample (vulnerable-app) — always available, and the only option
   // when the page is opened via file:// (no fetch).
   function showSample() {
+    applyViewExposure("sample"); // the inline sample is not the ACME demo — no overlay
     if (window.SAMPLE_BUNDLE && isBundle(window.SAMPLE_BUNDLE)) {
       loadBundle(window.SAMPLE_BUNDLE, "sample · vulnerable-app · audit");
     } else if (window.SAMPLE_GRAPH) {
@@ -2158,6 +2397,7 @@
       el.reachBody.innerHTML = '<p class="reach-none">No bundled sample found. Use “Load a scan” to open a graph.json or an audit bundle.</p>';
     }
     setActiveView("sample");
+    updateExposureLegend();
   }
 
   // Served bundles, fetched lazily on first use and cached. Each is rendered
@@ -2187,7 +2427,12 @@
            .then(function (r) { if (!r.ok) throw new Error("http " + r.status); return r.json(); })
            .then(function (b) { bundleCache[key] = b; return b; }));
     return ready.then(function (b) {
-      if (token === viewToken) loadBundle(b, spec.label);
+      if (token === viewToken) {
+        applyViewExposure(key);        // place the cached overlay (if any) before render
+        loadBundle(b, spec.label);
+        if (key === "demo") ensureExposure(token);
+        else updateExposureLegend();
+      }
       return true;
     }, function () {
       spec.btn.disabled = true;
@@ -2206,5 +2451,6 @@
   // Default to the served demo bundle (a small, clean showcase app whose deep
   // reachable paths render in full). If the fetch fails (e.g. opened via
   // file://), fall back to the inline sample exactly as before.
+  setupExposureLegend();
   showBundle("demo");
 })();

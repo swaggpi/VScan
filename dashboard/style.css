@@ -711,6 +711,97 @@ body.has-vulns .legend__item--vuln { display: flex; }
 .legend__item--transitive { display: none; }
 body.has-transitive .legend__item--transitive { display: flex; }
 
+/* ---------------------------------------------------------------- exposure overlay
+   ADVISORY "exposure" layer (live /api/enrichment, ACME demo only). A separate,
+   clearly-labelled context layer — kept visually apart from the deterministic
+   vulnerability verdicts (amber = reachable, red = exploitable), so it is never
+   mistaken for one. Everything here is new; no vuln rule is touched. */
+
+/* Entry-point list: a wrapped chip row spanning the button's two columns. */
+.ep__expo { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.15rem; }
+.expo-chips { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; }
+.expo-chips--drawer { margin-bottom: 0.1rem; }
+
+/* Shared exposure chip — neutral by default so it cannot read as a vuln tag. */
+.expo {
+  display: inline-flex; align-items: center; gap: 0.28rem;
+  padding: 0.16rem 0.42rem;
+  border: 1px solid var(--hair);
+  border-radius: 999px;
+  font: 600 0.56rem/1 var(--f-mono);
+  letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--ink-dim);
+  white-space: nowrap;
+}
+/* internet-facing = the attack surface: amber (NOT red — red is a verdict). */
+.expo--public   { color: var(--signal-ink); border-color: rgba(242,177,52,0.5); background: var(--signal-soft); }
+/* internal = cool blue, muted. */
+.expo--internal { color: var(--dep); border-color: rgba(111,184,224,0.45); background: rgba(111,184,224,0.08); }
+/* unknown = quiet, dashed "unverified". */
+.expo--unknown  { color: var(--ink-mut); border-style: dashed; }
+/* auth required = a small lock chip (CSS-drawn padlock shackle). */
+.expo--auth     { color: var(--ink); border-color: var(--panel-edge); }
+.expo--auth::before {
+  content: ""; flex: none;
+  width: 0.46rem; height: 0.4rem;
+  border: 1.2px solid currentColor; border-bottom: 0;
+  border-top-left-radius: 0.46rem; border-top-right-radius: 0.46rem;
+}
+/* origin + confidence = the quietest tag. */
+.expo-tag {
+  display: inline-flex; align-items: center;
+  padding: 0.14rem 0.38rem;
+  font: 500 0.56rem/1 var(--f-mono);
+  letter-spacing: 0.04em;
+  color: var(--ink-mut);
+  border: 1px dashed var(--hair);
+  border-radius: 2px;
+  white-space: nowrap;
+}
+
+/* Drawer exposure section — a cool dashed card (echoes the advisory summary
+   card, but cool-toned) so it clearly reads as context, not a verdict. */
+.exposure-card {
+  display: flex; flex-direction: column; gap: 0.5rem;
+  padding: 0.6rem 0.7rem;
+  border: 1px dashed rgba(111,184,224,0.4);
+  border-radius: var(--radius);
+  background: rgba(111,184,224,0.06);
+}
+.advisory-flag--expo { border-color: var(--dep); color: var(--dep); }
+
+/* Legend: exposure swatches + the overlay toggle, shown only when the demo view
+   actually carries enrichment data (body.has-exposure, set by app.js). */
+.dot--expo-public   { background: var(--signal-soft); border: 2px solid var(--signal); }
+.dot--expo-internal { background: rgba(111,184,224,0.12); border: 2px solid var(--dep); }
+.dot--expo-auth     { background: transparent; border: 1.5px solid var(--ink-dim); border-radius: 50% 50% 2px 2px; }
+.dot--expo-doc      { background: linear-gradient(135deg, var(--signal) 0 50%, var(--dep) 50% 100%); }
+.legend__item--exposure { display: none; }
+body.has-exposure .legend__item--exposure { display: flex; }
+.exp-toggle {
+  display: none;
+  align-items: center; gap: 0.4rem;
+  padding: 0.3rem 0.6rem;
+  border: 1px solid var(--panel-edge);
+  border-radius: 999px;
+  background: rgba(111,184,224,0.06);
+  color: var(--ink-dim);
+  font: 500 0.64rem/1 var(--f-mono);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+body.has-exposure .exp-toggle { display: inline-flex; }
+.exp-toggle:hover { color: var(--ink); border-color: var(--dep); }
+.exp-toggle:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+.exp-toggle__dot { width: 9px; height: 9px; border-radius: 50%; flex: none; background: var(--dep); box-shadow: 0 0 6px rgba(111,184,224,0.5); }
+.exp-toggle[aria-pressed="false"] { color: var(--ink-mut); }
+.exp-toggle[aria-pressed="false"] .exp-toggle__dot { background: transparent; border: 1.5px solid var(--ink-mut); box-shadow: none; }
+
+/* Defensive: with the overlay toggled off, hide any exposure UI still in the
+   DOM (renders also skip it, so this is belt-and-braces). */
+body.exposure-off .ep__expo,
+body.exposure-off .exposure-sec { display: none; }
+
 /* ---------------------------------------------------------------- tooltip */
 .tooltip {
   position: absolute;
