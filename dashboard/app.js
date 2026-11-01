@@ -40,6 +40,19 @@
   // Mirrors --infer. INFER_INK is the lighter label tint.
   var INFER = "#A98BF0";
   var INFER_INK = "#C6B2F6";
+  // ADVISORY code-level attack-surface accent (Tier-A AI pen-tester). A hot
+  // magenta/rose held apart from EVERY deterministic hue — the amber reachability
+  // signal, the red (ALERT) exploitable/vuln accent and the violet (INFER) likely
+  // marker — so an AI-identified code-level HYPOTHESIS on an entry point can never
+  // be read as a proven/confirmed/exploitable verdict. Graded by worst severity.
+  var DANGER = "#FF4FA3";
+  var DANGER_INK = "#FF9AC6";
+  var DANGER_SEV_COLOR = {
+    critical: "#FF2E86", high: "#FF5FA2", medium: "#FF84B8", low: "#E59BC4"
+  };
+  // Ranking ladders for ordering findings (severity first, then confidence).
+  var DANGER_SEV_RANK = { critical: 4, high: 3, medium: 2, low: 1 };
+  var CONF_RANK = { high: 3, medium: 2, low: 1 };
 
   var cy = null;
   var graphFitEles = null;  // the collection runLayout framed, reused on refit
@@ -93,6 +106,18 @@
   var likelyReachable = [];       // [{dependency_id,name,confidence,via:[node ids]}]
   var likelyByDep = {};           // dep node id -> likely_reachable entry
   var reachMode = "proven";       // "proven" (default) | "likely"
+
+  // ADVISORY Tier-A attack surface — live from GET /api/attack-surface?repo=<name>,
+  // for the same live-repo views as the enrichment overlay (acme-api, plugin-reports).
+  // Each public entry point may carry AI-identified CODE-LEVEL vulnerability
+  // HYPOTHESES in the app's OWN code (SSTI, injection, path traversal, SSRF, …).
+  // They are UNVERIFIED leads (provenance "ai-hypothesis", advisory true) and are
+  // kept entirely distinct from the deterministic dependency findings/verdicts and
+  // the reachability funnel — they never feed buildModel()/trace()/the counts.
+  var attackSurface = {};         // ep id -> { label, exposure, findings:[...] } (current view)
+  var attackSummary = null;       // { total_findings, by_severity, entrypoints_with_findings }
+  var dangerOpen = false;         // Danger Overview panel visible?
+  var dangerFocusEp = null;       // entry point the overview is focused on, or null
 
   // Focused-view state. When a loaded graph exceeds LARGE_GRAPH we render only
   // the security-relevant subgraph; these hold the full-repo totals and the
@@ -319,6 +344,33 @@
         "overlay-color": INFER, "overlay-opacity": 0.16, "overlay-padding": 7
       }},
 
+      /* ADVISORY code-level attack-surface marker (Tier-A AI pen-tester). An entry
+         point whose OWN code the AI flagged with a candidate vulnerability gets a
+         DISTINCT danger indicator: a DOUBLE magenta ring + a soft magenta halo, and
+         a "⚠" glyph prepended to its label. Deliberately UNLIKE every deterministic
+         state — not the solid-red exploitable dep, not the red/blue striped "unsure"
+         dep, not the dashed-violet LIKELY marker, not the amber lit trace — so it
+         reads as a separate, weaker, advisory lead. Graded by worst severity.
+         Declared alongside the other advisory overlays (before .dim/.lit/.focus/
+         .selected) so an active trace or a selection still overrides it. */
+      { selector: 'node[danger = 1]', style: {
+        "border-color": DANGER, "border-width": 3.5, "border-style": "double",
+        "color": DANGER_INK,
+        "overlay-color": DANGER, "overlay-opacity": 0.2, "overlay-padding": 8
+      }},
+      { selector: 'node[dangersev = "critical"]', style: {
+        "border-color": DANGER_SEV_COLOR.critical, "overlay-color": DANGER_SEV_COLOR.critical
+      }},
+      { selector: 'node[dangersev = "high"]', style: {
+        "border-color": DANGER_SEV_COLOR.high, "overlay-color": DANGER_SEV_COLOR.high
+      }},
+      { selector: 'node[dangersev = "medium"]', style: {
+        "border-color": DANGER_SEV_COLOR.medium, "overlay-color": DANGER_SEV_COLOR.medium
+      }},
+      { selector: 'node[dangersev = "low"]', style: {
+        "border-color": DANGER_SEV_COLOR.low, "overlay-color": DANGER_SEV_COLOR.low
+      }},
+
       // Connections are thin, straight lines between layers — like the synapses
       // of a feed-forward network. No arrowheads by default (direction is the
       // vertical layering, and the amber trace shows the climb when lit).
@@ -415,9 +467,14 @@
     var eles = [];
     model.nodes.forEach(function (n) {
       var vs = vulnByDep[n.id];
+      // ADVISORY code-level danger marker (entry points only): worst severity of
+      // this route's AI-identified attack-surface findings, "" when none. Drives
+      // the distinct magenta danger ring + the "⚠" label glyph; never touches any
+      // vuln flag below or the reachability model.
+      var dsev = n.kind === "entrypoint" ? dangerSevFor(n.id) : "";
       eles.push({ data: {
         id: n.id, kind: n.kind,
-        label: labelFor(n),
+        label: (dsev ? "⚠ " : "") + labelFor(n),
         name: n.name || n.id,
         // Overlay flags (0 unless an audit bundle marked this dependency).
         vuln: vs ? 1 : 0,
@@ -429,7 +486,11 @@
         tainted: vs && vs.tainted ? 1 : 0,
         // ADVISORY exposure tag (entry points only, "" otherwise). Drives the
         // subtle internal/public ring; never affects any vuln flag above.
-        expo: n.kind === "entrypoint" ? exposureTagFor(n.id) : ""
+        expo: n.kind === "entrypoint" ? exposureTagFor(n.id) : "",
+        // ADVISORY code-level danger marker (entry points only). "danger" gates
+        // the magenta ring; "dangersev" grades it by worst severity.
+        danger: dsev ? 1 : 0,
+        dangersev: dsev
       }});
     });
     model.edges.forEach(function (e) {
@@ -1620,6 +1681,12 @@
       html += '<section class="dsec">' + disclosure("Mentioned in docs", docsHtml(docs), false) + '</section>';
     }
 
+    // ADVISORY attack-surface section (live /api/attack-surface) — AI-identified
+    // code-level hypotheses for THIS route. Appended last and clearly framed, so
+    // the deterministic Route/Reaches/assessment lead and the hypotheses read as a
+    // separate, unverified lead. Absent (and so no-op) for any route without data.
+    html += attackSurfaceSectionHtml(n.id);
+
     return html + '</div>';
   }
 
@@ -2013,6 +2080,10 @@
     // Expand/collapse clamped snippets and docstrings (only when truly overflowing).
     // Dependency drawer: kick off the live AI analysis (or cancel a stale one).
     loadAiAnalysis(root.querySelector(".ai-sec"));
+    // "Open in Danger Overview" link(s) in the attack-surface section.
+    Array.prototype.forEach.call(root.querySelectorAll(".danger-open"), function (btn) {
+      btn.addEventListener("click", function () { openDangerOverview(btn.getAttribute("data-ep") || null); });
+    });
     Array.prototype.forEach.call(root.querySelectorAll(".more[data-clamp]"), function (btn) {
       var target = btn.previousElementSibling;
       if (!target || !target.classList.contains("clamp") || target.scrollHeight - target.clientHeight < 2) { btn.remove(); return; }
@@ -2166,7 +2237,8 @@
   function enrichEntry(repo) {
     if (!repo) return null;
     return ENRICH[repo] ||
-      (ENRICH[repo] = { fetched: false, exposure: null, inferred: [], likely: [] });
+      (ENRICH[repo] = { fetched: false, exposure: null, inferred: [], likely: [],
+                        attackFetched: false, attack: null });
   }
   function buildLikelyIndex() {
     likelyByDep = {};
@@ -2189,6 +2261,12 @@
     inferredEdges = (entry && entry.inferred) ? entry.inferred : [];
     likelyReachable = (entry && entry.likely) ? entry.likely : [];
     buildLikelyIndex();
+    // Point the current-view attack surface at this repo's cache (or clear it),
+    // and close any open Danger Overview so a view switch never shows stale leads.
+    var atk = (entry && entry.attack) ? entry.attack : null;
+    attackSurface = (atk && atk.entrypoints) ? atk.entrypoints : {};
+    attackSummary = (atk && atk.summary) ? atk.summary : null;
+    if (dangerOpen) closeDangerOverview();
   }
 
   // Fire the one enrichment fetch for a live-repo view (no-op once fetched). The
@@ -2388,6 +2466,280 @@
       var lbl = expToggleBtn.querySelector(".exp-toggle__lbl");
       if (lbl) lbl.textContent = exposureOn ? "Exposure overlay" : "Exposure overlay · hidden";
     }
+  }
+
+  /* ---------------------------------------------------------------- attack surface (Tier-A AI)
+     ADVISORY code-level attack-surface layer (live GET /api/attack-surface?repo=<name>).
+     For each public entry point the Tier-A AI pen-tester flags candidate CODE-LEVEL
+     vulnerabilities in the app's OWN code as UNVERIFIED HYPOTHESES (provenance
+     "ai-hypothesis", advisory true). They are DISTINCT from the deterministic
+     dependency findings and are NEVER shown as proven/confirmed/exploitable. This
+     layer is additive only: it drives a danger marker on entry-point nodes, an
+     advisory drawer section, a dedicated Danger Overview panel and a legend row —
+     it never touches the funnel, the dependency verdicts/colors, the exposure/
+     likely overlays, or the reachability model. The fetch mirrors the enrichment
+     overlay (503-retry, 404/offline silent-degrade, stale-fetch guard). */
+
+  // One entry point's findings (always an array; [] when absent).
+  function epFindings(epId) {
+    var e = attackSurface && attackSurface[epId];
+    return (e && Array.isArray(e.findings)) ? e.findings : [];
+  }
+  // Worst severity across a set of findings ("" when none / all unrated).
+  function worstSeverity(findings) {
+    var best = "", bestRank = 0;
+    (findings || []).forEach(function (f) {
+      var s = String((f && f.severity) || "").toLowerCase();
+      var r = DANGER_SEV_RANK[s] || 0;
+      if (r > bestRank) { bestRank = r; best = s; }
+    });
+    return best;
+  }
+  // The danger severity for an entry-point node, or "" (no marker).
+  function dangerSevFor(epId) {
+    if (!dangerDataPresent()) return "";
+    return worstSeverity(epFindings(epId));
+  }
+  // Does the current view carry ANY attack-surface finding at all?
+  function dangerDataPresent() {
+    if (!attackSurface) return false;
+    return Object.keys(attackSurface).some(function (id) { return epFindings(id).length > 0; });
+  }
+  // Order: severity (critical→low), then confidence (high→low).
+  function cmpFinding(a, b) {
+    var sa = DANGER_SEV_RANK[String((a && a.severity) || "").toLowerCase()] || 0;
+    var sb = DANGER_SEV_RANK[String((b && b.severity) || "").toLowerCase()] || 0;
+    if (sb !== sa) return sb - sa;
+    var ca = CONF_RANK[String((a && a.confidence) || "").toLowerCase()] || 0;
+    var cb = CONF_RANK[String((b && b.confidence) || "").toLowerCase()] || 0;
+    return cb - ca;
+  }
+  // Location of a finding — the backend puts file/line/function at the top level,
+  // but the contract also allows a nested `location` object, so handle both.
+  function findingLoc(f) {
+    var loc = (f && f.location && typeof f.location === "object") ? f.location : {};
+    function pick(k) { return loc[k] != null ? loc[k] : (f ? f[k] : null); }
+    return { file: pick("file"), line: pick("line"), fn: pick("function") };
+  }
+  // A severity chip, graded by danger severity (never a deterministic-verdict tag).
+  function dangerSevChip(sev) {
+    var s = String(sev || "").toLowerCase();
+    var cls = DANGER_SEV_RANK[s] ? s : "unrated";
+    return '<span class="dsev dsev--' + cls + '">' + esc(s ? s.toUpperCase() : "UNRATED") + '</span>';
+  }
+  // One finding card — shared by the drawer section and the Danger Overview. ALL
+  // server text is escaped (rationale through the Markdown-safe renderer, which
+  // escapes first). `endpoint` adds a route line (used in a non-grouped context).
+  function findingCardHtml(f, endpoint) {
+    f = f || {};
+    var loc = findingLoc(f);
+    var locStr = (loc.file ? String(loc.file) : "") + (loc.line != null ? ":" + loc.line : "");
+    var html = '<article class="dfind">';
+    html += '<header class="dfind__head">' + dangerSevChip(f.severity) +
+      '<span class="dfind__class">' + esc(f.vuln_class || "unspecified") + '</span>' +
+      (f.confidence ? '<span class="dfind__conf">' + esc(String(f.confidence)) + ' confidence</span>' : "") +
+      '</header>';
+    if (f.title) html += '<p class="dfind__title">' + esc(String(f.title)) + '</p>';
+    if (endpoint) html += '<p class="dfind__ep"><span class="dfind__k">ENTRY POINT</span> ' + esc(String(endpoint)) + '</p>';
+    if (locStr || loc.fn) {
+      html += '<p class="dfind__loc">' + (locStr ? esc(locStr) : "") +
+        (loc.fn ? ' · <span class="dfind__fn">' + esc(String(loc.fn)) + '()</span>' : "") + '</p>';
+    }
+    if (f.rationale) html += aiParasHtml(String(f.rationale), "dfind__rationale");
+    if (f.data_flow) {
+      html += '<p class="dfind__flow"><span class="dfind__k">DATA FLOW</span> ' +
+        '<code>' + esc(String(f.data_flow)) + '</code></p>';
+    }
+    if (f.snippet) html += '<pre class="codeblock dfind__snip">' + esc(String(f.snippet)) + '</pre>';
+    html += '</article>';
+    return html;
+  }
+  // The drawer "Attack surface" section for one entry point. Empty string (no-op)
+  // when the route has no findings. Clearly headed + footed as UNVERIFIED and
+  // separate from the dependency verdicts.
+  function attackSurfaceSectionHtml(epId) {
+    var findings = epFindings(epId);
+    if (!findings.length) return "";
+    var sorted = findings.slice().sort(cmpFinding);
+    var html = '<section class="dsec attack-sec"><h2 class="dsec__h">Attack surface ' +
+      '<span class="advisory-flag advisory-flag--danger">AI · UNVERIFIED</span></h2>' +
+      '<div class="attack-card">' +
+      '<p class="attack-banner">ATTACK SURFACE · AI-IDENTIFIED · UNVERIFIED</p>' +
+      '<p class="advisory-foot">AI-identified candidate vulnerabilities in this app’s own code — ' +
+      'hypotheses, not proven, confirmed or exploitable. They are separate from the dependency ' +
+      'verdicts below and do not change them or the funnel.</p>';
+    sorted.forEach(function (f) { html += findingCardHtml(f, null); });
+    html += '<button type="button" class="danger-open" data-ep="' + esc(String(epId)) + '">' +
+      'Open in Danger Overview →</button>';
+    html += '</div></section>';
+    return html;
+  }
+
+  // Repaint the entry-point danger rings + label glyphs on the live graph (after
+  // the fetch resolves, or on a toggle). Mirrors tintExposureNodes().
+  function tintDangerNodes() {
+    if (!cy) return;
+    cy.batch(function () {
+      cy.nodes().forEach(function (node) {
+        if (node.data("kind") !== "entrypoint") return;
+        var sev = dangerSevFor(node.id());
+        node.data("danger", sev ? 1 : 0);
+        node.data("dangersev", sev || "");
+        var m = model.index[node.id()];
+        if (m) node.data("label", (sev ? "⚠ " : "") + labelFor(m));
+      });
+    });
+  }
+
+  // The per-repo attack-surface cache entry fetch (no-op once fetched). Mirrors
+  // ensureEnrichment: 503 retries a couple of times, 404 / offline / any error
+  // degrades silently to no findings.
+  function ensureAttackSurface(key, token) {
+    var repo = (BUNDLES[key] && BUNDLES[key].repo) || null;
+    if (!repo) { updateDangerUI(); return; }
+    var entry = enrichEntry(repo);
+    if (entry.attackFetched) { afterAttackSurface(key, repo, token); return; }
+    if (typeof fetch !== "function") { entry.attackFetched = true; updateDangerUI(); return; }
+    var tries = 0;
+    function attempt() {
+      fetch("/api/attack-surface?repo=" + encodeURIComponent(repo),
+            { headers: { "Accept": "application/json" } }).then(function (r) {
+        if (r.status === 503) {                         // scan / analysis not ready — retry
+          if (++tries < 3) { setTimeout(attempt, 500 * tries); return null; }
+          throw new Error("not ready");
+        }
+        if (!r.ok) throw new Error("http " + r.status); // 404 / 5xx — degrade silently
+        return r.json();
+      }).then(function (d) {
+        if (d === null) return;                         // a 503 retry is already scheduled
+        entry.attackFetched = true;
+        entry.attack = (d && d.entrypoints && typeof d.entrypoints === "object")
+          ? { entrypoints: d.entrypoints, summary: (d.summary && typeof d.summary === "object") ? d.summary : null }
+          : null;
+        afterAttackSurface(key, repo, token);
+      }).catch(function () {
+        entry.attackFetched = true;
+        entry.attack = null;                            // degrade: no markers, no overview
+        afterAttackSurface(key, repo, token);
+      });
+    }
+    attempt();
+  }
+
+  // Apply the attack surface once it arrives, unless the user switched away
+  // mid-flight (guarded by both the view token and the live view key).
+  function afterAttackSurface(key, repo, token) {
+    if (token !== viewToken || currentViewKey !== key) { updateDangerUI(); return; }
+    var entry = enrichEntry(repo);
+    var atk = entry.attack;
+    attackSurface = (atk && atk.entrypoints) ? atk.entrypoints : {};
+    attackSummary = (atk && atk.summary) ? atk.summary : null;
+    tintDangerNodes();
+    updateDangerUI();
+    if (dangerOpen) renderDangerOverview(dangerFocusEp);
+    // Repaint the open entry-point drawer so a late response fills its section.
+    var sel = selectedNodeId && model.index[selectedNodeId];
+    if (sel && sel.kind === "entrypoint") showDetail(sel);
+  }
+
+  // Show/hide the Danger Overview toggle + legend row to match data availability.
+  function updateDangerUI() {
+    var has = dangerDataPresent();
+    document.body.classList.toggle("has-danger", has);
+    var tgl = document.getElementById("danger-toggle");
+    if (tgl) {
+      tgl.hidden = !has;
+      var c = document.getElementById("danger-toggle-count");
+      if (c) {
+        var n = (attackSummary && attackSummary.total_findings != null) ? attackSummary.total_findings : 0;
+        c.textContent = n ? String(n) : "";
+      }
+    }
+    if (!has && dangerOpen) closeDangerOverview();
+  }
+
+  // Render the Danger Overview body: a summary header (total + by-severity), then
+  // every candidate finding across the public surface, grouped by entry point and
+  // ranked by worst severity (then count), each finding fully detailed. Framed as
+  // unverified AI static analysis that does not change the deterministic results.
+  function renderDangerOverview(focusEp) {
+    var sumEl = document.getElementById("danger-summary");
+    var bodyEl = document.getElementById("danger-body");
+    if (!sumEl || !bodyEl) return;
+    var ids = Object.keys(attackSurface || {}).filter(function (id) { return epFindings(id).length > 0; });
+    var s = attackSummary || {};
+    var total = (s.total_findings != null) ? s.total_findings
+      : ids.reduce(function (acc, id) { return acc + epFindings(id).length; }, 0);
+    var bySev = s.by_severity || {};
+    var sevChips = ["critical", "high", "medium", "low"].filter(function (k) { return bySev[k]; })
+      .map(function (k) {
+        return '<span class="dover-sum__sev dsev dsev--' + k + '">' + esc(k.toUpperCase()) +
+          ' <b>' + esc(String(bySev[k])) + '</b></span>';
+      }).join("");
+    sumEl.innerHTML =
+      '<div class="dover-sum__counts">' +
+        '<span class="dover-sum__total"><b>' + esc(String(total)) + '</b> candidate finding' +
+          (total === 1 ? "" : "s") + '</span>' +
+        '<span class="dover-sum__eps">' + esc(String(s.entrypoints_with_findings != null ? s.entrypoints_with_findings : ids.length)) +
+          ' entry point' + ((s.entrypoints_with_findings != null ? s.entrypoints_with_findings : ids.length) === 1 ? "" : "s") + ' affected</span>' +
+        sevChips +
+      '</div>';
+
+    if (!ids.length) {
+      bodyEl.innerHTML = '<p class="dim-note">No AI-identified code-level risks for this scan.</p>';
+      return;
+    }
+    ids.sort(function (a, b) {
+      var wa = DANGER_SEV_RANK[worstSeverity(epFindings(a))] || 0;
+      var wb = DANGER_SEV_RANK[worstSeverity(epFindings(b))] || 0;
+      if (wb !== wa) return wb - wa;
+      return epFindings(b).length - epFindings(a).length;
+    });
+    var html = "";
+    ids.forEach(function (id) {
+      var entry = attackSurface[id] || {};
+      var findings = epFindings(id).slice().sort(cmpFinding);
+      var label = entry.label || id;
+      var focusCls = (focusEp && id === focusEp) ? " is-focus" : "";
+      html += '<section class="dover-group' + focusCls + '">' +
+        '<header class="dover-group__head">' +
+          '<h3 class="dover-group__ep">' + esc(String(label)) + '</h3>' +
+          (entry.exposure ? '<span class="dover-group__expo">' + esc(String(entry.exposure)) + '</span>' : "") +
+          '<span class="dover-group__count">' + findings.length + ' finding' + (findings.length === 1 ? "" : "s") + '</span>' +
+        '</header>';
+      findings.forEach(function (f) { html += findingCardHtml(f, null); });
+      html += '</section>';
+    });
+    bodyEl.innerHTML = html;
+    var fg = bodyEl.querySelector(".dover-group.is-focus");
+    if (fg && fg.scrollIntoView) fg.scrollIntoView({ block: "start" });
+  }
+
+  // Open / close / toggle the Danger Overview panel. Opening is a no-op when the
+  // current view carries no attack-surface data. Closing returns to the graph.
+  function openDangerOverview(focusEp) {
+    if (!dangerDataPresent()) return;
+    dangerFocusEp = focusEp || null;
+    dangerOpen = true;
+    renderDangerOverview(dangerFocusEp);
+    var panel = document.getElementById("danger-overview");
+    if (panel) panel.hidden = false;
+    document.body.classList.add("danger-open");
+    var tgl = document.getElementById("danger-toggle");
+    if (tgl) tgl.setAttribute("aria-pressed", "true");
+    if (panel && panel.focus) { try { panel.focus(); } catch (e) {} }
+  }
+  function closeDangerOverview() {
+    dangerOpen = false;
+    dangerFocusEp = null;
+    var panel = document.getElementById("danger-overview");
+    if (panel) panel.hidden = true;
+    document.body.classList.remove("danger-open");
+    var tgl = document.getElementById("danger-toggle");
+    if (tgl) tgl.setAttribute("aria-pressed", "false");
+  }
+  function toggleDangerOverview() {
+    if (dangerOpen) closeDangerOverview(); else openDangerOverview(null);
   }
 
   /* ---------------------------------------------------------------- graph events */
@@ -2666,6 +3018,7 @@
     setActiveView("sample");
     updateExposureLegend();
     updateReachModeUI();
+    updateDangerUI();
   }
 
   // Served bundles, fetched lazily on first use and cached. Each is rendered
@@ -2705,8 +3058,8 @@
       if (token === viewToken) {
         applyViewEnrichment(key);      // place the cached overlays (if any) before render
         loadBundle(b, spec.label);
-        if (spec.repo) ensureEnrichment(key, token);
-        else { updateExposureLegend(); updateReachModeUI(); }
+        if (spec.repo) { ensureEnrichment(key, token); ensureAttackSurface(key, token); }
+        else { updateExposureLegend(); updateReachModeUI(); updateDangerUI(); }
       }
       return true;
     }, function () {
@@ -2729,6 +3082,16 @@
   var reachLikelyBtn = document.getElementById("reach-likely");
   if (reachProvenBtn) reachProvenBtn.addEventListener("click", function () { setReachMode("proven"); });
   if (reachLikelyBtn) reachLikelyBtn.addEventListener("click", function () { setReachMode("likely"); });
+
+  // Danger Overview: the canvas toggle opens/closes the panel; the panel's own
+  // close button and the Escape key return to the graph.
+  var dangerToggleBtn = document.getElementById("danger-toggle");
+  var dangerCloseBtn = document.getElementById("danger-close");
+  if (dangerToggleBtn) dangerToggleBtn.addEventListener("click", toggleDangerOverview);
+  if (dangerCloseBtn) dangerCloseBtn.addEventListener("click", closeDangerOverview);
+  document.addEventListener("keydown", function (e) {
+    if ((e.key === "Escape" || e.key === "Esc") && dangerOpen) closeDangerOverview();
+  });
 
   /* ---------------------------------------------------------------- boot */
   // Default to the served demo bundle (a small, clean showcase app whose deep

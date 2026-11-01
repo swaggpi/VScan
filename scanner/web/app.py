@@ -42,6 +42,7 @@ from scanner.agent import LLMClient
 from scanner.correlate import report
 from scanner.enrich import exposure_overlay, infer_edges, likely_reachability
 from scanner.mcp import state
+from scanner.pentest import attack_surface as compute_attack_surface
 from scanner.taint import compute_taint
 from scanner.web import chat as chat_mod
 from scanner.web import explain as explain_mod
@@ -85,6 +86,13 @@ class _ScanState:
     # NEVER enter the graph findings/taint/verdicts read; ``None`` until warmed.
     inferred_edges: list[dict[str, Any]] | None = None
     likely_reachable: list[dict[str, Any]] | None = None
+    # Advisory, additive Tier-A ATTACK-SURFACE analysis (see scanner.pentest):
+    # per public entry point, AI-hypothesis code-level vulnerabilities in the
+    # app's OWN reachable code. Warmed in the SAME background step as the other
+    # overlays, from the cached graph/reachability + the repo source on disk.
+    # Every finding is advisory/``ai-hypothesis`` and NEVER mutates or influences
+    # the graph/reachability/taint/findings; ``None`` until warmed.
+    attack_surface: dict[str, Any] | None = None
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def snapshot(self) -> dict[str, Any]:
@@ -171,6 +179,22 @@ class _ScanState:
             inferred = list(self.inferred_edges) if self.inferred_edges else []
             likely = list(self.likely_reachable) if self.likely_reachable else []
             return inferred, likely
+
+    def set_attack_surface(self, attack_surface: dict[str, Any]) -> None:
+        """Cache the advisory Tier-A attack-surface analysis under the lock."""
+        with self.lock:
+            self.attack_surface = attack_surface
+
+    def attack_surface_snapshot(self) -> dict[str, Any] | None:
+        """Return a copy of the attack-surface analysis, or ``None`` if unwarmed.
+
+        ``None`` means it is not warmed yet (still scanning or still computing);
+        a dict (possibly with empty findings + a ``note``) means it is ready.
+        """
+        with self.lock:
+            if self.attack_surface is None:
+                return None
+            return dict(self.attack_surface)
 
 
 def _demo_repo_path() -> str:
@@ -265,15 +289,37 @@ def _warm_inferred_edges(
     return inferred, likely["likely_reachable"]
 
 
+def _warm_attack_surface(
+    repo_path: str, exposure: dict[str, Any] | None
+) -> dict[str, Any]:
+    """Build the advisory Tier-A attack-surface analysis for a warm repo.
+
+    Reuses the SAME cached graph/reachability the warm scan populated (no
+    re-scan), reads the repo source from its resolved on-disk path, and runs the
+    model (when ``LLM_*`` is configured) over the code reachable from each entry
+    point (see :func:`scanner.pentest.attack_surface`). The ``exposure`` overlay
+    already built this step is passed through only to tag/prioritise entry
+    points. Read-only and additive: every finding is an advisory
+    ``ai-hypothesis`` and never changes a finding/verdict or the graph.
+    """
+    abspath = state.resolve_repo(repo_path)
+    graph, _ = state.get_correlation(repo_path, offline=False)
+    _, reach = state.get_reachability(repo_path)
+    return compute_attack_surface(
+        graph, reach, abspath, LLMClient(), exposure=exposure
+    )
+
+
 def _run_warm_scan(scan_state: _ScanState, repo_path: str) -> None:
     """Background worker: warm the scan and record ready/degraded. Never raises.
 
     Once the scan is ready (so health/explain/chat are live immediately), the
     SAME background thread goes on to warm the advisory enrichment overlays --
-    the exposure overlay AND the Phase-2 inferred-edge overlay + likely
-    reachability -- and cache them together on the scan state. Every overlay is
-    additive and never affects the scan result; any failure degrades to empty
-    overlays with a note rather than crashing the thread or the server.
+    the exposure overlay, the Phase-2 inferred-edge overlay + likely
+    reachability, AND the Tier-A attack-surface analysis -- and cache them on the
+    scan state. Every overlay is additive and never affects the scan result; any
+    failure degrades to empty overlays with a note rather than crashing the
+    thread or the server.
     """
     try:
         result = _warm_scan(repo_path)
@@ -285,6 +331,7 @@ def _run_warm_scan(scan_state: _ScanState, repo_path: str) -> None:
         exploitable=result["exploitable"],
         findings=result["findings"],
     )
+    exposure: dict[str, Any] = {}
     try:
         exposure = _warm_exposure_overlay(repo_path)
         inferred, likely = _warm_inferred_edges(repo_path)
@@ -292,12 +339,31 @@ def _run_warm_scan(scan_state: _ScanState, repo_path: str) -> None:
             exposure, inferred_edges=inferred, likely_reachable=likely
         )
     except Exception as exc:  # noqa: BLE001 - advisory overlays degrade, never crash
+        exposure = {}
         scan_state.set_exposure(
             {},
             note=f"enrichment overlay unavailable: {type(exc).__name__}: {exc}",
             inferred_edges=[],
             likely_reachable=[],
         )
+    # Tier-A attack surface: advisory AI hypotheses over reachable source. It
+    # already degrades internally to empty findings + a note; the guard here
+    # only catches an unexpected error gathering the cached graph/source, so the
+    # endpoint never hangs at 503 forever.
+    try:
+        surface = _warm_attack_surface(repo_path, exposure)
+    except Exception as exc:  # noqa: BLE001 - advisory analysis degrades, never crash
+        surface = {
+            "repo": _repo_name(repo_path),
+            "entrypoints": {},
+            "summary": {
+                "total_findings": 0,
+                "by_severity": {},
+                "entrypoints_with_findings": 0,
+            },
+            "note": f"attack-surface analysis unavailable: {type(exc).__name__}: {exc}",
+        }
+    scan_state.set_attack_surface(surface)
 
 
 @asynccontextmanager
@@ -487,3 +553,42 @@ def enrichment(repo: str | None = None) -> dict[str, Any]:
     if note:
         payload["note"] = note
     return payload
+
+
+@app.get("/api/attack-surface")
+def attack_surface(repo: str | None = None) -> dict[str, Any]:
+    """Return the advisory, additive Tier-A attack-surface analysis for one repo.
+
+    Mirrors ``/api/enrichment``: each warmed scan gets its own analysis (see
+    :mod:`scanner.pentest`) warmed on its background thread AFTER that scan is
+    ready. The optional ``repo`` query param selects which warmed scan to report
+    (matched against ``app.state.scans`` by the basename of each scan's
+    ``repo_path``); with no param this reports the PRIMARY scan. It reports:
+
+    * 404 ``"unknown repo"`` when a ``repo`` is given but no warmed scan matches;
+    * 503 ``"scan not ready"`` while the selected scan is still warming OR its
+      analysis has not been cached yet (there is nothing to serve yet);
+    * 200 ``{"repo", "entrypoints": {<ep_id>: {label, exposure, findings:[...]}},
+      "summary": {...}}`` once ready (with an extra ``"note"`` if the model was
+      unavailable or the analysis degraded).
+
+    It is a pure reader of cached state and never 500s. Every finding is an
+    UNVERIFIED HYPOTHESIS (``provenance == "ai-hypothesis"``, ``advisory ==
+    True``); nothing here changes any finding's reachable/confirmed/tainted
+    state or verdict.
+    """
+    if repo is None:
+        scan_state: _ScanState | None = getattr(app.state, "scan", None)
+    else:
+        scans: list[_ScanState] = getattr(app.state, "scans", [])
+        scan_state = next(
+            (s for s in scans if _repo_name(s.repo_path) == repo), None
+        )
+        if scan_state is None:
+            raise HTTPException(status_code=404, detail="unknown repo")
+    if scan_state is None:
+        raise HTTPException(status_code=503, detail="scan not ready")
+    surface = scan_state.attack_surface_snapshot()
+    if surface is None:
+        raise HTTPException(status_code=503, detail="scan not ready")
+    return surface

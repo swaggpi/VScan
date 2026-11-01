@@ -103,6 +103,32 @@
       </div>
       <div id="graph" tabindex="0" role="application" aria-label="Repository code-path graph. Entry points on the left flow through functions to dependencies on the right. Select an entry point from the list to trace reachability."></div>
       <p class="stage__flow" aria-hidden="true">entry points <span>→</span> functions <span>→</span> dependencies</p>
+
+      <!-- Danger Overview toggle (Tier-A AI attack surface). Shown only when the
+           current view carries AI-identified code-level findings (body.has-danger,
+           set by app.js). Purely additive — opens an advisory overlay; never
+           touches the deterministic funnel/verdicts. -->
+      <button type="button" class="dangerbtn" id="danger-toggle" aria-pressed="false" aria-controls="danger-overview" hidden>
+        <span class="dangerbtn__warn" aria-hidden="true">⚠</span>
+        <span class="dangerbtn__lbl">Danger Overview</span>
+        <span class="dangerbtn__count" id="danger-toggle-count"></span>
+      </button>
+
+      <!-- Danger Overview panel: the dedicated view of ALL AI-identified code-level
+           hypotheses across the public surface. Overlays the canvas; closing
+           returns to the graph. Filled live by app.js (renderDangerOverview). -->
+      <div class="dangerview" id="danger-overview" role="region" tabindex="-1" aria-label="Danger Overview — AI-identified code-level risks (unverified)" hidden>
+        <div class="dangerview__head">
+          <div class="dangerview__titlewrap">
+            <h2 class="dangerview__title"><span class="dangerview__warn" aria-hidden="true">⚠</span> Danger Overview</h2>
+            <p class="dangerview__frame">AI static analysis · unverified hypotheses · does not change the deterministic findings or the funnel.</p>
+          </div>
+          <button type="button" class="dangerview__close" id="danger-close" aria-label="Close Danger Overview and return to the graph">Close ✕</button>
+        </div>
+        <div class="dangerview__summary" id="danger-summary"></div>
+        <div class="dangerview__body" id="danger-body"></div>
+      </div>
+
       <div class="tooltip" id="tooltip" role="status" aria-live="polite" hidden></div>
       <div class="zoomctl" role="group" aria-label="Zoom">
         <button type="button" class="zoomctl__btn" id="zoom-in" aria-label="Zoom in">+</button>
@@ -122,6 +148,7 @@
         <span class="legend__item legend__item--transitive"><i class="dot dot--trans"></i>transitive · off</span>
         <span class="legend__item legend__item--inferred"><i class="dot dot--inferred"></i>inferred call · AI</span>
         <span class="legend__item legend__item--inferred"><i class="dot dot--likely"></i>likely reachable · inferred</span>
+        <span class="legend__item legend__item--danger"><i class="dot dot--danger"></i>code-level risk (AI) · unverified</span>
       </div>
     </section>
 
