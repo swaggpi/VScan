@@ -204,6 +204,45 @@ body {
   white-space: nowrap;
 }
 
+/* "More" scans dropdown — a de-emphasised throw on the selector that opens a
+   small floating panel with the tucked scans, so only the two headline scans
+   compete up front. The panel stacks its segments vertically. */
+.moremenu { position: relative; display: inline-flex; }
+.moremenu > summary.seg--more {
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  height: 100%;
+  color: var(--ink-mut);
+}
+.moremenu > summary::-webkit-details-marker { display: none; }
+.moremenu > summary.seg--more:hover { color: var(--ink); background: var(--signal-soft); }
+.moremenu[open] > summary.seg--more { color: var(--ink); background: var(--signal-soft); }
+.moremenu__caret { font-size: 0.7em; transition: transform 0.15s; }
+.moremenu[open] .moremenu__caret { transform: rotate(180deg); }
+.moremenu__panel {
+  position: absolute;
+  top: calc(100% + 0.35rem);
+  right: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  min-width: 12rem;
+  border: 1px solid var(--panel-edge);
+  border-radius: var(--radius);
+  background: var(--ground-sink);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.42);
+  overflow: hidden;
+}
+.moremenu__panel .seg--menu {
+  flex-direction: row;
+  width: 100%;
+  border-left: 0;
+  border-top: 1px solid var(--hair);
+}
+.moremenu__panel .seg--menu:first-child { border-top: 0; }
+
 /* ---------------------------------------------------------------- impact funnel */
 /* The headline strip under the header, shown only in bundle mode: five stages
    narrowing left -> right, from every dependency down to the proven-exploitable
@@ -625,6 +664,26 @@ body {
 .chip[aria-pressed="false"] { opacity: 0.5; }
 .chip i { width: 9px; height: 9px; border-radius: 50%; }
 
+/* "View" menu: the developer-oriented node-kind toggles, collapsed into an
+   unobtrusive disclosure so they no longer crowd the funnel + graph up front. */
+.viewmenu { display: block; }
+.viewmenu__sum {
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  cursor: pointer;
+  color: var(--ink-mut);
+}
+.viewmenu__sum::-webkit-details-marker { display: none; }
+.viewmenu__sum:hover .panel__h { color: var(--ink); }
+.viewmenu__sum .panel__h { margin: 0; }
+.viewmenu__gear { font-size: 0.8rem; line-height: 1; transition: transform 0.2s; }
+.viewmenu[open] .viewmenu__gear { transform: rotate(60deg); }
+.viewmenu__note { margin: 0.45rem 0 0.55rem; }
+.viewmenu .filters { margin-top: 0.1rem; }
+.viewmenu__sum:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+
 /* ---------------------------------------------------------------- stage */
 .stage {
   position: relative;
@@ -724,31 +783,53 @@ body {
 .dot--unsure { background: repeating-linear-gradient(135deg, var(--alert) 0 1.5px, var(--dep) 1.5px 3px); border: 2px solid var(--alert); }
 .dot--tainted { background: var(--alert); border: 2px solid var(--alert); }
 
-/* Vulnerability legend rows appear only once an audit bundle is loaded. */
 .dot--trans { background: transparent; border: 1.5px solid var(--dep); }
-.legend__item--vuln { display: none; }
-body.has-vulns .legend__item--vuln { display: flex; }
-/* The transitive-dep legend note only applies when the scan has transitive deps. */
-.legend__item--transitive { display: none; }
-body.has-transitive .legend__item--transitive { display: flex; }
-
-/* AI-inferred legend rows (Phase 2) appear only when the current view carries
-   inferred enrichment. A dashed violet line for the inferred call edge, and a
-   dashed violet ring for the likely-reachable marker — matched to the canvas. */
 .dot--inferred {
   width: 16px; height: 0;
   border-radius: 0;
   border-top: 2px dashed var(--infer);
 }
 .dot--likely { background: transparent; border: 2px dashed var(--infer); }
-.legend__item--inferred { display: none; }
-body.has-inferred .legend__item--inferred { display: flex; }
-
-/* ADVISORY attack-surface legend row — a double magenta ring, matching the node
-   danger marker. Shown only when the current view carries AI-identified findings. */
+/* ADVISORY attack-surface swatch — a double magenta ring, matching the node marker. */
 .dot--danger { background: transparent; border: 2px double var(--danger); }
-.legend__item--danger { display: none; }
-body.has-danger .legend__item--danger { display: flex; }
+
+/* "Legend ⌄" expander: a quiet pill that reveals the advanced keys. */
+.legend__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.22rem 0.5rem;
+  border: 1px solid var(--hair);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-mut);
+  font: 500 0.62rem/1 var(--f-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.legend__toggle:hover { color: var(--ink); border-color: var(--panel-edge); }
+.legend__toggle:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+.legend__caret { font-size: 0.9em; transition: transform 0.15s; }
+.legend.is-expanded .legend__caret { transform: rotate(180deg); }
+
+/* Core vulnerability keys (exploitable, vulnerable·not-reached): shown once an
+   audit bundle is loaded — they are part of the compact core, not the expander. */
+.legend__item--vuln { display: none; }
+body.has-vulns .legend__item--vuln { display: flex; }
+
+/* Advanced keys: hidden by default. Revealed only when the legend is EXPANDED
+   AND the key's layer is ACTIVE (not merely available). "function" is always
+   available once expanded; the others follow their live layer. */
+.legend__item--adv { display: none; }
+.legend.is-expanded .legend__item--fn { display: flex; }
+body.has-vulns .legend.is-expanded .legend__item--unsure { display: flex; }
+body.has-transitive .legend.is-expanded .legend__item--transitive { display: flex; }
+/* inferred keys — only while the Likely view is on. */
+body.reach-likely .legend.is-expanded .legend__item--inferred { display: flex; }
+/* attack-surface key — only while the danger markers are live on the graph. */
+body.has-danger .legend.is-expanded .legend__item--danger { display: flex; }
 
 /* ---------------------------------------------------------------- exposure overlay
    ADVISORY "exposure" layer (live /api/enrichment, ACME demo only). A separate,
@@ -815,8 +896,9 @@ body.has-danger .legend__item--danger { display: flex; }
 .dot--expo-internal { background: rgba(111,184,224,0.12); border: 2px solid var(--dep); }
 .dot--expo-auth     { background: transparent; border: 1.5px solid var(--ink-dim); border-radius: 50% 50% 2px 2px; }
 .dot--expo-doc      { background: linear-gradient(135deg, var(--signal) 0 50%, var(--dep) 50% 100%); }
-.legend__item--exposure { display: none; }
-body.has-exposure .legend__item--exposure { display: flex; }
+/* Exposure swatches are advanced keys — shown only when the legend is expanded
+   AND the exposure overlay is actually on. */
+body.has-exposure:not(.exposure-off) .legend.is-expanded .legend__item--exposure { display: flex; }
 .exp-toggle {
   display: none;
   align-items: center; gap: 0.4rem;
@@ -841,22 +923,48 @@ body.has-exposure .exp-toggle { display: inline-flex; }
 body.exposure-off .ep__expo,
 body.exposure-off .exposure-sec { display: none; }
 
-/* ---------------------------------------------------------------- reach mode (Phase 2)
-   PROVEN / LIKELY toggle, a compact HUD in the canvas top-right. PROVEN is the
-   deterministic graph; LIKELY adds AI-inferred (dashed violet) edges + markers.
-   Always present; dimmed + non-interactive (.is-inert) when a scan carries no
-   inferred enrichment, so the control never implies data that is not there. */
-.reachmode {
+/* ---------------------------------------------------------------- layers (overlay controls)
+   One compact HUD group in the canvas top-right that holds every optional overlay
+   control (Proven/Likely, Exposure, Danger Overview). The group itself shows only
+   when the current scan carries at least one layer's data, and each control shows
+   only when ITS layer's data is present — so the controls never imply data that
+   is not there. Re-housing + gating only; no handler or verdict is touched. */
+.layers {
   position: absolute;
   right: 1rem; top: 0.85rem;
-  z-index: 15;
-  display: flex;
+  z-index: 16;
+  display: none;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.4rem;
+  max-width: 15rem;
+  pointer-events: none; /* children re-enable; empty gaps never block the canvas */
+}
+body.has-inferred .layers,
+body.has-exposure .layers,
+body.has-danger .layers { display: flex; }
+.layers > *:not(.layers__lbl) { pointer-events: auto; }
+.layers__lbl {
+  font: 600 0.55rem/1 var(--f-mono);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ink-mut);
+  pointer-events: none;
+}
+
+/* ---------------------------------------------------------------- reach mode (Phase 2)
+   PROVEN / LIKELY toggle. PROVEN is the deterministic graph; LIKELY adds
+   AI-inferred (dashed violet) edges + markers. Shown only when the current scan
+   carries inferred enrichment (body.has-inferred); flows inside the Layers group. */
+.reachmode {
+  display: none;
   flex-direction: column;
   align-items: flex-end;
   gap: 0.35rem;
   max-width: 15rem;
   pointer-events: none; /* only the buttons + caption are interactive targets */
 }
+body.has-inferred #reachmode { display: flex; }
 .reachmode__seg {
   display: inline-flex;
   pointer-events: auto;
@@ -1043,12 +1151,9 @@ body.exposure-off .exposure-sec { display: none; }
 .danger-open:hover { background: var(--danger-soft); color: #fff; }
 .danger-open:focus-visible { outline: 2px solid var(--danger); outline-offset: 2px; }
 
-/* Canvas toggle — a magenta HUD pill in the bottom-left of the canvas. Shown only
-   when the current view carries AI-identified findings. */
+/* Danger Overview toggle — a magenta pill, shown only when the current view
+   carries AI-identified findings. Flows inside the Layers group (top-right). */
 .dangerbtn {
-  position: absolute;
-  left: 1rem; bottom: 1rem;
-  z-index: 16;
   display: inline-flex; align-items: center; gap: 0.45rem;
   padding: 0.4rem 0.75rem;
   border: 1px solid var(--danger);
@@ -1670,9 +1775,13 @@ details[open] > summary .disc__chev { transform: rotate(90deg); }
 @media (max-width: 520px) {
   .funnel__stage { flex: 1 1 6rem; }
   .funnel__num { font-size: 1.2rem; }
-  /* On a phone the toggle stays; its caption would crowd the narrow canvas. */
-  .reachmode { top: 0.6rem; right: 0.6rem; }
+  /* On a phone the Layers controls stay; the reach caption would crowd the
+     narrow canvas, so it drops out. */
+  .layers { top: 0.6rem; right: 0.6rem; max-width: 11rem; }
   .reachmode__cap { display: none; }
+  /* The "More" scans panel spans the selector rather than overflowing the edge. */
+  .moremenu { position: static; }
+  .moremenu__panel { right: auto; left: 0; }
 }
 
 /* ---------------------------------------------------------------- AI attack analysis */

@@ -27,26 +27,35 @@
       </span>
     </div>
     <div class="titleblock__load">
+      <!-- Scan selector: the two headline scans stay prominent; the rest are tucked
+           into a "More" dropdown so a first-time viewer sees ACME by default without
+           six competing tabs. Every button keeps its id + handler — this only
+           re-houses them. -->
       <div class="viewswitch" id="viewswitch" role="group" aria-label="Choose a scan to view">
         <button class="seg" id="view-demo" type="button" aria-pressed="true">
           <span class="seg__name">ACME API</span>
         </button>
-        <button class="seg" id="view-redash" type="button" aria-pressed="false">
-          <span class="seg__name">redash</span>
-        </button>
-        <button class="seg" id="view-transitive" type="button" aria-pressed="false">
-          <span class="seg__name">transitive-app</span>
-        </button>
         <button class="seg" id="view-pluginreports" type="button" aria-pressed="false">
           <span class="seg__name">Plugin Reports</span>
         </button>
-        <button class="seg" id="view-sample" type="button" aria-pressed="false">
-          <span class="seg__name">Healthy API</span>
-        </button>
-        <label class="seg seg--file" id="view-file">
-          <input type="file" id="file" accept=".json,application/json" />
-          <span class="seg__name">Load a scan</span>
-        </label>
+        <details class="moremenu" id="moremenu">
+          <summary class="seg seg--more">More <span class="moremenu__caret" aria-hidden="true">⌄</span></summary>
+          <div class="moremenu__panel" role="group" aria-label="More scans">
+            <button class="seg seg--menu" id="view-redash" type="button" aria-pressed="false">
+              <span class="seg__name">redash</span>
+            </button>
+            <button class="seg seg--menu" id="view-transitive" type="button" aria-pressed="false">
+              <span class="seg__name">transitive-app</span>
+            </button>
+            <button class="seg seg--menu" id="view-sample" type="button" aria-pressed="false">
+              <span class="seg__name">Healthy API</span>
+            </button>
+            <label class="seg seg--menu seg--file" id="view-file">
+              <input type="file" id="file" accept=".json,application/json" />
+              <span class="seg__name">Load a scan</span>
+            </label>
+          </div>
+        </details>
       </div>
       <span class="scanname" id="scanname">starting…</span>
     </div>
@@ -81,8 +90,18 @@
       </section>
 
       <section class="panel panel--filters" aria-labelledby="filter-h">
-        <h2 class="panel__h" id="filter-h">Show by kind</h2>
-        <div class="filters" id="filters" role="group" aria-label="Node kind filters"></div>
+        <!-- Developer-oriented node-kind toggles, collapsed into an unobtrusive
+             "View" menu. Default visibility is unchanged (entry points, functions
+             and dependencies on; modules/files/docs off) — this only tucks the row
+             away so it no longer competes with the funnel + graph up front. -->
+        <details class="viewmenu" id="viewmenu">
+          <summary class="viewmenu__sum">
+            <span class="viewmenu__gear" aria-hidden="true">⚙</span>
+            <span class="panel__h" id="filter-h">View · node kinds</span>
+          </summary>
+          <p class="panel__note viewmenu__note">Entry points and dependencies are shown by default. Toggle other kinds here.</p>
+          <div class="filters" id="filters" role="group" aria-label="Node kind filters"></div>
+        </details>
       </section>
     </aside>
 
@@ -90,29 +109,36 @@
       <div class="stage__banner" id="banner" role="status" aria-live="polite" hidden></div>
       <div class="stage__canvas">
       <div class="stage__grid" aria-hidden="true"></div>
-      <!-- Proven / Likely toggle (Phase 2). PROVEN is the deterministic graph
-           exactly as today; LIKELY additionally shows AI-inferred (dashed violet)
-           call edges and marks likely-reachable deps. Inert when a scan carries no
-           inferred enrichment. Purely additive — verdicts/counts never change. -->
-      <div class="reachmode is-inert" id="reachmode" role="group" aria-label="Reachability mode" data-mode="proven">
-        <div class="reachmode__seg">
-          <button type="button" class="reachmode__btn" id="reach-proven" aria-pressed="true">Proven</button>
-          <button type="button" class="reachmode__btn" id="reach-likely" aria-pressed="false" disabled>Likely</button>
+      <!-- Layers: one compact control group for every optional overlay, near the
+           graph. Each control appears ONLY when the current scan carries that
+           layer's data (body.has-inferred / has-exposure / has-danger, set by
+           app.js). The underlying toggles + handlers are unchanged — this only
+           re-houses them and gates their visibility. Purely additive: verdicts,
+           counts and the funnel never change. -->
+      <div class="layers" id="layers" role="group" aria-label="Overlay layers">
+        <span class="layers__lbl" aria-hidden="true">Layers</span>
+        <!-- Proven / Likely toggle (Phase 2): shown only when the scan carries
+             AI-inferred edges. PROVEN is the deterministic graph exactly as today;
+             LIKELY adds AI-inferred (dashed violet) edges + likely-reachable marks. -->
+        <div class="reachmode is-inert" id="reachmode" role="group" aria-label="Reachability mode" data-mode="proven">
+          <div class="reachmode__seg">
+            <button type="button" class="reachmode__btn" id="reach-proven" aria-pressed="true">Proven</button>
+            <button type="button" class="reachmode__btn" id="reach-likely" aria-pressed="false" disabled>Likely</button>
+          </div>
+          <p class="reachmode__cap" id="reachmode-cap">Proven view · deterministic static paths only.</p>
         </div>
-        <p class="reachmode__cap" id="reachmode-cap">Proven view · deterministic static paths only.</p>
+        <!-- Exposure overlay toggle is inserted here by app.js (setupExposureLegend),
+             shown only when the current scan carries exposure data. -->
+        <!-- Danger Overview button: shown only when AI attack-surface findings exist
+             (body.has-danger). Opens an advisory overlay; never touches the funnel. -->
+        <button type="button" class="dangerbtn" id="danger-toggle" aria-pressed="false" aria-controls="danger-overview" hidden>
+          <span class="dangerbtn__warn" aria-hidden="true">⚠</span>
+          <span class="dangerbtn__lbl">Danger Overview</span>
+          <span class="dangerbtn__count" id="danger-toggle-count"></span>
+        </button>
       </div>
       <div id="graph" tabindex="0" role="application" aria-label="Repository code-path graph. Entry points on the left flow through functions to dependencies on the right. Select an entry point from the list to trace reachability."></div>
       <p class="stage__flow" aria-hidden="true">entry points <span>→</span> functions <span>→</span> dependencies</p>
-
-      <!-- Danger Overview toggle (Tier-A AI attack surface). Shown only when the
-           current view carries AI-identified code-level findings (body.has-danger,
-           set by app.js). Purely additive — opens an advisory overlay; never
-           touches the deterministic funnel/verdicts. -->
-      <button type="button" class="dangerbtn" id="danger-toggle" aria-pressed="false" aria-controls="danger-overview" hidden>
-        <span class="dangerbtn__warn" aria-hidden="true">⚠</span>
-        <span class="dangerbtn__lbl">Danger Overview</span>
-        <span class="dangerbtn__count" id="danger-toggle-count"></span>
-      </button>
 
       <!-- Danger Overview panel: the dedicated view of ALL AI-identified code-level
            hypotheses across the public surface. Overlays the canvas; closing
@@ -136,19 +162,28 @@
         <button type="button" class="zoomctl__btn" id="zoom-out" aria-label="Zoom out">−</button>
       </div>
       </div>
-      <!-- Legend as a slim footer strip, off the canvas so it never overlaps. -->
-      <div class="legend" aria-label="Legend">
+      <!-- Legend as a slim footer strip, off the canvas so it never overlaps.
+           Collapsed by default to the CORE node states; the "Legend ⌄" expander
+           reveals the advanced keys, and each advanced key is itself shown only
+           when its layer is ACTIVE (not merely available) — see style.css. -->
+      <div class="legend" id="legend" aria-label="Legend">
+        <button type="button" class="legend__toggle" id="legend-toggle" aria-expanded="false" aria-controls="legend">
+          <span class="legend__toggle-lbl">Legend</span><span class="legend__caret" aria-hidden="true">⌄</span>
+        </button>
+        <!-- Core node states — always shown. -->
         <span class="legend__item"><i class="dot dot--ep"></i>entry point</span>
-        <span class="legend__item"><i class="dot dot--fn"></i>function</span>
         <span class="legend__item"><i class="dot dot--dep"></i>dependency</span>
         <span class="legend__item"><i class="dot dot--sig"></i>reachable trace</span>
         <span class="legend__item legend__item--vuln"><i class="dot dot--vuln"></i>vulnerable · not reached</span>
-        <span class="legend__item legend__item--vuln"><i class="dot dot--unsure"></i>reachable · unsure</span>
         <span class="legend__item legend__item--vuln"><i class="dot dot--tainted"></i>exploitable</span>
-        <span class="legend__item legend__item--transitive"><i class="dot dot--trans"></i>transitive · off</span>
-        <span class="legend__item legend__item--inferred"><i class="dot dot--inferred"></i>inferred call · AI</span>
-        <span class="legend__item legend__item--inferred"><i class="dot dot--likely"></i>likely reachable · inferred</span>
-        <span class="legend__item legend__item--danger"><i class="dot dot--danger"></i>code-level risk (AI) · unverified</span>
+        <!-- Advanced keys — revealed by the expander, and only when the key's layer
+             is active (function is always available once expanded). -->
+        <span class="legend__item legend__item--adv legend__item--fn"><i class="dot dot--fn"></i>function</span>
+        <span class="legend__item legend__item--adv legend__item--unsure"><i class="dot dot--unsure"></i>reachable · unsure</span>
+        <span class="legend__item legend__item--adv legend__item--transitive"><i class="dot dot--trans"></i>transitive · off</span>
+        <span class="legend__item legend__item--adv legend__item--inferred"><i class="dot dot--inferred"></i>inferred call · AI</span>
+        <span class="legend__item legend__item--adv legend__item--inferred"><i class="dot dot--likely"></i>likely reachable · inferred</span>
+        <span class="legend__item legend__item--adv legend__item--danger"><i class="dot dot--danger"></i>code-level risk (AI) · unverified</span>
       </div>
     </section>
 

@@ -2514,11 +2514,12 @@
     }
   }
 
-  // Build the legend's exposure swatches + the overlay toggle once, at boot.
-  // The static legend lives in index.html; we only append to it here.
+  // Build the exposure overlay toggle (housed in the Layers control group, near
+  // the graph) and the legend's exposure swatches (advanced keys), once at boot.
+  // The static legend + Layers group live in index.html; we only append here.
   function setupExposureLegend() {
     var legend = document.querySelector(".legend");
-    if (!legend) return;
+    var layers = document.getElementById("layers");
     var t = document.createElement("button");
     t.type = "button";
     t.className = "exp-toggle";
@@ -2535,18 +2536,29 @@
       updateExposureLegend();
     });
     expToggleBtn = t;
-    legend.appendChild(t);
-    [
-      ['<i class="dot dot--expo-public"></i>', "internet-facing (PUBLIC)"],
-      ['<i class="dot dot--expo-internal"></i>', "internal"],
-      ['<i class="dot dot--expo-auth"></i>', "auth required"],
-      ['<i class="dot dot--expo-doc"></i>', "doc-cited vs AI-inferred"]
-    ].forEach(function (it) {
-      var s = document.createElement("span");
-      s.className = "legend__item legend__item--exposure";
-      s.innerHTML = it[0] + esc(it[1]);
-      legend.appendChild(s);
-    });
+    // House the toggle in the Layers group (before the Danger button), so every
+    // overlay control lives in one place. Fall back to the legend if absent.
+    if (layers) {
+      var dangerBtn = document.getElementById("danger-toggle");
+      if (dangerBtn) layers.insertBefore(t, dangerBtn); else layers.appendChild(t);
+    } else if (legend) {
+      legend.appendChild(t);
+    }
+    // Exposure swatches stay in the legend as ADVANCED keys — revealed only when
+    // the legend is expanded AND the overlay is on (see style.css gating).
+    if (legend) {
+      [
+        ['<i class="dot dot--expo-public"></i>', "internet-facing (PUBLIC)"],
+        ['<i class="dot dot--expo-internal"></i>', "internal"],
+        ['<i class="dot dot--expo-auth"></i>', "auth required"],
+        ['<i class="dot dot--expo-doc"></i>', "doc-cited vs AI-inferred"]
+      ].forEach(function (it) {
+        var s = document.createElement("span");
+        s.className = "legend__item legend__item--adv legend__item--exposure";
+        s.innerHTML = it[0] + esc(it[1]);
+        legend.appendChild(s);
+      });
+    }
   }
 
   // Show the exposure legend + toggle only when the current view actually has
@@ -3215,6 +3227,34 @@
   document.addEventListener("keydown", function (e) {
     if ((e.key === "Escape" || e.key === "Esc") && dangerOpen) closeDangerOverview();
   });
+
+  // Legend expander: the compact legend shows only the core node states; this
+  // reveals the advanced keys (each still gated to its active layer by CSS).
+  // Collapsed by default. Presentational only — no data/verdict touched.
+  var legendToggle = document.getElementById("legend-toggle");
+  var legendEl = document.getElementById("legend");
+  if (legendToggle && legendEl) {
+    legendToggle.addEventListener("click", function () {
+      var open = legendEl.classList.toggle("is-expanded");
+      legendToggle.setAttribute("aria-expanded", String(open));
+    });
+  }
+
+  // "More" scan dropdown: collapse it after a choice, and on an outside click /
+  // Escape. The scan buttons inside keep their own ids + handlers. Chrome only.
+  var moreMenu = document.getElementById("moremenu");
+  if (moreMenu) {
+    var morePanel = moreMenu.querySelector(".moremenu__panel");
+    if (morePanel) morePanel.addEventListener("click", function () {
+      setTimeout(function () { moreMenu.open = false; }, 0);
+    });
+    document.addEventListener("click", function (e) {
+      if (moreMenu.open && !moreMenu.contains(e.target)) moreMenu.open = false;
+    });
+    document.addEventListener("keydown", function (e) {
+      if ((e.key === "Escape" || e.key === "Esc") && moreMenu.open) moreMenu.open = false;
+    });
+  }
 
   /* ---------------------------------------------------------------- boot */
   // Default to the served demo bundle (a small, clean showcase app whose deep
