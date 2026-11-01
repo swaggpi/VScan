@@ -1,4 +1,4 @@
-"""Template rendering with a reflectively-chosen engine.
+"""Template rendering with a reflectively-chosen engine (Jinja2).
 
 ``jinja2`` is imported statically (so the dependency is declared and visible),
 but the ``jinja2.Environment`` constructor is reached only through ``getattr``.
@@ -19,6 +19,7 @@ def render_report(template_text, context):
 
 def _make_engine():
     # Reflective construction: the ``jinja2.Environment`` call is hidden behind
-    # getattr, so the structural scan cannot resolve it to Jinja2.
+    # getattr, so the structural scan cannot resolve it to Jinja2. autoescape is
+    # off, so an attacker-controlled template is server-side template injection.
     environment_cls = getattr(jinja2, "Environment")
     return environment_cls(autoescape=False)
