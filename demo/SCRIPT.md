@@ -125,6 +125,27 @@ scanning, then `--fail-on`.
 
 ---
 
+## Capturing it
+
+Record at 1600×900 so the dashboard matches what the script was timed against.
+Put the teleprompter on a second screen (or a phone) — not in the captured area.
+
+Screen + mic in one pass, with ffmpeg:
+
+```sh
+ffmpeg -video_size 1600x900 -framerate 30 -f x11grab -i :0.0+0,0 \
+       -f pulse -i default \
+       -c:v libx264 -preset veryfast -crf 18 -pix_fmt yuv420p \
+       -c:a aac -b:a 192k demo-take.mp4
+```
+
+Adjust `+0,0` to the window's top-left corner. If the voiceover is recorded
+separately, drop the `-f pulse -i default` and `-c:a`/`-b:a` pair and mux the
+audio afterwards.
+
+Record Beat 4's chat answer as its own take (see the latency note below) and
+cut the two together.
+
 ## Recording notes
 
 - The 66s chat latency is the one thing that cannot be shown in real time.
