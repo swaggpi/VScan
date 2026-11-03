@@ -1764,18 +1764,9 @@
     var worst = worstReachedVuln(n.id);
     var html = detailHead("entrypoint", label) + '<div class="pop">';
 
-    if (dsev && afs.length) {
-      // Lead with the AI code-level hypothesis — distinct magenta badge, clearly
-      // unverified. NEVER a proven verdict.
-      var topF = afs.slice().sort(cmpFinding)[0] || {};
-      var klass = topF.vuln_class || topF.title || "possible vulnerability";
-      html += popBadge("danger", "⚠ Code-level risk · AI (unverified)");
-      if (topF.title) html += '<p class="pop__title">' + esc(String(topF.title)) + '</p>';
-      html += '<p class="pop__line">An AI pen-tester flagged a candidate vulnerability in this ' +
-        'route’s own code. This is an <strong>unverified AI hypothesis</strong>, not a proven finding.</p>';
-      if (isPublic) html += '<p class="pop__line">This route is <strong>internet-facing</strong>.</p>';
-      html += askBtnHtml("Explain the code-level " + klass + " risk on " + route + " in " + repo);
-    } else if (worst) {
+    // DETERMINISTIC result first, always — independent of any AI overlay. The
+    // advisory AI section (if any) is appended BELOW it, never in place of it.
+    if (worst) {
       html += popBadge(worst.tainted ? "exploit" : "reach",
         worst.tainted ? "Exploitable" : "Reachable vulnerability");
       html += '<p class="pop__line">This route reaches <b>' + esc(worst.dep.name || worst.dep.id) + '</b>' +
@@ -1791,6 +1782,20 @@
         (isPublic ? 'This route is <strong>internet-facing</strong>. ' : '') +
         'No known-vulnerable dependency is reachable from this route.</p>';
       html += askBtnHtml("What is the attack surface of " + route + " in " + repo + "?");
+    }
+
+    if (dsev && afs.length) {
+      // ADVISORY AI code-level hypothesis — secondary, visually separated, clearly
+      // unverified. NEVER a proven verdict and never replaces the block above.
+      var topF = afs.slice().sort(cmpFinding)[0] || {};
+      var klass = topF.vuln_class || topF.title || "possible vulnerability";
+      html += '<div class="pop__ai">';
+      html += popBadge("danger", "⚠ Code-level risk · AI (unverified)");
+      if (topF.title) html += '<p class="pop__title">' + esc(String(topF.title)) + '</p>';
+      html += '<p class="pop__line">An AI pen-tester flagged a candidate vulnerability in this ' +
+        'route’s own code. This is an <strong>unverified AI hypothesis</strong>, not a proven finding.</p>';
+      html += askBtnHtml("Explain the code-level " + klass + " risk on " + route + " in " + repo);
+      html += '</div>';
     }
     return html + '</div>';
   }
