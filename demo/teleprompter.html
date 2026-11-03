@@ -117,14 +117,15 @@
 const SCRIPT = [
   ["Beat 1 · the problem", [
     [6, "Here's the dependency scan for a small Flask service. A hundred and forty-five known CVEs.", "TERMINAL · scroll the CVE wall"],
-    [6, "Every one of them is real. And almost none of them matter, because nothing in this codebase ever calls the vulnerable code."],
-    [3, "That's the job: finding the one that does."],
+    [6, "Every one of them is real. And almost none of them are reachable from the app's public routes."],
+    [3, "That's the job: finding the ones that are."],
   ]],
   ["Beat 2 · the scan", [
     [7, "VScan builds a call graph of the repo with tree-sitter, traces every public route into your dependencies,", "RUN · vscan audit samples/acme-api"],
     [7, "and then runs taint analysis to see whether attacker-controlled input actually reaches the vulnerable call."],
     [6, "Nineteen dependencies. A hundred and forty-five CVEs. Sixteen reachable.", "LAND ON · the Funnel line"],
-    [6, "Four where we confirmed the vulnerable function is really called. And one that is genuinely exploitable."],
+    [6, "One where the vulnerable function is really called — and that one is genuinely exploitable."],
+    [7, "It's honest about the gap, too: sixty-eight percent of call sites resolve, and whatever it can't resolve is flagged potentially reachable, never dismissed."],
   ]],
   ["Beat 3 · the graph", [
     [8, "This is the whole attack surface. Public entry points on the left, your functions in the middle, dependencies on the right.", "SWITCH · dashboard ?demo=1 (stage 0)"],
@@ -139,11 +140,11 @@ const SCRIPT = [
     [4, "That's a ninety-nine percent cut in what you have to read."],
   ]],
   ["Beat 4 · Muse", [
-    [7, "That red card is an AI pen-tester's hypothesis — labelled unverified, and here it independently lands on the same call.", "HOLD · the drawer's AI card"],
+    [7, "That red card is an AI pen-tester's hypothesis — labelled unverified, and it lands on the same call.", "HOLD · the drawer's AI card"],
     [4, "It's one of four layers running on Meta's Muse Spark Open."],
     [6, "Muse triages every reachable CVE at symbol level — here it clears requests CVE-2024-35195,", "SWITCH · triage output in terminal"],
-    [7, "because the project only calls requests.post, never a Session — and Session pooling is what that CVE needs."],
-    [7, "It also reads your docs to judge which routes are internet-facing, and proposes call edges static analysis can't resolve."],
+    [7, "because the project only calls requests.post and never reuses a pooled Session, which is what that CVE needs."],
+    [4, "It also reads your docs to judge which routes are internet-facing."],
     [3, "And you can just ask it.", "SWITCH · chat.html, send the question"],
     [6, "Muse answers by calling VScan's own tools over MCP, and it shows you every call it made.", "CUT · jump to the rendered answer"],
     [6, "Nothing it says can change a verdict — the model advises, the static analysis decides."],
@@ -154,8 +155,7 @@ const SCRIPT = [
     [5, "so you block the build on an exploitable path, not on a CVE count."],
   ]],
   ["Beat 6 · close", [
-    [9, "Everything here was built during the hackathon: the call-graph scanner, the taint engine, the four Muse layers, the MCP server, the Action and this dashboard.", "SWITCH · README"],
-    [4, "It's open source and it runs on your laptop."],
+    [9, "Everything here was built during the hackathon: the call-graph scanner, the taint engine, the four Muse layers, the MCP server, the Action and this dashboard — all open source.", "SWITCH · README"],
     [5, "One hundred and forty-five alerts in. One that matters out.", "SWITCH · the funnel, hold"],
   ]],
 ];

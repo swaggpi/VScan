@@ -3091,6 +3091,7 @@
       var prev = stage;
       stage = n;
       for (var i = 1; i <= LAST; i++) document.documentElement.classList.toggle("demo-s" + i, i === n);
+      var leaving = prev >= 2 && n < 2 ? pathEles() : null;   // grab the path before deselecting
       var btn = el.eplist.querySelector('.ep[data-id*="documents/import"]') ||
         Array.prototype.filter.call(el.eplist.querySelectorAll(".ep"), function (b) {
           return /POST/.test(b.textContent) && b.textContent.indexOf("/documents/import") >= 0;
@@ -3100,19 +3101,71 @@
         if (n >= 2 && !on) btn.click();            // same handler as the left-hand button
         else if (n < 2 && on && prev >= 2) btn.click(); // toggles selection back off
       }
-      followResize();
+      followResize(prev, n, leaving);
     }
     function step(d) { setStage(stage + d); }
 
+    // The proof shot: at stage 2 (kept at 3) the camera zooms onto the traced path.
+    // The path is the existing trace() result for the selected entry point (the
+    // same set lightTrace lights), so nothing is recomputed here.
+    var DEMO_ZOOM_MS = 800, DEMO_PATH_PAD = 50, LABEL_PX = 15, motion = 0;
+    function pathEles() {
+      if (!cy || !selectedEp) return null;
+      var res = trace(selectedEp);
+      var nodes = cy.nodes().filter(function (n) { return res.nodes[n.id()]; });
+      var edges = cy.edges().filter(function (e) { return res.edges[e.data("tkey")]; });
+      return nodes.union(edges);
+    }
+    // Labels are 12 model units (~6px at the fitted zoom). Once the path's target
+    // zoom is known, size lit-node labels so they render at ~LABEL_PX on screen
+    // (demo mode only; the stylesheet cap does not apply to this override).
+    function fitZoom(eles) {
+      var bb = eles.boundingBox(), w = cy.width(), h = cy.height();
+      var z = Math.min((w - 2 * DEMO_PATH_PAD) / Math.max(bb.w, 1), (h - 2 * DEMO_PATH_PAD) / Math.max(bb.h, 1));
+      return Math.max(cy.minZoom(), Math.min(cy.maxZoom(), z));
+    }
+    function boostPathLabels(eles) {
+      var z = fitZoom(eles);
+      cy.style().selector("node.lit").style({
+        "font-size": Math.max(12, LABEL_PX / z), "text-max-width": 380, "text-margin-y": 10 / z,
+        "text-background-color": "#0A1B2D", "text-background-opacity": 0.85,
+        "text-background-padding": 3 / z, "text-background-shape": "roundrectangle"
+      }).update();
+    }
+
     // Layout reflows over the 0.6s transition; re-fit the graph on every frame
-    // (existing cy.resize + fit-to-spine) so it scales smoothly with its box
-    // instead of snapping once the transition ends.
-    function followResize() {
-      if (REDUCED) { if (cy) { cy.resize(); cy.fit(graphFitEles, GRAPH_PAD); } return; }
-      var t0 = performance.now();
+    // (existing cy.resize + fit) so it scales smoothly with its box instead of
+    // snapping once the transition ends. `onPath` keeps the path framed (2 <-> 3);
+    // otherwise it fits the whole spine. A 1 <-> 2 move then settles with one
+    // eased camera animation, after which the camera is left still.
+    function followResize(from, to, leaving) {
+      var id = ++motion, t0 = performance.now();
+      var zoomIn = from < 2 && to >= 2, zoomOut = from >= 2 && to < 2;
+      var onPath = from >= 2 && to >= 2;
+      function fitNow() {
+        if (!cy) return;
+        cy.resize();
+        var p = zoomOut ? leaving : onPath ? pathEles() : null;
+        cy.fit(p && p.length ? p : graphFitEles, p && p.length ? DEMO_PATH_PAD : GRAPH_PAD);
+      }
+      function settle() {
+        if (id !== motion || !cy) return;
+        var p = zoomIn ? pathEles() : null;
+        if (zoomIn && p && p.length) {
+          boostPathLabels(p);
+          if (REDUCED) cy.fit(p, DEMO_PATH_PAD);
+          else cy.animate({ fit: { eles: p, padding: DEMO_PATH_PAD } }, { duration: DEMO_ZOOM_MS, easing: "ease-in-out" });
+        } else if (zoomOut) {
+          if (REDUCED) cy.fit(graphFitEles, GRAPH_PAD);
+          else cy.animate({ fit: { eles: graphFitEles, padding: GRAPH_PAD } }, { duration: DEMO_ZOOM_MS, easing: "ease-in-out" });
+        }
+      }
+      if (REDUCED) { fitNow(); settle(); return; }
+      if (cy) cy.stop();
       (function frame() {
-        if (cy) { cy.resize(); cy.fit(graphFitEles, GRAPH_PAD); }
-        if (performance.now() - t0 < 700) requestAnimationFrame(frame);
+        if (id !== motion) return;
+        if (zoomIn) { if (cy) cy.resize(); } else fitNow();
+        if (performance.now() - t0 < 700) requestAnimationFrame(frame); else settle();
       })();
     }
 

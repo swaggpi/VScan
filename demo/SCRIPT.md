@@ -1,6 +1,9 @@
 # VScan — 3-minute demo script
 
-Target: **2:58**. Hard limit 3:00. ~430 words at ~150 wpm.
+Target: **2:55**. Hard limit 3:00. ~430 words at ~150 wpm.
+
+Segment boundaries (the recorded clips line up with these):
+`seg1 0:00–0:48 · seg2 0:48–1:53 · seg3 1:53–2:10 · seg4 2:10–2:25 · seg5 2:25–2:41 · seg6 2:41–2:55`
 
 Read the voiceover from `demo/teleprompter.html` (open it in a browser, press
 Space to start). Every number below is from a real run on `samples/acme-api`;
@@ -28,9 +31,9 @@ Terminal: large font, dark background, nothing but the prompt.
 `vscan audit samples/acme-api` findings fast so the wall of CVEs flies past.
 
 > Here's the dependency scan for a small Flask service. A hundred and
-> forty-five known CVEs. Every one of them is real. And almost none of them
-> matter, because nothing in this codebase ever calls the vulnerable code.
-> That's the job: finding the one that does.
+> forty-five known CVEs. Every one of them is real. And almost none of them are
+> reachable from the app's public routes.
+> That's the job: finding the ones that are.
 
 ## Beat 2 — The scan (0:14 – 0:40)
 
@@ -41,8 +44,11 @@ Land on the Summary + Funnel lines.
 > route into your dependencies, and then runs taint analysis to see whether
 > attacker-controlled input actually reaches the vulnerable call.
 > Nineteen dependencies. A hundred and forty-five CVEs. Sixteen reachable.
-> Four where we confirmed the vulnerable function is really called. And one
-> that is genuinely exploitable.
+> One where the vulnerable function is really called — and that one is
+> genuinely exploitable.
+> It's honest about the gap, too: sixty-eight percent of call sites resolve,
+> and whatever it can't resolve is flagged potentially reachable, never
+> dismissed.
 
 ## Beat 3 — The graph, staged (0:40 – 1:36)
 
@@ -86,14 +92,13 @@ cue below.
 `likely_unaffected` triage entry in the terminal output (`requests` /
 CVE-2024-35195), then to `chat.html`.
 
-> That red card is an AI pen-tester's hypothesis — labelled unverified, and
-> here it independently lands on the same call. It's one of four layers running
-> on Meta's Muse Spark Open.
+> That red card is an AI pen-tester's hypothesis — labelled unverified, and it
+> lands on the same call. It's one of four layers running on Meta's Muse Spark
+> Open.
 > Muse triages every reachable CVE at symbol level — here it clears `requests`
-> CVE-2024-35195, because the project only calls `requests.post`, never a
-> `Session`, and Session pooling is what that CVE needs.
-> It also reads your docs to judge which routes are internet-facing, and
-> proposes call edges static analysis can't resolve.
+> CVE-2024-35195, because the project only calls `requests.post` and never
+> reuses a pooled `Session`, which is what that CVE needs.
+> It also reads your docs to judge which routes are internet-facing.
 > And you can just ask it.
 
 **Screen:** chat — send "What's actually exploitable in this project?"
@@ -120,7 +125,7 @@ scanning, then `--fail-on`.
 
 > Everything here was built during the hackathon: the call-graph scanner, the
 > taint engine, the four Muse layers, the MCP server, the Action and this
-> dashboard. It's open source and it runs on your laptop.
+> dashboard — all open source.
 > One hundred and forty-five alerts in. One that matters out.
 
 ---
