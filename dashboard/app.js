@@ -1574,6 +1574,7 @@
 
   function panForDrawer(open) {
     if (!cy) return;
+    if (document.documentElement.classList.contains("demo")) return; // demo: the grid resizes the graph instead
     // On narrow screens the drawer stacks below the canvas (static flow), so a
     // horizontal pan would be wrong — leave the viewport alone.
     if (window.matchMedia && window.matchMedia("(max-width: 860px)").matches) return;
@@ -3072,4 +3073,63 @@
   // file://), fall back to the inline sample exactly as before.
   setupExposureLegend();
   showBundle("demo");
+
+  /* ------------------------------------------------------ presentation mode */
+  // ?demo=1 reveals the UI in stages for a recorded demo (0 graph only, 1 left
+  // rail, 2 right drawer with the first entry point selected, 3 funnel bar).
+  // Space / ArrowRight advance, ArrowLeft goes back; &auto=<ms> auto-advances.
+  // Purely a visibility layer (CSS keyed off root-element classes); no data is touched.
+  (function () {
+    var q = new URLSearchParams(location.search);
+    if (q.get("demo") !== "1") return;
+    var LAST = 3, stage = -1, timer = null;
+    document.documentElement.classList.add("demo");
+
+    function setStage(n) {
+      n = Math.max(0, Math.min(LAST, n));
+      if (n === stage) return;
+      var prev = stage;
+      stage = n;
+      for (var i = 1; i <= LAST; i++) document.documentElement.classList.toggle("demo-s" + i, i === n);
+      var btn = el.eplist.querySelector('.ep[data-id*="documents/import"]') ||
+        Array.prototype.filter.call(el.eplist.querySelectorAll(".ep"), function (b) {
+          return /POST/.test(b.textContent) && b.textContent.indexOf("/documents/import") >= 0;
+        })[0];
+      if (btn) {
+        var on = btn.getAttribute("aria-pressed") === "true";
+        if (n >= 2 && !on) btn.click();            // same handler as the left-hand button
+        else if (n < 2 && on && prev >= 2) btn.click(); // toggles selection back off
+      }
+      followResize();
+    }
+    function step(d) { setStage(stage + d); }
+
+    // Layout reflows over the 0.6s transition; re-fit the graph on every frame
+    // (existing cy.resize + fit-to-spine) so it scales smoothly with its box
+    // instead of snapping once the transition ends.
+    function followResize() {
+      if (REDUCED) { if (cy) { cy.resize(); cy.fit(graphFitEles, GRAPH_PAD); } return; }
+      var t0 = performance.now();
+      (function frame() {
+        if (cy) { cy.resize(); cy.fit(graphFitEles, GRAPH_PAD); }
+        if (performance.now() - t0 < 700) requestAnimationFrame(frame);
+      })();
+    }
+
+    document.addEventListener("keydown", function (e) {
+      var t = e.target, tag = t && t.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || (t && t.isContentEditable)) return;
+      if (e.key === " " || e.key === "ArrowRight") { e.preventDefault(); step(1); }
+      else if (e.key === "ArrowLeft") { e.preventDefault(); step(-1); }
+    });
+
+    var auto = parseInt(q.get("auto"), 10);
+    if (auto > 0) {
+      timer = setInterval(function () {
+        if (stage >= LAST) { clearInterval(timer); return; }
+        step(1);
+      }, auto);
+    }
+    setStage(0);
+  })();
 })();

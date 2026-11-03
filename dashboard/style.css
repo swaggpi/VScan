@@ -563,6 +563,42 @@ a { color: inherit; }
   .funnel__stage { min-width: 4.4rem; }
 }
 
+/* ----------------------------------------------------------- presentation mode
+   Opt-in via ?demo=1 (see app.js). Stages are classes on <html>. Panels are
+   collapsed to zero size and fade/slide in; the grid columns and the funnel
+   band ease open, so the graph smoothly grows/shrinks to the free area (app.js
+   keeps it fitted while the transition runs). */
+.demo .layout, .demo .layout.has-detail {
+  grid-template-columns: 0px minmax(0, 1fr) 0px;
+  transition: grid-template-columns 0.6s ease;
+}
+.demo.demo-s1 .layout, .demo.demo-s2 .layout, .demo.demo-s3 .layout { grid-template-columns: var(--rail-w) minmax(0, 1fr) 0px; }
+.demo.demo-s2 .layout.has-detail, .demo.demo-s3 .layout.has-detail { grid-template-columns: var(--rail-w) minmax(0, 1fr) var(--detail-w); }
+
+.demo .rail, .demo .funnel, .demo .noise, .demo .detail {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.6s ease, transform 0.6s ease, visibility 0s linear 0.6s,
+              max-height 0.6s ease, padding 0.6s ease;
+}
+.demo .rail { min-width: 0; overflow-x: hidden; transform: translateX(-28px); }
+.demo .rail > .panel { width: calc(var(--rail-w) - 1.7rem); }   /* no text reflow while the column grows */
+.demo .funnel, .demo .noise { overflow: hidden; max-height: 0; padding-top: 0; padding-bottom: 0; transform: translateY(-16px); }
+.demo .detail { transform: translateX(100%); }
+
+.demo.demo-s1 .rail, .demo.demo-s2 .rail, .demo.demo-s3 .rail,
+.demo.demo-s3 .funnel, .demo.demo-s3 .noise,
+.demo.demo-s2 .layout.has-detail .detail, .demo.demo-s3 .layout.has-detail .detail {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: none;
+  transition-delay: 0s;
+}
+.demo.demo-s3 .funnel { max-height: 12rem; padding-top: 0.55rem; padding-bottom: 0.2rem; }
+.demo.demo-s3 .noise { max-height: 6rem; padding-top: 0.1rem; padding-bottom: 0.5rem; }
+
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
 }

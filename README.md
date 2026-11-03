@@ -19,6 +19,24 @@ Every finding gets one verdict:
 
 Reachability is a **lower bound**: VScan only follows call edges it can resolve, so `not reached` is conservative (a missed path is possible; a false "exploitable" is not).
 
+## Example
+
+`vscan audit samples/acme-api` on the bundled sample service:
+
+```
+Funnel: 19 deps · 145 known CVEs · 16 reachable · 4 vulnerable-function confirmed · 1 exploitable
+
+ 6. PyYAML 5.3.1 [PyPI] -- CVE-2020-14343
+    severity: CRITICAL   EPSS 0.060
+    REACHABLE via GET /admin/config, POST /documents/import
+    taint: request.get_data -> yaml.full_load
+    [ep:POST:/documents/import -> fn:api/documents.py:import_document
+     -> fn:services/document_service.py:ingest -> fn:core/config_loader.py:parse_yaml
+     -> dep:PyPI:PyYAML]
+```
+
+The other 144 findings are real CVEs that no entry point reaches, or whose vulnerable function the project never calls.
+
 ## Install
 
 ```sh
@@ -54,8 +72,11 @@ vscan-mcp            # stdio; or --transport http for a remote server
 
 ## AI layer (optional, advisory)
 
-With an OpenAI-compatible model configured, VScan adds advisory overlays. They **never change a deterministic verdict** — they are shown separately and labelled as inferred/unverified:
+Built and tested against **Meta Muse Spark Open** (`meta-models/muse-spark-open-1026`), served by Baseten. The client is a plain OpenAI-compatible chat-completions caller, so any such endpoint works.
 
+With a model configured, VScan adds advisory overlays. They **never change a deterministic verdict** — they are shown separately and labelled as inferred/unverified:
+
+- **Triage** — for each reachable CVE, compares the symbols the project actually calls against what the CVE says is vulnerable. `likely_unaffected` is gated hard: it requires the CVE to name a specific vulnerable function, that function to be absent from the called-symbol set, and no unresolved calls into the dependency. Anything else is `uncertain`. The gate is enforced on the model's output, so the model cannot talk VScan into a false "safe".
 - **Exposure** — whether an endpoint is public or internal, read from the repo's docs.
 - **Inferred edges** — fills dynamic-dispatch gaps static analysis can't resolve, surfacing dependencies as *likely* reachable.
 - **Attack surface** — flags candidate code-level issues (SSTI, injection, path traversal, …) on public endpoints as unverified hypotheses.
@@ -80,3 +101,18 @@ vscan audit path/to/repo --bundle bundle.json
 ```
 
 Open it from a web server (it loads the bundle and, if the backend is running, the AI overlays).
+
+## Provenance
+
+Built for the Meta Global AI Developer Hackathon. The repository starts from an empty commit on 2026-10-26 (kickoff day) and every part of it was written during the event: the scanner and the Python/JavaScript/PHP/Go analyzers, the reachability and taint engines, the OSV/KEV/EPSS correlator, the four Muse advisory layers, the MCP server, the GitHub Action and the dashboard. `git log` is the full record.
+
+## Limitations
+
+- Reachability is a lower bound — see above. On the sample service, 68% of call sites resolve; the rest are reported as unresolved, never guessed.
+- PHP and Go dependency reachability is single-file for PHP; Go resolves across packages within one module.
+- OSV matching needs exact pinned versions. Unpinned dependencies are reported as skipped, not as clean.
+- The AI layers are advisory and can be wrong. They are labelled as such everywhere they appear, and they cannot change a verdict.
+
+## License
+
+MIT.
