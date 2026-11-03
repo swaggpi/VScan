@@ -10,8 +10,9 @@ read-only MCP tools over the warmed primary scan (see :mod:`scanner.web.chat`).
 The set of demo repos comes from ``VSCAN_DEMO_REPOS`` (comma-separated) and
 defaults to the single ``VSCAN_DEMO_REPO`` (default ``/app/samples/acme-api`` --
 the in-container path). Each repo is warmed on its own background thread, and
-``/api/explain`` searches across every warmed scan, so extra demo scans can be
-added later with zero code change.
+the per-repo endpoints (explain / chat / enrichment / attack-surface) resolve an
+optional ``?repo=`` basename against the warmed scans (no param -> primary), so
+extra demo scans can be added later with zero code change.
 
 The scans reuse the MCP server's cached accessors verbatim
 (:mod:`scanner.mcp.state`) -- no scanning logic is reimplemented here. The
@@ -40,7 +41,9 @@ from pydantic import BaseModel
 
 from scanner.agent import LLMClient
 from scanner.correlate import report
+from scanner.enrich import exposure_overlay, infer_edges, likely_reachability
 from scanner.mcp import state
+from scanner.pentest import attack_surface as compute_attack_surface
 from scanner.taint import compute_taint
 from scanner.web import chat as chat_mod
 from scanner.web import explain as explain_mod
@@ -68,6 +71,29 @@ class _ScanState:
     exploitable: int = 0
     findings: list[dict[str, Any]] = field(default_factory=list)
     error: str | None = None
+    # Advisory, additive Phase-1 EXPOSURE overlay (see scanner.enrich.exposure):
+    # per public entry point, whether the docs place it internet-facing vs.
+    # internal and whether it is auth-gated. Warmed on a background thread AFTER
+    # the scan is ready so health/explain/chat go live immediately; ``None``
+    # until ready. ``exposure_note`` carries a degrade reason if it could not be
+    # built (the overlay then stays ``{}`` rather than failing the endpoint).
+    exposure: dict[str, Any] | None = None
+    exposure_note: str | None = None
+    # Advisory, additive Phase-2 INFERRED-EDGE tier (see scanner.enrich.edges):
+    # grounded inferred ``calls`` edges filling unresolved call sites, plus the
+    # "likely-reachable" dependencies they would surface on a throwaway augmented
+    # COPY of the graph. Warmed in the SAME background step as the exposure
+    # overlay, from the cached deterministic graph/reachability/correlation. They
+    # NEVER enter the graph findings/taint/verdicts read; ``None`` until warmed.
+    inferred_edges: list[dict[str, Any]] | None = None
+    likely_reachable: list[dict[str, Any]] | None = None
+    # Advisory, additive Tier-A ATTACK-SURFACE analysis (see scanner.pentest):
+    # per public entry point, AI-hypothesis code-level vulnerabilities in the
+    # app's OWN reachable code. Warmed in the SAME background step as the other
+    # overlays, from the cached graph/reachability + the repo source on disk.
+    # Every finding is advisory/``ai-hypothesis`` and NEVER mutates or influences
+    # the graph/reachability/taint/findings; ``None`` until warmed.
+    attack_surface: dict[str, Any] | None = None
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def snapshot(self) -> dict[str, Any]:
@@ -112,6 +138,65 @@ class _ScanState:
         with self.lock:
             return list(self.findings)
 
+    def set_exposure(
+        self,
+        exposure: dict[str, Any],
+        *,
+        note: str | None = None,
+        inferred_edges: list[dict[str, Any]] | None = None,
+        likely_reachable: list[dict[str, Any]] | None = None,
+    ) -> None:
+        """Cache the advisory enrichment overlays (and an optional degrade note).
+
+        The exposure overlay and the Phase-2 inferred-edge / likely-reachability
+        lists are cached together under one lock so the ``/api/enrichment``
+        endpoint never sees a half-warmed state.
+        """
+        with self.lock:
+            self.exposure = exposure
+            self.exposure_note = note
+            self.inferred_edges = inferred_edges
+            self.likely_reachable = likely_reachable
+
+    def exposure_snapshot(self) -> tuple[dict[str, Any] | None, str | None]:
+        """Return ``(exposure_copy_or_None, note)`` under the lock.
+
+        ``None`` means the overlay is not warmed yet (still scanning or still
+        computing); a dict (possibly ``{}`` with a note) means it is ready.
+        """
+        with self.lock:
+            exposure = dict(self.exposure) if self.exposure is not None else None
+            return exposure, self.exposure_note
+
+    def enrichment_lists_snapshot(
+        self,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Return ``(inferred_edges, likely_reachable)`` copies under the lock.
+
+        Each defaults to ``[]`` when not warmed, so the endpoint always carries
+        both Phase-2 keys even if only the exposure overlay was cached.
+        """
+        with self.lock:
+            inferred = list(self.inferred_edges) if self.inferred_edges else []
+            likely = list(self.likely_reachable) if self.likely_reachable else []
+            return inferred, likely
+
+    def set_attack_surface(self, attack_surface: dict[str, Any]) -> None:
+        """Cache the advisory Tier-A attack-surface analysis under the lock."""
+        with self.lock:
+            self.attack_surface = attack_surface
+
+    def attack_surface_snapshot(self) -> dict[str, Any] | None:
+        """Return a copy of the attack-surface analysis, or ``None`` if unwarmed.
+
+        ``None`` means it is not warmed yet (still scanning or still computing);
+        a dict (possibly with empty findings + a ``note``) means it is ready.
+        """
+        with self.lock:
+            if self.attack_surface is None:
+                return None
+            return dict(self.attack_surface)
+
 
 def _demo_repo_path() -> str:
     """The demo repo to scan: env ``VSCAN_DEMO_REPO`` or the in-container default."""
@@ -137,6 +222,28 @@ def _demo_repo_paths() -> list[str]:
 def _repo_name(repo_path: str) -> str:
     """A short display name for a repo path (its final path component)."""
     return os.path.basename(os.path.normpath(repo_path)) or repo_path
+
+
+def _resolve_scan(repo: str | None) -> "_ScanState | None":
+    """Select the warmed scan for an optional ``repo`` basename.
+
+    The single resolution shared by every per-repo endpoint (explain / chat /
+    enrichment / attack-surface): ``None`` selects the PRIMARY scan
+    (``app.state.scan``); a given ``repo`` is matched against ``app.state.scans``
+    by the basename of each scan's ``repo_path`` (see :func:`_repo_name`) and a
+    non-match raises 404 ``"unknown repo"``. Returns the matched scan -- which
+    may still be warming; the caller decides what "ready" means -- or ``None``
+    when there is no primary scan at all (startup race).
+    """
+    if repo is None:
+        return getattr(app.state, "scan", None)
+    scans: list[_ScanState] = getattr(app.state, "scans", [])
+    scan_state = next(
+        (s for s in scans if _repo_name(s.repo_path) == repo), None
+    )
+    if scan_state is None:
+        raise HTTPException(status_code=404, detail="unknown repo")
+    return scan_state
 
 
 def _warm_scan(repo_path: str) -> dict[str, Any]:
@@ -168,8 +275,75 @@ def _warm_scan(repo_path: str) -> dict[str, Any]:
     }
 
 
+def _warm_exposure_overlay(repo_path: str) -> dict[str, Any]:
+    """Build the advisory per-entry-point EXPOSURE overlay for a warm repo.
+
+    Reuses the same cached graph/reachability/correlation accessors the warm
+    scan populated (no re-scan, no extra network), then promotes the agent
+    layer's advisory exposure judgement into an entry-point-keyed overlay (see
+    :func:`scanner.enrich.exposure.exposure_overlay`). Read-only and additive:
+    it never changes a finding's reachable/confirmed/tainted state or the graph.
+    The model is used iff ``LLM_*`` is configured; otherwise the overlay falls
+    back to the deterministic offline heuristic and still returns grounded data.
+    """
+    graph, corr = state.get_correlation(repo_path, offline=False)
+    _, reach = state.get_reachability(repo_path)
+    return exposure_overlay(graph, reach, corr, LLMClient())
+
+
+def _warm_inferred_edges(
+    repo_path: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Build the advisory Phase-2 inferred-edge overlay + likely reachability.
+
+    Reuses the SAME cached graph/reachability/correlation the warm scan
+    populated (no re-scan, no extra network): the model (when ``LLM_*`` is
+    configured) maps unresolved call sites to grounded candidate node ids, and
+    :func:`scanner.enrich.likely_reachability` diffs an AUGMENTED COPY of the
+    graph against the proven reachability. Read-only and additive -- the inferred
+    edges never enter the cached graph that findings/taint/verdicts read, so the
+    canonical pipeline's output is byte-identical whether or not this ran.
+    Returns ``(inferred_edges, likely_reachable)``.
+    """
+    graph, corr = state.get_correlation(repo_path, offline=False)
+    _, reach = state.get_reachability(repo_path)
+    inferred = infer_edges(graph, reach, corr, LLMClient())
+    likely = likely_reachability(graph, inferred, reach)
+    return inferred, likely["likely_reachable"]
+
+
+def _warm_attack_surface(
+    repo_path: str, exposure: dict[str, Any] | None
+) -> dict[str, Any]:
+    """Build the advisory Tier-A attack-surface analysis for a warm repo.
+
+    Reuses the SAME cached graph/reachability the warm scan populated (no
+    re-scan), reads the repo source from its resolved on-disk path, and runs the
+    model (when ``LLM_*`` is configured) over the code reachable from each entry
+    point (see :func:`scanner.pentest.attack_surface`). The ``exposure`` overlay
+    already built this step is passed through only to tag/prioritise entry
+    points. Read-only and additive: every finding is an advisory
+    ``ai-hypothesis`` and never changes a finding/verdict or the graph.
+    """
+    abspath = state.resolve_repo(repo_path)
+    graph, _ = state.get_correlation(repo_path, offline=False)
+    _, reach = state.get_reachability(repo_path)
+    return compute_attack_surface(
+        graph, reach, abspath, LLMClient(), exposure=exposure
+    )
+
+
 def _run_warm_scan(scan_state: _ScanState, repo_path: str) -> None:
-    """Background worker: warm the scan and record ready/degraded. Never raises."""
+    """Background worker: warm the scan and record ready/degraded. Never raises.
+
+    Once the scan is ready (so health/explain/chat are live immediately), the
+    SAME background thread goes on to warm the advisory enrichment overlays --
+    the exposure overlay, the Phase-2 inferred-edge overlay + likely
+    reachability, AND the Tier-A attack-surface analysis -- and cache them on the
+    scan state. Every overlay is additive and never affects the scan result; any
+    failure degrades to empty overlays with a note rather than crashing the
+    thread or the server.
+    """
     try:
         result = _warm_scan(repo_path)
     except Exception as exc:  # noqa: BLE001 - degrade gracefully, never crash startup
@@ -180,15 +354,49 @@ def _run_warm_scan(scan_state: _ScanState, repo_path: str) -> None:
         exploitable=result["exploitable"],
         findings=result["findings"],
     )
+    exposure: dict[str, Any] = {}
+    try:
+        exposure = _warm_exposure_overlay(repo_path)
+        inferred, likely = _warm_inferred_edges(repo_path)
+        scan_state.set_exposure(
+            exposure, inferred_edges=inferred, likely_reachable=likely
+        )
+    except Exception as exc:  # noqa: BLE001 - advisory overlays degrade, never crash
+        exposure = {}
+        scan_state.set_exposure(
+            {},
+            note=f"enrichment overlay unavailable: {type(exc).__name__}: {exc}",
+            inferred_edges=[],
+            likely_reachable=[],
+        )
+    # Tier-A attack surface: advisory AI hypotheses over reachable source. It
+    # already degrades internally to empty findings + a note; the guard here
+    # only catches an unexpected error gathering the cached graph/source, so the
+    # endpoint never hangs at 503 forever.
+    try:
+        surface = _warm_attack_surface(repo_path, exposure)
+    except Exception as exc:  # noqa: BLE001 - advisory analysis degrades, never crash
+        surface = {
+            "repo": _repo_name(repo_path),
+            "entrypoints": {},
+            "summary": {
+                "total_findings": 0,
+                "by_severity": {},
+                "entrypoints_with_findings": 0,
+            },
+            "note": f"attack-surface analysis unavailable: {type(exc).__name__}: {exc}",
+        }
+    scan_state.set_attack_surface(surface)
 
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     """Kick off one warm scan per demo repo on daemon threads; never block startup.
 
-    ``app.state.scans`` holds every scan (what ``/api/explain`` searches);
-    ``app.state.scan`` aliases the first one so ``/api/health`` keeps reporting
-    the primary repo exactly as before.
+    ``app.state.scans`` holds every scan (what the per-repo endpoints resolve a
+    ``?repo=`` against); ``app.state.scan`` aliases the first one so
+    ``/api/health`` and the no-``repo`` endpoints keep reporting the primary
+    repo exactly as before.
     """
     repo_paths = _demo_repo_paths()
     scans = [
@@ -258,18 +466,24 @@ class ChatRequest(BaseModel):
 
 
 @app.post("/api/chat")
-def chat(req: ChatRequest) -> dict[str, Any]:
+def chat(req: ChatRequest, repo: str | None = None) -> dict[str, Any]:
     """Free-form advisory chat: the model answers by calling vscan's read-only
-    MCP tools over the warmed primary scan.
+    MCP tools over one warmed scan.
+
+    The optional ``repo`` query param selects which warmed scan grounds the
+    chat, resolved exactly like ``/api/enrichment?repo=`` (see
+    :func:`_resolve_scan`): no param -> the primary scan; a basename of a warmed
+    scan's ``repo_path`` -> that scan; an unknown ``repo`` -> 404 ``"unknown
+    repo"``. The agent then runs over the MATCHED scan's ``repo_path``.
 
     Returns 200 ``{"reply", "tool_calls", "model"}`` where ``tool_calls`` is the
     "tools used" trace (``{name, arguments, ok, summary}`` per executed tool).
-    503 ``"scan not ready"`` while the primary scan is still warming (or
+    503 ``"scan not ready"`` while the selected scan is still warming (or
     degraded): there is nothing to ground the chat on yet. Otherwise the loop
     runs via :func:`scanner.web.chat.run_chat`, which never raises -- an
     unavailable model or any mid-loop failure degrades to a graceful 200 reply.
     """
-    scan_state: _ScanState | None = getattr(app.state, "scan", None)
+    scan_state = _resolve_scan(repo)
     if scan_state is None or scan_state.current_status() != "ready":
         raise HTTPException(status_code=503, detail="scan not ready")
 
@@ -290,32 +504,108 @@ class ExplainRequest(BaseModel):
 
 
 @app.post("/api/explain")
-def explain(req: ExplainRequest) -> dict[str, Any]:
+def explain(req: ExplainRequest, repo: str | None = None) -> dict[str, Any]:
     """Return a live, grounded attack-narrative + remediation for one finding.
 
-    Looks the finding up by ``(dependency_id, vuln_id)`` across every warmed
-    scan and hands it to :func:`scanner.web.explain.explain_finding`, which
-    phrases the finding's own facts via the configured model (provenance
-    ``"llm"``) or a deterministic grounded template (``"offline-heuristic"``).
-    Never raises to the client:
+    The optional ``repo`` query param selects which warmed scan to look the
+    finding up in, resolved exactly like ``/api/enrichment?repo=`` (see
+    :func:`_resolve_scan`): no param -> the primary scan; a basename of a warmed
+    scan's ``repo_path`` -> that scan; an unknown ``repo`` -> 404 ``"unknown
+    repo"``. The finding is looked up in -- and its narrative computed against
+    (graph/reachability/correlation/findings) -- the MATCHED scan only, so the
+    same ``(dependency_id, vuln_id)`` in two repos never cross-resolves.
 
-    * 200 with the explanation when a matching finding is found in a ready scan;
-    * 503 ``"scan not ready"`` when no match is found yet but a scan is still
-      warming (the finding may still appear);
-    * 404 ``"finding not in live scan"`` when every scan has finished warming and
-      no finding matches.
+    The matched finding is handed to
+    :func:`scanner.web.explain.explain_finding`, which phrases the finding's own
+    facts via the configured model (provenance ``"llm"``) or a deterministic
+    grounded template (``"offline-heuristic"``). Never 500s:
+
+    * 200 with the explanation when the finding is found in the matched, ready scan;
+    * 503 ``"scan not ready"`` while the matched scan is still warming (or there
+      is no primary scan yet) -- the finding may still appear;
+    * 404 ``"finding not in live scan"`` when the matched scan is ready but no
+      finding matches.
     """
-    scans: list[_ScanState] = getattr(app.state, "scans", [])
-
-    for scan_state in scans:
-        if scan_state.current_status() != "ready":
-            continue
-        finding = explain_mod.find_finding(
-            scan_state.findings_snapshot(), req.dependency_id, req.vuln_id
-        )
-        if finding is not None:
-            return explain_mod.explain_finding(finding, LLMClient())
-
-    if any(scan_state.current_status() == "scanning" for scan_state in scans):
+    scan_state = _resolve_scan(repo)
+    if scan_state is None or scan_state.current_status() != "ready":
         raise HTTPException(status_code=503, detail="scan not ready")
-    raise HTTPException(status_code=404, detail="finding not in live scan")
+
+    finding = explain_mod.find_finding(
+        scan_state.findings_snapshot(), req.dependency_id, req.vuln_id
+    )
+    if finding is None:
+        raise HTTPException(status_code=404, detail="finding not in live scan")
+    return explain_mod.explain_finding(finding, LLMClient())
+
+
+@app.get("/api/enrichment")
+def enrichment(repo: str | None = None) -> dict[str, Any]:
+    """Return the advisory, additive per-entry-point enrichment for one repo.
+
+    Each warmed scan gets its OWN overlays (see :mod:`scanner.enrich.exposure`
+    and :mod:`scanner.enrich.edges`) warmed on its background thread AFTER that
+    scan is ready. The optional ``repo`` query param selects which warmed scan
+    to report, matched against ``app.state.scans`` by the basename of each
+    scan's ``repo_path`` (e.g. ``acme-api``, ``plugin-reports``). With no param
+    this reports the PRIMARY scan exactly as before. The endpoint reports:
+
+    * 404 ``"unknown repo"`` when a ``repo`` is given but no warmed scan matches;
+    * 503 ``"scan not ready"`` while the selected scan is still warming OR its
+      overlays are still being built (there is nothing to serve yet);
+    * 200 ``{"repo", "exposure": {<ep_id>: {...}}, "inferred_edges": [...],
+      "likely_reachable": [...]}`` once the overlays are ready (with an extra
+      ``"note"`` if they degraded to empty overlays on error).
+
+    It is a pure reader of cached state and never 500s: the overlay computation
+    already degrades to empty overlays with a note, and nothing here raises. All
+    overlays are ADVISORY -- they never change any finding's reachable /
+    confirmed / tainted state or verdict; ``likely_reachable`` is a lead, never a
+    proven reachability result.
+    """
+    scan_state = _resolve_scan(repo)
+    if scan_state is None:
+        raise HTTPException(status_code=503, detail="scan not ready")
+    exposure, note = scan_state.exposure_snapshot()
+    if exposure is None:
+        raise HTTPException(status_code=503, detail="scan not ready")
+    inferred_edges, likely_reachable = scan_state.enrichment_lists_snapshot()
+    payload: dict[str, Any] = {
+        "repo": scan_state.repo,
+        "exposure": exposure,
+        "inferred_edges": inferred_edges,
+        "likely_reachable": likely_reachable,
+    }
+    if note:
+        payload["note"] = note
+    return payload
+
+
+@app.get("/api/attack-surface")
+def attack_surface(repo: str | None = None) -> dict[str, Any]:
+    """Return the advisory, additive Tier-A attack-surface analysis for one repo.
+
+    Mirrors ``/api/enrichment``: each warmed scan gets its own analysis (see
+    :mod:`scanner.pentest`) warmed on its background thread AFTER that scan is
+    ready. The optional ``repo`` query param selects which warmed scan to report
+    (matched against ``app.state.scans`` by the basename of each scan's
+    ``repo_path``); with no param this reports the PRIMARY scan. It reports:
+
+    * 404 ``"unknown repo"`` when a ``repo`` is given but no warmed scan matches;
+    * 503 ``"scan not ready"`` while the selected scan is still warming OR its
+      analysis has not been cached yet (there is nothing to serve yet);
+    * 200 ``{"repo", "entrypoints": {<ep_id>: {label, exposure, findings:[...]}},
+      "summary": {...}}`` once ready (with an extra ``"note"`` if the model was
+      unavailable or the analysis degraded).
+
+    It is a pure reader of cached state and never 500s. Every finding is an
+    UNVERIFIED HYPOTHESIS (``provenance == "ai-hypothesis"``, ``advisory ==
+    True``); nothing here changes any finding's reachable/confirmed/tainted
+    state or verdict.
+    """
+    scan_state = _resolve_scan(repo)
+    if scan_state is None:
+        raise HTTPException(status_code=503, detail="scan not ready")
+    surface = scan_state.attack_surface_snapshot()
+    if surface is None:
+        raise HTTPException(status_code=503, detail="scan not ready")
+    return surface

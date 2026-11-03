@@ -31,9 +31,29 @@
     module: "#4E7493", file: "#4E7493", doc: "#4E7493"
   };
 
-  // Severity accent used on the canvas (cytoscape styles are canvas-rendered, so
-  // they take literal colors, not CSS custom properties). Mirrors --alert.
-  var ALERT = "#F2654E";
+  // The single RED — the ONLY red in the scheme, reserved for a proven
+  // exploitable dependency. Cytoscape styles are canvas-rendered, so they take
+  // literal colors, not CSS custom properties. Mirrors --alert. ALERT_INK is the
+  // light red-pink ring/label tint.
+  var ALERT = "#E5484D";
+  var ALERT_INK = "#F7A6A0";
+  // AI-inferred accent (Phase 2): a violet held apart from the amber reachability
+  // signal and the red vulnerability accent, so an inferred edge / likely-reachable
+  // marker can never be mistaken for a proven-reachable or exploitable verdict.
+  // Mirrors --infer. INFER_INK is the lighter label tint.
+  var INFER = "#8E7BF5";
+  var INFER_INK = "#C6B2F6";
+  // ADVISORY code-level attack-surface accent (Tier-A AI pen-tester). A
+  // magenta-purple held apart from EVERY deterministic hue — the amber reachability
+  // signal, the red (ALERT) exploitable accent and the violet (INFER) likely
+  // marker — so an AI-identified code-level HYPOTHESIS on an entry point can never
+  // be read as a proven/confirmed/exploitable verdict, and in particular is clearly
+  // NOT the red. One ring for all severities; severity lives in the tooltip/pop-out.
+  var DANGER = "#E24FC4";
+  var DANGER_INK = "#F3A6E0";
+  // Ranking ladders for ordering findings (severity first, then confidence).
+  var DANGER_SEV_RANK = { critical: 4, high: 3, medium: 2, low: 1 };
+  var CONF_RANK = { high: 3, medium: 2, low: 1 };
 
   var cy = null;
   var graphFitEles = null;  // the collection runLayout framed, reused on refit
@@ -59,6 +79,47 @@
   var usageByDep = {};        // dep node id -> usage entry, built from `usage`
   var selectedNodeId = null;  // node whose datasheet the detail panel shows
 
+  // ADVISORY enrichment overlays — live from GET /api/enrichment?repo=<name>, for
+  // the scans backed by a live warm repo (ACME "demo" → acme-api, "pluginreports"
+  // → plugin-reports). Purely additive; they never touch the deterministic
+  // vulnerability verdicts/colors/graph or the reachability model. Three overlays
+  // ride together per repo:
+  //   • exposure       — Phase 1: internet-facing vs internal, auth, provenance;
+  //   • inferred_edges — Phase 2: AI-inferred call edges (dashed violet, Likely view);
+  //   • likely_reachable — Phase 2: deps the AI believes a public route likely reaches
+  //                        even though static analysis resolved no path (a LEAD, never
+  //                        a proven/exploitable result).
+  // Empty for every other view and whenever the backend is absent, so the
+  // dashboard renders exactly as it does today.
+  var exposure = {};              // entrypoint id -> exposure record for the CURRENT view
+  var exposureOn = true;          // exposure overlay visible? (legend toggle)
+  var currentViewKey = null;      // which switcher view is live
+  var currentRepo = null;         // the live repo name for the current view, or null
+  // Per-repo cache: one fetch each, kept across view switches so re-visiting a
+  // view re-renders instantly. repo -> { fetched, exposure, inferred, likely }.
+  var ENRICH = {};
+  var expToggleBtn = null;        // the legend's show/hide-overlay toggle
+
+  // Phase-2 current-view enrichment, pointed at the live repo's cache entry by
+  // applyViewEnrichment(). Never fed into buildModel()/trace()/computeDepths(),
+  // so reachability verdicts, the funnel and the exploitable counts are unchanged.
+  var inferredEdges = [];         // [{src,dst,symbol,origin,confidence,rationale,sources}]
+  var likelyReachable = [];       // [{dependency_id,name,confidence,via:[node ids]}]
+  var likelyByDep = {};           // dep node id -> likely_reachable entry
+  var reachMode = "proven";       // "proven" (default) | "likely"
+
+  // ADVISORY Tier-A attack surface — live from GET /api/attack-surface?repo=<name>,
+  // for the same live-repo views as the enrichment overlay (acme-api, plugin-reports).
+  // Each public entry point may carry AI-identified CODE-LEVEL vulnerability
+  // HYPOTHESES in the app's OWN code (SSTI, injection, path traversal, SSRF, …).
+  // They are UNVERIFIED leads (provenance "ai-hypothesis", advisory true) and are
+  // kept entirely distinct from the deterministic dependency findings/verdicts and
+  // the reachability funnel — they never feed buildModel()/trace()/the counts.
+  var attackSurface = {};         // ep id -> { label, exposure, findings:[...] } (current view)
+  var attackSummary = null;       // { total_findings, by_severity, entrypoints_with_findings }
+  var dangerOpen = false;         // Danger Overview panel visible?
+  var dangerFocusEp = null;       // entry point the overview is focused on, or null
+
   // Focused-view state. When a loaded graph exceeds LARGE_GRAPH we render only
   // the security-relevant subgraph; these hold the full-repo totals and the
   // curation counts the banner reports. Empty/false for small graphs.
@@ -67,7 +128,7 @@
   var repoCounts = {};        // kind -> count across the FULL repo (header "Repository totals")
 
   // Bundles fetched for the header switcher, cached by view key so switching
-  // re-renders instantly without re-fetching (redash is 6+ MB).
+  // re-renders instantly without re-fetching.
   var bundleCache = {};
 
   var el = {
@@ -93,9 +154,7 @@
     zoomOut: document.getElementById("zoom-out"),
     zoomFit: document.getElementById("zoom-fit"),
     viewDemo: document.getElementById("view-demo"),
-    viewRedash: document.getElementById("view-redash"),
-    viewTransitive: document.getElementById("view-transitive"),
-    viewSample: document.getElementById("view-sample")
+    viewPlugin: document.getElementById("view-pluginreports")
   };
 
   /* ---------------------------------------------------------------- model */
@@ -193,27 +252,44 @@
         "transition-property": "background-color, border-color, opacity, width, height, line-color",
         "transition-duration": REDUCED ? "0s" : "260ms"
       }},
-      // Dependencies — the output layer. A solid cyan neuron, a touch larger.
+      // Dependencies — the output layer. The resting fill is the "no CVE" base of
+      // the risk ramp: a muted grey-blue neuron. Vulnerable states warm it up
+      // (slate → amber → red) in the risk rules below.
       { selector: 'node[kind = "dependency"]', style: {
-        "background-color": "#6FB8E0", "background-opacity": 0.95,
-        "border-color": "#C4E3F6", "border-width": 2,
-        "width": 42, "height": 42, "color": "#D7ECF9"
+        "background-color": "#39485A", "background-opacity": 0.88,
+        "border-color": "#4C5E71", "border-width": 2,
+        "width": 42, "height": 42, "color": "#B9CEDE"
       }},
-      // Functions — the hidden layers. A hollow, pale ring over the dark ground.
+      // Functions — the hidden layers. A dim neuron over the dark ground.
       { selector: 'node[kind = "function"]', style: {
-        "background-color": "#0C2237", "background-opacity": 0.55,
-        "border-color": "#9FC6E0", "border-width": 2,
+        "background-color": "#2C3F54", "background-opacity": 0.72,
+        "border-color": "#4E6B86", "border-width": 2,
         "width": 30, "height": 30
       }},
       // Structural kinds (off by default) stay circles too, just small and muted.
       { selector: 'node[kind = "module"]', style: { "background-color": "#2C4660", "border-color": "#4E7493", "width": 24, "height": 24 }},
       { selector: 'node[kind = "file"]', style: { "background-color": "rgba(78,116,147,0.28)", "border-color": "#4E7493", "width": 22, "height": 22 }},
       { selector: 'node[kind = "doc"]', style: { "background-color": "rgba(78,116,147,0.28)", "border-color": "#4E7493", "width": 24, "height": 24 }},
-      // Entry points — the input layer. A solid amber neuron at the start of the flow.
+      // Entry points — the input layer. A solid STEEL neuron at the start of the
+      // flow — deliberately NOT amber, so it never reads as the amber "reachable"
+      // dependency state.
       { selector: 'node[kind = "entrypoint"]', style: {
-        "background-color": "#F2B134", "background-opacity": 0.95,
-        "border-color": "#F7CE78", "border-width": 2.5,
-        "width": 42, "height": 42, "color": "#F7CE78", "font-weight": 600
+        "background-color": "#4C8FC7", "background-opacity": 1,
+        "border-color": "#9ECAEE", "border-width": 2.5,
+        "width": 42, "height": 42, "color": "#CDE2F2", "font-weight": 600
+      }},
+
+      /* ADVISORY exposure overlay (live /api/enrichment, demo only): a subtle
+         mark on an entry point. INTERNAL keeps a quiet cool-blue halo. PUBLIC is a
+         thin DOTTED de-saturated outline — deliberately subtle and NOT a saturated
+         colour, so it can't be mistaken for the amber "reachable" state. Declared
+         BEFORE the .dim/.lit/.focus/.selected rules so an active trace or a
+         selection still overrides it. */
+      { selector: 'node[expo = "internal"]', style: {
+        "overlay-color": "#6FB8E0", "overlay-opacity": 0.18, "overlay-padding": 6
+      }},
+      { selector: 'node[expo = "public"]', style: {
+        "border-style": "dotted", "border-color": "#AFC3D6", "border-width": 1.5
       }},
 
       /* focused-view only: the compact stand-in for the entry points that reach
@@ -226,34 +302,61 @@
         "text-max-width": 164, "font-weight": 600
       }},
 
-      /* Dependency risk — four states, graded by how sure we are it can be
-         attacked:
-           no CVE                     = the base blue node;
-           a CVE, code never reaches it = blue with a red ring;
-           reachable but we can't PROVE attacker input gets there (unsure)
-                                       = red/blue stripes;
-           attacker input provably reaches the call (exploitable)
-                                       = a solid red node.
-         Rules cascade: vreach overrides the ring with stripes, tainted
-         overrides the stripes with a solid fill (hence background-fill:solid). */
+      /* Dependency risk — a traffic-light ramp by how sure we are the dep can be
+         attacked. SOLID FILL = a deterministic/proven state (never a dashed
+         advisory ring, never red unless exploitable). Each state is a DISTINCT
+         hue, cool→warm:
+           no CVE                       = the grey-blue base (above);
+           a CVE, code never reaches it = a SLATE fill + a thin slate ring (low concern);
+           reachable, not proven exploitable = a solid AMBER fill;
+           attacker input provably reaches the call (exploitable) = the ONLY RED,
+             a slightly larger node with a light-red ring.
+         Rules cascade: vreach overrides slate with amber, tainted overrides amber
+         with red (background-fill:solid resets any prior fill). */
       { selector: 'node[vuln = 1]', style: {
-        "border-color": ALERT, "border-width": 3.5, "color": "#F79885"
+        "background-fill": "solid",
+        "background-color": "#43566A", "background-opacity": 0.82,
+        "border-color": "#56697D", "border-width": 1.5, "color": "#9FB2C3"
       }},
       { selector: 'node[vreach = 1]', style: {
-        "background-fill": "linear-gradient",
-        "background-gradient-direction": "to-bottom-right",
-        "background-gradient-stop-colors":
-          "#F2654E #F2654E #6FB8E0 #6FB8E0 #F2654E #F2654E #6FB8E0 #6FB8E0 " +
-          "#F2654E #F2654E #6FB8E0 #6FB8E0 #F2654E #F2654E #6FB8E0 #6FB8E0",
-        "background-gradient-stop-positions":
-          "0 12.5 12.5 25 25 37.5 37.5 50 50 62.5 62.5 75 75 87.5 87.5 100",
-        "border-color": ALERT, "border-width": 3.5, "color": "#F79885"
+        "background-fill": "solid",
+        "background-color": "#F2B134", "background-opacity": 1,
+        "border-color": "#F7CE78", "border-width": 2, "color": "#F7CE78"
       }},
       { selector: 'node[tainted = 1]', style: {
         "background-fill": "solid",
         "background-color": ALERT, "background-opacity": 1,
-        "border-color": "#F79885", "border-width": 2.5,
-        "width": 44, "height": 44, "font-weight": 600
+        "border-color": ALERT_INK, "border-width": 2,
+        "width": 46, "height": 46, "color": "#FBD5D2", "font-weight": 600
+      }},
+
+      /* ADVISORY likely-reachable marker (Phase 2, "Likely" view only). A dep the
+         AI believes a public route likely reaches even though static analysis
+         resolved no path. A DASHED VIOLET ring + violet label — deliberately
+         UNLIKE the red exploitable node, the amber reachable node and the cool lit
+         trace, so it reads as a separate, weaker, advisory signal. The dep keeps
+         its real risk fill underneath; this only re-skins the ring while the Likely
+         view is on (the `likely` flag is 0 in Proven view). Declared AFTER the vuln
+         rules so it wins over the risk ring, but BEFORE .dim/.lit/.focus/.selected
+         so a trace or selection still overrides. */
+      { selector: 'node[likely = 1]', style: {
+        "border-color": INFER, "border-width": 3.5, "border-style": "dashed",
+        "color": INFER_INK,
+        "overlay-color": INFER, "overlay-opacity": 0.16, "overlay-padding": 7
+      }},
+
+      /* ADVISORY code-level attack-surface marker (Tier-A AI pen-tester). An entry
+         point whose OWN code the AI flagged with a candidate vulnerability gets a
+         DASHED magenta-purple ring + a "⚠" glyph prepended to its label (no halo).
+         Deliberately UNLIKE every deterministic state — in particular clearly NOT
+         the red exploitable dep, and not the dashed-violet LIKELY marker or the
+         cool lit trace — so it reads as a separate, weaker, advisory lead. One
+         ring for every severity; severity lives in the tooltip/pop-out. Declared
+         alongside the other advisory overlays (before .dim/.lit/.focus/.selected)
+         so an active trace or a selection still overrides it. */
+      { selector: 'node[danger = 1]', style: {
+        "border-color": DANGER, "border-width": 3, "border-style": "dashed",
+        "color": DANGER_INK
       }},
 
       // Connections are thin, straight lines between layers — like the synapses
@@ -276,6 +379,40 @@
       { selector: 'edge[kind = "imports"], edge[kind = "contains"], edge[kind = "declares"], edge[kind = "documents"]', style: {
         "line-color": "#283F57", "width": 0.7, "opacity": 0.32
       }},
+      // `documents` edges are doc-provenance (a doc mentions a node), not code
+      // flow, so they read as dotted hairlines. Derived purely from edge.kind —
+      // present in any bundle, independent of the live exposure overlay.
+      { selector: 'edge[kind = "documents"]', style: { "line-style": "dotted" }},
+
+      /* ADVISORY inferred call edges (Phase 2, "Likely" view only). An AI-inferred
+         call the structural scan could not resolve (e.g. a reflective getattr).
+         DASHED and VIOLET so it reads clearly apart from the solid deterministic
+         call spine — a hypothesis, not a proven edge. Hidden (display:none) in
+         Proven view and excluded from the layout, so Proven renders exactly as
+         before. These edges are display-only: they are NOT added to the data model
+         or the reachability trace, so verdicts and counts never change. */
+      { selector: 'edge[inferred]', style: {
+        "line-style": "dashed", "line-dash-pattern": [6, 4],
+        "line-color": INFER, "width": 1.8, "opacity": 0.85,
+        "curve-style": "straight",
+        "target-arrow-shape": "triangle", "target-arrow-color": INFER, "arrow-scale": 0.7
+      }},
+      /* Keep an inferred edge faintly visible even when a trace dims the graph,
+         so the dashed hypothesis does not vanish under a selection. */
+      { selector: 'edge[inferred].dim', style: { "opacity": 0.2 }},
+
+      /* The resolved hops that complete a likely-reachable dep's path (entry ->
+         function -> ... -> the function with the inferred hop). Drawn dashed
+         VIOLET so the whole likely path reads as one continuous inferred chain
+         spanning the graph, not just the final hop. These are the SAME resolved
+         edges the proven paths use (flagged, not duplicated), so .lit — declared
+         after this — still wins and shows them cool on a proven trace. */
+      { selector: 'edge[onlikely = 1]', style: {
+        "line-style": "dashed", "line-dash-pattern": [6, 4], "curve-style": "straight",
+        "line-color": INFER, "width": 1.6, "opacity": 0.8,
+        "target-arrow-shape": "triangle", "target-arrow-color": INFER, "arrow-scale": 0.6
+      }},
+      { selector: 'edge[onlikely = 1].dim', style: { "opacity": 0.2 }},
 
       /* off the call-flow spine (unreached functions, module/file/doc) — kept
          visible but visually secondary. Declared before .dim so an active trace
@@ -286,28 +423,47 @@
       { selector: ".dim", style: { "opacity": 0.12 } },
       { selector: "edge.dim", style: { "opacity": 0.06 } },
 
-      /* live reachability trace — the one hot signal */
+      /* live reachability trace — the one hot signal. A bright COOL glow
+         (#8FE3FF fill / #CFEFFF ring) so the selected/traced PATH is clearly
+         distinct from the amber "reachable" dependency state. */
       { selector: "node.lit", style: {
         "background-fill": "solid",
-        "background-color": "#F2B134", "border-color": "#F2B134",
-        "color": "#F6C96B", "border-width": 2.5, "opacity": 1,
-        "overlay-color": "#F2B134", "overlay-opacity": 0.22, "overlay-padding": 7
+        "background-color": "#8FE3FF", "border-color": "#CFEFFF",
+        "color": "#CFEFFF", "border-width": 2.5, "opacity": 1,
+        "overlay-color": "#8FE3FF", "overlay-opacity": 0.22, "overlay-padding": 7
       }},
-      { selector: 'node.lit[kind = "function"]', style: { "background-color": "#F2B134", "background-opacity": 0.9 } },
-      { selector: 'node.lit[kind = "entrypoint"]', style: { "background-color": "#F2B134", "width": 46, "height": 46, "overlay-padding": 9 } },
-      // The lit trace is a bright amber straight line climbing the layers, with a
+      { selector: 'node.lit[kind = "function"]', style: { "background-color": "#8FE3FF", "background-opacity": 0.9 } },
+      { selector: 'node.lit[kind = "entrypoint"]', style: { "background-color": "#8FE3FF", "width": 46, "height": 46, "overlay-padding": 9 } },
+      // The lit trace is a bright cool straight line climbing the layers, with a
       // small arrowhead to show the direction of the call chain.
       { selector: "edge.lit", style: {
         "curve-style": "straight",
-        "line-color": "#F2B134", "target-arrow-color": "#F2B134",
+        "line-color": "#8FE3FF", "target-arrow-color": "#8FE3FF",
         "target-arrow-shape": "triangle", "arrow-scale": 0.8,
         "width": 2.4, "opacity": 1,
-        "overlay-color": "#F2B134", "overlay-opacity": 0.12, "overlay-padding": 2
+        "overlay-color": "#8FE3FF", "overlay-opacity": 0.12, "overlay-padding": 2
       }},
-      /* a lit vulnerable dep keeps its red border: amber path -> red endpoint */
+      /* a lit vulnerable dep keeps its RED endpoint: cool path -> red endpoint */
       { selector: 'node.lit[vuln = 1]', style: {
-        "border-color": ALERT, "border-width": 3.5,
+        "border-color": ALERT_INK, "border-width": 3.5,
         "overlay-color": ALERT, "overlay-opacity": 0.24, "overlay-padding": 8
+      }},
+      /* VIOLET path highlight (.litv) — used when a likely-reachable dep's full
+         AI-inferred chain is lit. Kept separate from the cool proven .lit so a
+         segment shared with a proven path stays cool on a proven trace but reads
+         violet (advisory) on a likely-path highlight. Never read as proven. */
+      { selector: "node.litv", style: {
+        "background-fill": "solid", "background-color": INFER, "border-color": "#CDBEFA",
+        "color": "#D9CEFB", "border-width": 2.5, "opacity": 1,
+        "overlay-color": INFER, "overlay-opacity": 0.22, "overlay-padding": 7
+      }},
+      { selector: 'node.litv[kind = "entrypoint"]', style: { "width": 46, "height": 46, "overlay-padding": 9 } },
+      { selector: "edge.litv", style: {
+        "line-style": "dashed", "line-dash-pattern": [6, 4], "curve-style": "straight",
+        "line-color": INFER, "target-arrow-color": INFER,
+        "target-arrow-shape": "triangle", "arrow-scale": 0.8,
+        "width": 2.4, "opacity": 1,
+        "overlay-color": INFER, "overlay-opacity": 0.14, "overlay-padding": 2
       }},
 
       /* neighborhood focus (click a node) */
@@ -316,7 +472,7 @@
       { selector: "edge.focus", style: { "curve-style": "straight", "line-color": "#6FB8E0", "opacity": 0.9, "width": 1.6 } },
 
       /* a lit, focused or selected node shows its full label, not an ellipsis */
-      { selector: "node.lit, node.focus, node.selected", style: { "text-wrap": "wrap", "text-max-width": 200, "z-index": 30 } },
+      { selector: "node.lit, node.litv, node.focus, node.selected", style: { "text-wrap": "wrap", "text-max-width": 200, "z-index": 30 } },
 
       /* the node whose datasheet is open in the detail panel — a bright halo so
          it's obvious which part the panel describes. Declared last to win. */
@@ -331,9 +487,14 @@
     var eles = [];
     model.nodes.forEach(function (n) {
       var vs = vulnByDep[n.id];
+      // ADVISORY code-level danger marker (entry points only): worst severity of
+      // this route's AI-identified attack-surface findings, "" when none. Drives
+      // the distinct magenta danger ring + the "⚠" label glyph; never touches any
+      // vuln flag below or the reachability model.
+      var dsev = n.kind === "entrypoint" ? dangerSevFor(n.id) : "";
       eles.push({ data: {
         id: n.id, kind: n.kind,
-        label: labelFor(n),
+        label: (dsev ? "⚠ " : "") + labelFor(n),
         name: n.name || n.id,
         // Overlay flags (0 unless an audit bundle marked this dependency).
         vuln: vs ? 1 : 0,
@@ -342,7 +503,14 @@
         // Deterministic escalation flags: the vulnerable function was reached
         // (symbol_match=confirmed), and attacker input reaches it (taint=tainted).
         confirmed: vs && vs.symbolConfirmed ? 1 : 0,
-        tainted: vs && vs.tainted ? 1 : 0
+        tainted: vs && vs.tainted ? 1 : 0,
+        // ADVISORY exposure tag (entry points only, "" otherwise). Drives the
+        // subtle internal/public ring; never affects any vuln flag above.
+        expo: n.kind === "entrypoint" ? exposureTagFor(n.id) : "",
+        // ADVISORY code-level danger marker (entry points only). "danger" gates
+        // the magenta ring; "dangersev" grades it by worst severity.
+        danger: dsev ? 1 : 0,
+        dangersev: dsev
       }});
     });
     model.edges.forEach(function (e) {
@@ -441,7 +609,7 @@
   var LANE_H = 84;      // y-spacing between stacked nodes within a column
   var OFF_COL_W = 150;  // off-spine shelf column width
   var OFF_ROW_H = 52;   // off-spine shelf row height
-  // A single call-depth column with very many nodes (e.g. redash's ~50 entry
+  // A single call-depth column with very many nodes (e.g. a ~50 entry
   // points) would stack into one absurdly tall strip, so the whole diagram
   // shrinks to a sliver when fitted. Past MAX_ROWS a layer wraps into a few
   // vertical sub-columns — a tidy block that keeps the left-to-right layering
@@ -520,6 +688,7 @@
     var adj = {};
     spine.forEach(function (n) { adj[n.id()] = []; });
     cy.edges(":visible").forEach(function (e) {
+      if (e.data("inferred")) return; // advisory overlay — never shifts the layout
       var s = e.source().id(), t = e.target().id();
       if (inSpine[s] && inSpine[t]) { adj[s].push(t); adj[t].push(s); }
     });
@@ -665,7 +834,7 @@
 
   /* ---------------------------------------------------------------- trace lighting */
   function clearHighlight() {
-    cy.elements().removeClass("lit dim focus");
+    cy.elements().removeClass("lit litv dim focus");
     el.stage.classList.remove("is-traced");
   }
 
@@ -721,9 +890,47 @@
     selectedEp = null;
     updateEpButtons(null);
     var res = traceReverse(depId);
+    // A likely-reachable dep has no resolved reaching path (its only link is the
+    // AI-inferred hop, which is display-only and never in the trace model). Light
+    // its full inferred `via` chain end-to-end instead, so the path spans the whole
+    // graph (entry -> functions -> dep) rather than leaving the dep unlit.
+    var likely = likelyByDep[depId];
+    if (likely && (!res.entrypoints || !res.entrypoints.length) && lightVia(likely)) {
+      renderReachReverse(depId, res);
+      if (model.index[depId]) showDetail(model.index[depId]);
+      return;
+    }
     energize(res, instant, "source");
     renderReachReverse(depId, res);
     if (model.index[depId]) showDetail(model.index[depId]);
+  }
+
+  // Light the AI-inferred reaching path for a likely-reachable dep: every node on
+  // its `via` chain and the edge between each consecutive pair. The final hop is
+  // the inferred (violet, dashed) edge and the endpoint is the likely dep — both
+  // keep their advisory violet styling (edge[inferred].lit / node.lit[likely=1]),
+  // so a highlighted likely path never reads as a proven one. Returns false when
+  // there is no usable via chain, so the caller falls back to the normal trace.
+  function lightVia(likely) {
+    if (!cy || !likely || !Array.isArray(likely.via) || likely.via.length < 2) return false;
+    clearHighlight();
+    el.stage.classList.add("is-traced");
+    cy.elements().addClass("dim");
+    var via = likely.via, lit = 0;
+    // Violet (.litv) highlight for the whole inferred chain — kept distinct from
+    // the cool proven .lit so the advisory likely path never reads as proven.
+    for (var i = 0; i < via.length; i++) {
+      var n = cy.getElementById(via[i]);
+      if (n && n.length) { n.removeClass("dim").addClass("litv"); lit++; }
+    }
+    for (var j = 0; j < via.length - 1; j++) {
+      (function (a, b) {
+        cy.edges().forEach(function (ed) {
+          if (ed.source().id() === a && ed.target().id() === b) ed.removeClass("dim").addClass("litv");
+        });
+      })(via[j], via[j + 1]);
+    }
+    return lit > 0;
   }
 
   function focusNeighborhood(node) {
@@ -871,110 +1078,121 @@
     if (exploit > 0 && pct > 99.9) pct = 99.9;
     var pctTxt = String(pct) + "%";
     var alerts = groupNum(total) + " alert" + (total === 1 ? "" : "s");
-    var verdict = exploit === 0
-      ? "VScan proves <b>none</b> are exploitable"
-      : exploit === total
+    var msg;
+    if (exploit === 0) {
+      // Honesty: with nothing proven-exploitable we state a TAINT-SCOPED result —
+      // zero dependencies with a proven exploit path — and never claim proof that
+      // none are exploitable or that the app is safe (this fires on the SSTI demo).
+      msg = 'A conventional scanner would flag <b>' + alerts + '</b>. ' +
+        'VScan found <b>0 dependencies with a proven exploit path</b> &mdash; ' +
+        'proven dependency taint paths only, not a guarantee the app is safe.';
+    } else {
+      var verdict = exploit === total
         ? "VScan proves <b>all " + groupNum(exploit) + "</b> " + (exploit === 1 ? "is" : "are") + " exploitable"
         : "VScan proves <b>" + groupNum(exploit) + "</b> " + (exploit === 1 ? "is" : "are") + " exploitable";
-    el.noise.innerHTML =
-      'A conventional scanner would flag <b>' + alerts + '</b>. ' + verdict +
-      (exploit === total ? "." : ' &mdash; <b class="noise__pct">' + pctTxt + ' noise removed.</b>');
+      msg = 'A conventional scanner would flag <b>' + alerts + '</b>. ' + verdict +
+        (exploit === total ? "." : ' &mdash; <b class="noise__pct">' + pctTxt + ' noise cut.</b>');
+    }
+    el.noise.innerHTML = msg;
     el.noise.style.setProperty("--noise-removed", pct + "%");
     el.noise.hidden = false;
   }
 
-  // Above this many routes the flat list is a wall, so routes collapse into
-  // path-prefix groups. Small repos (the demo's 3) stay flat — no empty ritual.
-  var EP_GROUP_THRESHOLD = 12;
-
-  // The segment a route is grouped under: its second meaningful path segment
-  // (skipping parameter placeholders like <id>, :id, {id}), or the first if
-  // that's all there is. So /api/dashboards, /api/dashboards/<id> and
-  // /api/dashboards/favorites all group under "dashboards".
-  function epGroupKey(ep) {
-    var path = (ep.attrs && ep.attrs.path) || ep.name || ep.id || "";
-    var segs = String(path).split("/").filter(Boolean);
-    var meaningful = segs.filter(function (s) { return !/^[<:{]/.test(s); });
-    return meaningful[1] || meaningful[0] || segs[0] || "/";
-  }
-
-  // A route button that selects + traces, exactly as before. Reused flat and
-  // inside groups; carries data-id so updateEpButtons can track the active one.
-  function makeEpButton(n) {
-    var a = n.attrs || {};
-    var btn = document.createElement("button");
-    btn.className = "ep";
-    btn.type = "button";
-    btn.setAttribute("aria-pressed", "false");
-    btn.dataset.id = n.id;
-    var method = document.createElement("span");
-    method.className = "ep__method";
-    method.textContent = a.method || "ANY";
-    var path = document.createElement("span");
-    path.className = "ep__path";
-    path.textContent = a.path || n.name || n.id;
-    btn.appendChild(method); btn.appendChild(path);
-    btn.addEventListener("click", function () {
-      if (selectedEp === n.id) { resetView(); } else { lightTrace(n.id, false); }
+  // The worst vulnerability a route deterministically reaches, or null. Picks
+  // tainted (exploitable) over symbol-confirmed over bare reachable, then by
+  // severity. Advisory AI states never count here — this list is deterministic.
+  function worstReachedVuln(epId) {
+    var res = trace(epId);
+    var epNode = model.index[epId];
+    var epLabel = epNode ? labelFor(epNode) : "";
+    var worst = null;
+    res.deps.forEach(function (d) {
+      var vs = vulnByDep[d.id];
+      if (!vs) return;
+      // EXPLOITABLE only when a PROVEN taint path runs THROUGH this endpoint — the
+      // dep has a tainted finding whose taint_evidence.entrypoint is this route's
+      // label. A dep tainted via some OTHER route is only REACHABLE from here.
+      var taintedHere = !!(vs.tainted &&
+        vs.taintEntrypoints && vs.taintEntrypoints.indexOf(epLabel) >= 0);
+      // Ranking keeps the deterministic escalation ladder (global tainted) so the
+      // same dep is picked as the route's worst and the list order stays stable;
+      // only the verdict LABEL below reflects whether taint flows through here.
+      var rank = (vs.tainted ? 3 : (vs.symbolConfirmed ? 2 : 1)) * 10 + (vs.worst || 0);
+      if (!worst || rank > worst.rank) {
+        worst = { dep: d, rank: rank, tainted: taintedHere,
+                  verdict: taintedHere ? "EXPLOITABLE" : "REACHABLE" };
+      }
     });
-    return btn;
+    return worst;
   }
 
+  // Left panel: ONLY vulnerable endpoints — public routes that reach at least one
+  // dependency with a known vulnerability. Each row shows method + path, a PUBLIC
+  // mark when exposure says so, and the single worst vuln it exposes (dependency +
+  // deterministic verdict). Clicking lights the trace AND opens the pop-out
+  // (lightTrace does both). Deep detail lives in the pop-out and the chat agent.
   function renderEntryPoints() {
-    var eps = model.nodes.filter(function (n) { return n.kind === "entrypoint"; })
-      .sort(function (a, b) { return labelFor(a).localeCompare(labelFor(b)); });
+    if (!el.eplist) return;
     el.eplist.innerHTML = "";
     el.eplist.classList.remove("eplist--grouped");
-    if (!eps.length) {
-      el.epNote.textContent = "No public entry points were detected in this scan.";
-      return;
-    }
-    if (focusedMode && focusedMeta) {
-      el.epNote.textContent = "Routes that reach a vulnerable dependency. " +
-        focusedMeta.clustered + " more reach nothing vulnerable (grouped on the canvas).";
-    } else {
-      el.epNote.textContent = "Public routes the outside world can call.";
-    }
 
-    // Flat list for a handful of routes.
-    if (eps.length <= EP_GROUP_THRESHOLD) {
-      eps.forEach(function (n) {
-        var li = document.createElement("li");
-        li.appendChild(makeEpButton(n));
-        el.eplist.appendChild(li);
-      });
-      return;
-    }
-
-    // Many routes: collapse into path-prefix groups, each a disclosure.
-    el.eplist.classList.add("eplist--grouped");
-    var groups = {}, order = [];
-    eps.forEach(function (n) {
-      var key = epGroupKey(n);
-      if (!groups[key]) { groups[key] = []; order.push(key); }
-      groups[key].push(n);
+    var rows = [];
+    model.nodes.forEach(function (n) {
+      if (n.kind !== "entrypoint") return;
+      var w = worstReachedVuln(n.id);
+      if (w) rows.push({ ep: n, worst: w });
     });
-    order.sort(function (a, b) { return a.localeCompare(b); });
-    order.forEach(function (key) {
-      var items = groups[key];
+    rows.sort(function (a, b) {
+      return (b.worst.tainted - a.worst.tainted) ||
+        labelFor(a.ep).localeCompare(labelFor(b.ep));
+    });
+
+    // Warming note while the per-repo overlays are still loading on the backend.
+    var enEp = currentRepo && ENRICH[currentRepo];
+    var warming = !!(enEp && ((enEp.warming && !enEp.fetched) || (enEp.attackWarming && !enEp.attackFetched)));
+
+    if (!rows.length) {
+      if (el.epNote) {
+        el.epNote.textContent = warming
+          ? "Analysis still warming…"
+          : "No public route reaches a known vulnerability in this scan.";
+      }
+      var li0 = document.createElement("li");
+      li0.innerHTML = '<p class="ep__empty">No reachable vulnerabilities. ' +
+        'The graph still shows the full attack surface, including any AI-advisory leads.</p>';
+      el.eplist.appendChild(li0);
+      return;
+    }
+
+    if (el.epNote) {
+      el.epNote.textContent = rows.length +
+        (rows.length === 1 ? " public route reaches" : " public routes reach") +
+        " a known vulnerability." + (warming ? "  ·  analysis still warming…" : "");
+    }
+
+    rows.forEach(function (r) {
+      var n = r.ep, a = n.attrs || {}, w = r.worst;
       var li = document.createElement("li");
-      var det = document.createElement("details");
-      det.className = "epgroup";
-      var sum = document.createElement("summary");
-      sum.className = "epgroup__sum";
-      sum.innerHTML = '<span class="disc__chev" aria-hidden="true"></span>' +
-        '<span class="epgroup__name">' + esc(key) + '</span>' +
-        '<span class="epgroup__count">' + items.length + '</span>';
-      det.appendChild(sum);
-      var inner = document.createElement("ul");
-      inner.className = "eplist eplist--inner";
-      items.forEach(function (n) {
-        var ili = document.createElement("li");
-        ili.appendChild(makeEpButton(n));
-        inner.appendChild(ili);
+      var btn = document.createElement("button");
+      btn.className = "ep";
+      btn.type = "button";
+      btn.setAttribute("aria-pressed", "false");
+      btn.dataset.id = n.id;
+      var isPublic = exposureTagFor(n.id) === "public";
+      btn.innerHTML =
+        '<span class="ep__route">' +
+          '<span class="ep__method">' + esc(a.method || "ANY") + '</span>' +
+          '<span class="ep__path">' + esc(a.path || n.name || n.id) + '</span>' +
+          (isPublic ? '<span class="ep__public">PUBLIC</span>' : '') +
+        '</span>' +
+        '<span class="ep__vuln">' +
+          '<span class="ep__dep">' + esc(w.dep.name || w.dep.id) + '</span>' +
+          '<span class="vv ' + (w.tainted ? "vv--exploit" : "vv--reach") + '">' + esc(w.verdict) + '</span>' +
+        '</span>';
+      btn.addEventListener("click", function () {
+        if (selectedEp === n.id) { resetView(); } else { lightTrace(n.id, false); }
       });
-      det.appendChild(inner);
-      li.appendChild(det);
+      li.appendChild(btn);
       el.eplist.appendChild(li);
     });
   }
@@ -992,17 +1210,20 @@
   }
 
   function renderReachInitial() {
+    if (!el.reachBody) return; // reach panel removed in the minimal view
     el.reachBody.innerHTML =
       '<p class="panel__empty">No entry point selected. Pick one above to trace what it reaches.</p>';
   }
 
   function renderReachEmptyFocus(node) {
+    if (!el.reachBody) return;
     el.reachBody.innerHTML =
       '<p class="reach-none">Focusing <b>' + esc(node.data("name")) +
       '</b> and its direct neighbors. Select an entry point to trace reachability.</p>';
   }
 
   function renderReach(epId, res) {
+    if (!el.reachBody) return; // reach panel removed in the minimal view
     var ep = model.index[epId];
     var label = esc(labelFor(ep));
     var html = '<p class="reach-head">Entry point <b>' + label + '</b> reaches ' +
@@ -1028,6 +1249,7 @@
   // The reach panel when a dependency is selected: it reports the reverse set —
   // how many entry points and nodes reach this dependency — and lists the routes.
   function renderReachReverse(depId, res) {
+    if (!el.reachBody) return; // reach panel removed in the minimal view
     var dep = model.index[depId];
     var name = esc(dep ? (dep.name || dep.id) : depId);
     var eps = res.entrypoints || [];
@@ -1073,7 +1295,8 @@
       if (!id) return;
       var vs = vulnByDep[id] || (vulnByDep[id] = {
         findings: [], kev: false, reachable: false, worst: 0, entrypoints: [],
-        symbolConfirmed: false, tainted: false, escFinding: null, escRank: -1
+        symbolConfirmed: false, tainted: false, escFinding: null, escRank: -1,
+        taintEntrypoints: []
       });
       vs.findings.push(f);
       if (f.kev) vs.kev = true;
@@ -1082,6 +1305,14 @@
       // (symbol_match), and does attacker input prove to reach the call (taint)?
       if (f.symbol_match === "confirmed") vs.symbolConfirmed = true;
       if (f.taint === "tainted") vs.tainted = true;
+      // Retain the entry-point label each PROVEN taint path runs through, so a
+      // route only reads EXPLOITABLE when the taint actually flows through IT (not
+      // merely because the dep is tainted via some other route). Labels here match
+      // labelFor() for an entry point ("METHOD /path").
+      if (f.taint === "tainted" && f.taint_evidence && f.taint_evidence.entrypoint) {
+        var te = f.taint_evidence.entrypoint;
+        if (vs.taintEntrypoints.indexOf(te) < 0) vs.taintEntrypoints.push(te);
+      }
       var escR = escalationRank(f);
       if (escR > vs.escRank) { vs.escFinding = f; vs.escRank = escR; }
       var rank = SEV_RANK[(f.severity || "").toUpperCase()] || 0;
@@ -1154,6 +1385,7 @@
   }
 
   function renderVulns() {
+    if (!el.vulnBody || !el.vulnNote) return; // findings panel removed in the minimal view
     // Plain graph (no bundle): honest structure-only note, no finding list.
     if (!bundleMeta) {
       el.vulnNote.textContent = "Structure only — load an audit bundle to see findings.";
@@ -1327,28 +1559,30 @@
     if (id) { var n = cy.getElementById(id); if (n && n.length) n.addClass("selected"); }
   }
 
-  // Open or collapse the detail drawer. The grid column animates from 0 to
-  // --detail-w, so when the width actually changes we resize + re-fit the graph
-  // once the transition settles, keeping the pipeline centred in the new space.
+  // Open or collapse the detail drawer. The drawer OVERLAYS the canvas (it no
+  // longer takes a grid column), so opening it never resizes, re-fits or
+  // re-zooms the graph — which is what used to throw the viewport around and
+  // leave edges briefly misaligned. We only slide the graph sideways by roughly
+  // the drawer's width so the right-hand dependency column stays visible beside
+  // it: a pure pan, no zoom change and no cy.resize().
   function setDrawer(open) {
     if (!el.layout) return;
     var was = el.layout.classList.contains("has-detail");
     el.layout.classList.toggle("has-detail", open);
-    if (was !== open) resizeGraph();
+    if (was !== open) panForDrawer(open);
   }
 
-  function resizeGraph() {
+  function panForDrawer(open) {
     if (!cy) return;
-    if (window.requestAnimationFrame) window.requestAnimationFrame(function () { cy.resize(); });
-    setTimeout(function () {
-      if (!cy) return;
-      cy.resize();
-      var eles = (graphFitEles && graphFitEles.length) ? graphFitEles.filter(":visible") : null;
-      if (!eles || !eles.length) eles = cy.nodes(":visible");
-      if (!eles.length) return;
-      if (REDUCED) cy.fit(eles, GRAPH_PAD);
-      else cy.animate({ fit: { eles: eles, padding: GRAPH_PAD } }, { duration: 140, easing: "ease-out" });
-    }, 190);
+    if (document.documentElement.classList.contains("demo")) return; // demo: the grid resizes the graph instead
+    // On narrow screens the drawer stacks below the canvas (static flow), so a
+    // horizontal pan would be wrong — leave the viewport alone.
+    if (window.matchMedia && window.matchMedia("(max-width: 860px)").matches) return;
+    var w = el.detail ? el.detail.getBoundingClientRect().width : 0;
+    var shift = (w || 336) - 24;            // drawer width minus a small gutter
+    var dx = open ? -shift : shift;
+    if (REDUCED) cy.panBy({ x: dx, y: 0 });
+    else cy.animate({ panBy: { x: dx, y: 0 } }, { duration: 160, easing: "ease-out" });
   }
 
   // Assessments whose reaching_entrypoints include this endpoint's label
@@ -1473,89 +1707,104 @@
     return html;
   }
 
+  /* ------------------------------------------------------------- minimal pop-out
+     The right pop-out is intentionally HIGH-LEVEL ONLY: a verdict badge, one
+     plain-language sentence, the fix (if any), and an "Ask the agent" button that
+     bridges to the chat agent with a grounded question. No paths, no snippets, no
+     data flow, no technical fields — all of that now lives in the chat agent. */
+
+  // The chat bridge: the dashboard and chat page are served from the same origin
+  // (the chat page is chat.html); a ?q= question pre-fills + auto-sends in chat.js.
+  function chatLink(question) { return "chat.html?q=" + encodeURIComponent(String(question)); }
+  function askBtnHtml(question) {
+    return '<a class="askbtn" href="' + esc(chatLink(question)) + '">' +
+      'Ask the agent <span aria-hidden="true">&rarr;</span></a>';
+  }
+  function popBadge(kind, text) {
+    return '<span class="pop__badge pop__badge--' + kind + '">' + esc(text) + '</span>';
+  }
+  var _popRepo = function () { return currentRepo || "this project"; };
+
+  // Fix sentence fragment (HTML) from the first finding that names a fixed version.
+  function fixFragment(fs, name) {
+    for (var i = 0; i < fs.length; i++) {
+      var v = fs[i] && fs[i].fixed_versions;
+      if (v && v.length) return 'upgrade <b>' + esc(name) + '</b> to ' + esc(v[0]) + '.';
+    }
+    return "";
+  }
+  // The route attacker input flows through for a tainted finding, if recorded.
+  function taintRoute(fs) {
+    for (var i = 0; i < fs.length; i++) {
+      var f = fs[i];
+      if (f.taint === "tainted" && f.taint_evidence && f.taint_evidence.entrypoint) {
+        return f.taint_evidence.entrypoint;
+      }
+    }
+    return "";
+  }
+  // The first entry-point label on a likely-reachable dep's inferred `via` path.
+  function likelyRoute(l) {
+    var via = (l && Array.isArray(l.via)) ? l.via : [];
+    for (var i = 0; i < via.length; i++) {
+      var m = model.index[via[i]];
+      if (m && m.kind === "entrypoint") return labelFor(m);
+    }
+    return "";
+  }
+
   function detailEntrypoint(n) {
     var a = n.attrs || {};
     var label = labelFor(n);
-    var html = detailHead("entrypoint", label) + '<div class="detail__body">';
+    var route = (a.method ? a.method + " " : "") + (a.path || n.name || n.id);
+    var repo = _popRepo();
+    var isPublic = exposureTagFor(n.id) === "public";
+    var dsev = dangerSevFor(n.id);
+    var afs = epFindings(n.id);
+    var worst = worstReachedVuln(n.id);
+    var html = detailHead("entrypoint", label) + '<div class="pop">';
 
-    html += '<section class="dsec"><h2 class="dsec__h">Route</h2><dl class="kv">' +
-      '<dt>Method</dt><dd class="is-signal">' + esc(a.method || "ANY") + '</dd>' +
-      '<dt>Path</dt><dd>' + esc(a.path || n.name || n.id) + '</dd>' +
-      (a.framework ? '<dt>Framework</dt><dd>' + esc(a.framework) + '</dd>' : "") +
-      (a.handler ? '<dt>Handler</dt><dd>' + esc(a.handler) + '</dd>' : "") +
-      '</dl></section>';
-
-    var res = trace(n.id);
-    html += '<section class="dsec"><h2 class="dsec__h">Reaches <span class="dsec__count">' + res.deps.length + '</span></h2>';
-    if (res.deps.length) {
-      html += '<ul class="deplist">';
-      res.deps.forEach(function (d) {
-        var da = d.attrs || {}, vs = vulnByDep[d.id];
-        html += '<li class="dep"><div class="dep__name">' + esc(d.name || d.id) + '</div><div class="dep__meta">' +
-          (da.ecosystem ? '<span class="dep__eco">' + esc(da.ecosystem) + '</span>' : "") +
-          (da.version ? '<span class="dep__ver">' + esc(da.version) + '</span>' : "") +
-          (vs ? '<span class="tag tag--sev">' + vs.findings.length + " finding" + (vs.findings.length === 1 ? "" : "s") + '</span>' : "") +
-          '</div></li>';
-      });
-      html += '</ul>';
+    if (dsev && afs.length) {
+      // Lead with the AI code-level hypothesis — distinct magenta badge, clearly
+      // unverified. NEVER a proven verdict.
+      var topF = afs.slice().sort(cmpFinding)[0] || {};
+      var klass = topF.vuln_class || topF.title || "possible vulnerability";
+      html += popBadge("danger", "⚠ Code-level risk · AI (unverified)");
+      if (topF.title) html += '<p class="pop__title">' + esc(String(topF.title)) + '</p>';
+      html += '<p class="pop__line">An AI pen-tester flagged a candidate vulnerability in this ' +
+        'route’s own code. This is an <strong>unverified AI hypothesis</strong>, not a proven finding.</p>';
+      if (isPublic) html += '<p class="pop__line">This route is <strong>internet-facing</strong>.</p>';
+      html += askBtnHtml("Explain the code-level " + klass + " risk on " + route + " in " + repo);
+    } else if (worst) {
+      html += popBadge(worst.tainted ? "exploit" : "reach",
+        worst.tainted ? "Exploitable" : "Reachable vulnerability");
+      html += '<p class="pop__line">This route reaches <b>' + esc(worst.dep.name || worst.dep.id) + '</b>' +
+        (worst.tainted
+          ? ', and attacker input provably reaches the vulnerable call.'
+          : ', which has a known vulnerability — reachable, but not proven exploitable.') + '</p>';
+      if (isPublic) html += '<p class="pop__line">This route is <strong>internet-facing</strong>.</p>';
+      html += askBtnHtml("Explain how " + route + " reaches " + (worst.dep.name || worst.dep.id) +
+        " in " + repo + " and how to fix it");
     } else {
-      html += '<p class="dim-note">This route resolves no call into a declared dependency.</p>';
+      html += popBadge(isPublic ? "public" : "neutral", isPublic ? "Public" : "Entry point");
+      html += '<p class="pop__line">' +
+        (isPublic ? 'This route is <strong>internet-facing</strong>. ' : '') +
+        'No known-vulnerable dependency is reachable from this route.</p>';
+      html += askBtnHtml("What is the attack surface of " + route + " in " + repo + "?");
     }
-    html += '</section>';
-
-    // One primary block — the integrated agent summary + Sources line — with all
-    // the depth (badges, rationale, context groups, doc excerpts) tucked one
-    // click away under "Details & sources". No assessment → route + reaches only,
-    // plus a collapsed docs disclosure when the route is cited in docs.
-    var docs = a.docs || [];
-    var ms = assessmentsForEpLabel(label);
-    if (ms.length) {
-      html += assessmentSummaryHtml(ms);
-      var detail = assessmentDetailsHtml(ms, docs);
-      if (detail) html += '<section class="dsec">' + disclosure("Details & sources", detail, false) + '</section>';
-    } else if (docs.length) {
-      html += '<section class="dsec">' + disclosure("Mentioned in docs", docsHtml(docs), false) + '</section>';
-    }
-
     return html + '</div>';
   }
 
   function detailFunction(n) {
-    var a = n.attrs || {};
-    var qn = a.module ? (a.module + "." + (n.name || "")) : (n.name || n.id);
-    var loc = (a.relpath || "") + (a.lineno != null ? ":" + a.lineno : "");
-    var html = detailHead("function", n.name || n.id) + '<div class="detail__body">';
-
-    // Lead with the key line: signature, then source location, then docstring.
-    html += '<section class="dsec"><h2 class="dsec__h">Signature</h2>' +
-      (a.signature ? '<pre class="codeblock">' + esc(a.signature) + '</pre>' : '<p class="dim-note">Not recorded.</p>') +
-      (loc ? '<p class="src-line">' + esc(qn) + ' · <span class="src-line__loc">' + esc(loc) + '</span>' +
-        (a.is_method ? ' · method' : "") + '</p>'
-        : (a.is_method ? '<p class="src-line">' + esc(qn) + ' · method</p>' : '<p class="src-line">' + esc(qn) + '</p>')) +
-      '</section>';
-
-    html += '<section class="dsec"><h2 class="dsec__h">Docstring</h2>' +
-      (a.docstring ? '<p class="prose clamp">' + esc(a.docstring) + '</p>' + moreBtn() : '<p class="dim-note">No docstring.</p>') +
-      '</section>';
-
-    // Secondary detail — docs the function is cited in, and its place in a lit
-    // trace — collapsed under one disclosure so the default stays short.
-    var extra = "";
-    var docs = a.docs || [];
-    if (docs.length) {
-      extra += '<div class="ctxgroup"><div class="ctxgroup__h">Mentioned in docs ' +
-        '<span class="dsec__count">' + docs.length + '</span></div>' + docsHtml(docs) + '</div>';
-    }
-    if (selectedEp) {
-      var res = trace(selectedEp);
-      if (res.nodes[n.id]) {
-        var ep = model.index[selectedEp];
-        extra += '<p class="dim-note">On the lit path from <b>' + esc(ep ? labelFor(ep) : selectedEp) +
-          '</b>, call depth ' + (res.depth[n.id] != null ? res.depth[n.id] : "?") + '.</p>';
-      }
-    }
-    if (extra) html += '<section class="dsec">' + disclosure("More context", extra, false) + '</section>';
-
+    var name = n.name || n.id;
+    var repo = _popRepo();
+    var html = detailHead("function", name) + '<div class="pop">';
+    html += popBadge("neutral", "Function");
+    html += '<p class="pop__line">A function in the application code' +
+      (selectedEp ? ', on the current trace' : '') +
+      '. Ask the agent what it does and whether it is security-relevant.</p>';
+    html += askBtnHtml("What does the function " + name + " do in " + repo +
+      ", and is it security-relevant?");
     return html + '</div>';
   }
 
@@ -1636,6 +1885,13 @@
     function live() { return mySeq === aiSeq && document.body.contains(sec); }
     function show(h) { if (live()) body.innerHTML = h; }
     if (typeof fetch !== "function") { show(aiNoteHtml("AI analysis unavailable.")); return; }
+    // The current view's repo rides the query string so the backend explains THIS
+    // scan's finding, not whichever one is primary server-side (otherwise a
+    // non-primary view gets a foreign verdict + foreign file paths). Views with no
+    // live repo (file loads) have no live analysis —
+    // skip the fetch rather than hit the primary by omission (mirrors enrichment).
+    var repo = currentRepo;
+    if (!repo) { show(aiNoteHtml("Live AI analysis isn't available for this scan.")); return; }
     var opts = {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1645,14 +1901,19 @@
       })
     };
     if (ctl) opts.signal = ctl.signal;
-    fetch("/api/explain", opts).then(function (r) {
-      if (r.status === 404) { show(aiNoteHtml("Live AI analysis is available for the ACME demo scan.")); return null; }
+    fetch("/api/explain?repo=" + encodeURIComponent(repo), opts).then(function (r) {
+      if (r.status === 404) { show(aiNoteHtml("Live AI analysis isn't available for this scan.")); return null; }
       if (r.status === 503) { show(aiNoteHtml("Scan still warming up — try again in a moment.")); return null; }
       if (!r.ok) throw new Error("http " + r.status);
       return r.json();
     }).then(function (d) {
       if (!d) return;
-      if (!d.narrative) throw new Error("empty");
+      // Degraded response (a `note`, no narrative): surface the note instead of a
+      // generic "unavailable" so warming/degraded never reads as a clean result.
+      if (!d.narrative) {
+        if (d.note) { show(aiNoteHtml(String(d.note))); return; }
+        throw new Error("empty");
+      }
       show(aiResultHtml(d));
     }).catch(function (e) {
       if (e && e.name === "AbortError") return;
@@ -1660,144 +1921,70 @@
     });
   }
 
-  // The MINIMAL dependency drawer: exactly four sections — Package details,
-  // Status (escalation verdict as compact badges + one condensed line), Quick
-  // summary (the dep-level agent reasoning synthesised from triage + usage), and
-  // one collapsed <details> per CVE. Selecting the node already lights its
-  // reaching subgraph (the tap handler calls lightReverseTrace), so there is no
-  // "light this trace" button here.
+  // ADVISORY "Likely reachable (inferred)" drawer section (Phase 2). Shown for a
+  // dependency the AI flagged in `likely_reachable`: static analysis resolved no
+  // path to it, but the AI inferred one. It renders the inferred `via` path as
+  // readable labels and the contributing inferred edges' symbol + rationale +
+  // source citations. It states plainly that this is a LEAD — it never makes the
+  // finding proven-reachable or exploitable and never changes the verdict above.
+  // Returns "" when the dep is not in likely_reachable (fully additive). All
+  // server text is escaped via esc().
   function detailDependency(n) {
     var a = n.attrs || {};
+    var name = n.name || n.id;
+    var repo = _popRepo();
     var vs = vulnByDep[n.id];
     var depFindings = findings.filter(function (f) { return f.dependency_id === n.id; });
-    var html = detailHead("dependency", n.name || n.id) + '<div class="detail__body">';
+    var lead = leadFinding(depFindings);
+    var cve = lead ? ((lead.cve_ids && lead.cve_ids.length) ? lead.cve_ids.join(", ") : (lead.vuln_id || "")) : "";
+    var likely = likelyByDep[n.id];
+    var html = detailHead("dependency", name + (a.version ? " " + a.version : "")) + '<div class="pop">';
 
-    // (a) Package details — one tidy key/value block.
-    html += '<section class="dsec"><h2 class="dsec__h">Package details</h2><dl class="kv">' +
-      '<dt>Name</dt><dd>' + esc(n.name || n.id) + '</dd>' +
-      (a.version ? '<dt>Version</dt><dd class="is-signal">' + esc(a.version) + '</dd>' : "") +
-      (a.ecosystem ? '<dt>Ecosystem</dt><dd>' + esc(a.ecosystem) + '</dd>' : "") +
-      (a.source_file ? '<dt>Declared in</dt><dd>' + esc(a.source_file) + '</dd>' : "") +
-      '<dt>Scope</dt><dd>' + (a.direct === false ? 'transitive' : 'direct') + '</dd>' +
-      '</dl></section>';
-
-    // (b) Status — the escalation verdict as compact badges, then ONE short line:
-    // the condensed attacker-input path when exploitable, else the reaching route.
-    html += '<section class="dsec"><h2 class="dsec__h">Status</h2>';
-    if (vs) {
-      var ef = vs.escFinding || depFindings[0] || {};
-      var reachOk = !!vs.reachable;
-      var symOk = ef.symbol_match === "confirmed" || !!vs.symbolConfirmed;
-      var taintOk = ef.taint === "tainted" || !!vs.tainted;
-      html += '<div class="statusline">' +
-        (reachOk
-          ? '<span class="tag tag--reach">reachable</span>'
-          : '<span class="verdict verdict--maybe">not reached</span>') +
-        (symOk ? '<span class="sym sym--confirmed">vulnerable function confirmed</span>' : "") +
-        (taintOk ? '<span class="taint taint--tainted">exploitable</span>' : "") +
-        '</div>';
-      if (taintOk) {
-        var tf = depFindings.filter(function (f) { return f.taint === "tainted" && f.taint_evidence; })[0] || ef;
-        var ev = tf.taint_evidence;
-        html += '<p class="status-flow"><strong>Exploitable (red).</strong> ' +
-          'Attacker input reaches the vulnerable call' +
-          (ev ? ' via ' + esc(ev.entrypoint || "a public route") +
-            ' — <code>' + esc(ev.source || "source") + '</code> → <code>' + esc(ev.sink_symbol || "sink") + '</code>' : '') +
-          '.</p>';
-      } else if (reachOk) {
-        // Reachable + vulnerable, but taint not proven -> striped node (unsure).
-        // State this plainly: reaching the code is not the same as proving it exploitable.
-        var via = vs.entrypoints.length ? ' via ' + esc(vs.entrypoints.join(", ")) : '';
-        html += '<p class="status-flow"><strong>Unsure — reachable, not proven exploitable.</strong> ' +
-          (symOk ? 'The vulnerable code is reachable' : 'This package is reachable') + via + ', ' +
-          'but we did <strong>not</strong> prove that attacker-controlled input reaches the flaw — ' +
-          'so it is shown with red stripes, not a solid red node.</p>';
-      } else {
-        // Vulnerable, but no path from a public route reaches it -> blue + red ring.
-        html += '<p class="status-flow"><strong>Not reached.</strong> ' +
-          'A known CVE exists, but no public route reaches this package, so it is not ' +
-          'exploitable from the outside — shown as a blue node with a red ring.</p>';
-      }
+    if (vs && vs.tainted) {
+      var route = taintRoute(depFindings) || vs.entrypoints[0] || "a public route";
+      html += popBadge("exploit", "Exploitable");
+      html += '<p class="pop__line">Attacker input reaches the vulnerable call via <b>' + esc(route) + '</b>.</p>';
+    } else if (vs && vs.reachable) {
+      var r2 = vs.entrypoints.length ? vs.entrypoints.join(", ") : "a public route";
+      html += popBadge("reach", "Reachable");
+      html += '<p class="pop__line"><b>' + esc(name) + '</b> is reachable from ' + esc(r2) +
+        ', but we did not prove attacker input reaches the flaw — reachable, not proven exploitable.</p>';
+    } else if (likely) {
+      var lr = likelyRoute(likely);
+      html += popBadge("likely", "Likely reachable · AI-inferred");
+      html += '<p class="pop__line">Static analysis didn’t resolve a path, but the AI inferred one' +
+        (lr ? ' via <b>' + esc(lr) + '</b>' : '') + ' — advisory, not proven.</p>';
+    } else if (vs) {
+      html += popBadge("notreached", "Not reached");
+      html += '<p class="pop__line">A known CVE exists, but no public route reaches <b>' + esc(name) +
+        '</b>, so it is not exploitable from the outside.</p>';
     } else {
-      html += '<span class="verdict verdict--maybe">No findings matched</span>';
-    }
-    html += '</section>';
-
-    // (b2) AI attack analysis — a LIVE call to POST /api/explain for the lead
-    // finding. Rendered as a loading placeholder here; wireDetail() starts the
-    // fetch once the drawer is in the DOM. Skipped entirely when there is no finding.
-    var leadF = leadFinding(depFindings);
-    if (leadF) {
-      html += '<section class="dsec ai-sec" data-ai-dep="' + esc(leadF.dependency_id) +
-        '" data-ai-vuln="' + esc(leadF.vuln_id || "") + '">' +
-        '<h2 class="dsec__h">AI attack analysis</h2>' +
-        '<div class="ai-body">' + aiLoadingHtml() + '</div></section>';
+      html += popBadge("neutral", "No known vulnerability");
+      html += '<p class="pop__line">No known vulnerability matched <b>' + esc(name) +
+        (a.version ? " " + esc(a.version) : "") + '</b>.</p>';
+      html += askBtnHtml("Tell me about the dependency " + name + " in " + repo);
+      return html + '</div>';
     }
 
-    // (c) Quick summary — the dep-level AGENT REASONING: the triage rationale(s)
-    // (strongest verdict first) plus the dynamic-usage summary, synthesised into a
-    // short note. Flagged Advisory (heuristic until a model is configured).
-    var trows = triageByDep[n.id] || [];
-    var u = usageByDep[n.id];
-    var reasons = [];
-    trows.slice().sort(function (x, y) { return triageRank(y.affected) - triageRank(x.affected); })
-      .forEach(function (t) { if (t.rationale && reasons.indexOf(t.rationale) < 0) reasons.push(t.rationale); });
-    if (u && u.summary && reasons.indexOf(u.summary) < 0) reasons.push(u.summary);
-    var summaryText = reasons.slice(0, 2).join(" ");
-    html += '<section class="dsec"><h2 class="dsec__h">Summary</h2>' +
-      (summaryText
-        ? '<p class="prose clamp">' + esc(summaryText) + '</p>' + moreBtn()
-        : '<p class="dim-note">No advisory context.</p>') +
-      '</section>';
-
-    // (d) CVEs — one collapsed <details> per CVE. The summary row is just the CVE
-    // id + a severity badge; expanding reveals title, bounded advisory text, the
-    // CVSS score+label and the fixed version(s). No EPSS / vector fine print.
-    html += '<section class="dsec"><h2 class="dsec__h">CVEs' +
-      (depFindings.length ? ' <span class="dsec__count">' + depFindings.length + '</span>' : '') + '</h2>';
-    if (!depFindings.length) {
-      html += '<p class="dim-note">No known vulnerabilities matched this version.</p>';
-    } else {
-      depFindings.slice().sort(function (x, y) {
-        return (y.reachable - x.reachable) ||
-          ((SEV_RANK[(y.severity || "").toUpperCase()] || 0) - (SEV_RANK[(x.severity || "").toUpperCase()] || 0));
-      }).forEach(function (f) {
-        var cve = (f.cve_ids && f.cve_ids.length) ? f.cve_ids.join(", ") : (f.vuln_id || "");
-        var sevLabel = (f.severity || "UNKNOWN").toUpperCase();
-        var sevCls = "tag tag--sev" + (sevLabel === "CRITICAL" ? " tag--sev-critical" : "");
-        var cvssTxt = sevLabel + (f.cvss_score != null ? " · CVSS " + Number(f.cvss_score).toFixed(1) : "");
-        var body =
-          (f.summary ? '<p class="cve__sum">' + esc(f.summary) + '</p>' : "") +
-          (f.details ? '<p class="prose prose--quote clamp">' + esc(f.details) + '</p>' + moreBtn() : "") +
-          '<dl class="kv kv--cve">' +
-            '<dt>CVSS</dt><dd>' + esc(cvssTxt) + '</dd>' +
-            (f.fixed_versions && f.fixed_versions.length
-              ? '<dt>Fixed in</dt><dd class="is-signal">' + esc(f.fixed_versions.join(", ")) + '</dd>' : '') +
-          '</dl>';
-        html += '<details class="disc cve-disc"><summary class="disc__sum">' +
-          '<span class="disc__chev" aria-hidden="true"></span>' +
-          '<span class="cve-disc__id">' + esc(cve) + '</span>' +
-          '<span class="' + sevCls + '">' + esc(sevLabel) + '</span>' +
-          '</summary><div class="disc__body">' + body + '</div></details>';
-      });
+    var fix = fixFragment(depFindings, name);
+    if (fix) html += '<p class="pop__fix">Fix: ' + fix + '</p>';
+    if (likely && !(vs && (vs.tainted || vs.reachable))) {
+      html += '<p class="pop__advisory">AI-inferred reachability is advisory — it does not change the ' +
+        'verdict or the funnel counts.</p>';
     }
-    html += '</section>';
-
+    html += askBtnHtml(cve
+      ? ("Explain the " + name + " " + cve + " finding in " + repo + " and how to fix it")
+      : ("Explain the risk of " + name + " in " + repo + " and how to fix it"));
     return html + '</div>';
   }
 
   function detailGeneric(n) {
-    var a = n.attrs || {};
-    var html = detailHead(n.kind, n.name || n.id) + '<div class="detail__body">';
-    html += '<section class="dsec"><h2 class="dsec__h">' + esc(KIND_EYEBROW[n.kind] || n.kind) + '</h2><dl class="kv">' +
-      '<dt>Name</dt><dd>' + esc(n.name || n.id) + '</dd>' +
-      (a.relpath ? '<dt>Path</dt><dd>' + esc(a.relpath) + '</dd>' : "") +
-      (a.language ? '<dt>Language</dt><dd>' + esc(a.language) + '</dd>' : "") +
-      (a.role ? '<dt>Role</dt><dd>' + esc(a.role) + '</dd>' : "") +
-      (a.size != null ? '<dt>Size</dt><dd>' + esc(a.size) + ' B</dd>' : "") +
-      '</dl></section>';
-    if (a.docstring) html += '<section class="dsec"><h2 class="dsec__h">Docstring</h2><p class="prose clamp">' + esc(a.docstring) + '</p>' + moreBtn() + '</section>';
-    if (a.excerpt) html += '<section class="dsec"><h2 class="dsec__h">Excerpt</h2><div class="snip__text clamp">' + esc(String(a.excerpt).trim()) + '</div>' + moreBtn() + '</section>';
+    var name = n.name || n.id;
+    var repo = _popRepo();
+    var html = detailHead(n.kind, name) + '<div class="pop">';
+    html += popBadge("neutral", KIND_EYEBROW[n.kind] || n.kind);
+    html += '<p class="pop__line">Part of the repository structure. Ask the agent for detail.</p>';
+    html += askBtnHtml("Tell me about " + name + " in " + repo);
     return html + '</div>';
   }
 
@@ -1836,6 +2023,10 @@
     // Expand/collapse clamped snippets and docstrings (only when truly overflowing).
     // Dependency drawer: kick off the live AI analysis (or cancel a stale one).
     loadAiAnalysis(root.querySelector(".ai-sec"));
+    // "Open in Danger Overview" link(s) in the attack-surface section.
+    Array.prototype.forEach.call(root.querySelectorAll(".danger-open"), function (btn) {
+      btn.addEventListener("click", function () { openDangerOverview(btn.getAttribute("data-ep") || null); });
+    });
     Array.prototype.forEach.call(root.querySelectorAll(".more[data-clamp]"), function (btn) {
       var target = btn.previousElementSibling;
       if (!target || !target.classList.contains("clamp") || target.scrollHeight - target.clientHeight < 2) { btn.remove(); return; }
@@ -1846,51 +2037,691 @@
     });
   }
 
-  // A sibling chip to the kind filters: show the transitive (lockfile-only) deps
-  // that are hidden by default. Only offered when the model actually holds some.
-  function makeTransitiveChip() {
-    var btn = document.createElement("button");
-    btn.className = "chip chip--transitive";
-    btn.type = "button";
-    btn.setAttribute("aria-pressed", String(showTransitive));
-    var dot = document.createElement("i");
-    // Hollow dependency-cyan ring: a dependency, but a secondary one.
-    dot.style.background = "transparent";
-    dot.style.border = "1.5px solid " + (KIND_COLOR.dependency || "#6FB8E0");
-    btn.appendChild(dot);
-    btn.appendChild(document.createTextNode("transitive deps"));
-    btn.addEventListener("click", function () {
-      showTransitive = !showTransitive;
-      btn.setAttribute("aria-pressed", String(showTransitive));
-      applyFilter(true);
-    });
-    return btn;
-  }
-
+  // The kind-filter UI is removed in the minimal view, but the graph still needs
+  // its default visibility set (entry points, functions and dependencies on;
+  // module/file/doc off) — applyFilter() reads visibleKinds. So this keeps that
+  // initialization and simply renders no chips.
   function renderFilters() {
-    el.filters.innerHTML = "";
     showTransitive = false;
-    var hasTransitive = model.nodes.some(isTransitiveDep);
     kindsPresent().forEach(function (kind) {
       visibleKinds[kind] = !OFF_BY_DEFAULT[kind];
-      var btn = document.createElement("button");
-      btn.className = "chip";
-      btn.type = "button";
-      btn.setAttribute("aria-pressed", String(visibleKinds[kind]));
-      var dot = document.createElement("i");
-      dot.style.background = KIND_COLOR[kind] || "#4E7493";
-      if (kind === "entrypoint" || kind === "function") { dot.style.background = "transparent"; dot.style.border = "1.5px solid " + (KIND_COLOR[kind] || "#9FC6E0"); }
-      btn.appendChild(dot);
-      btn.appendChild(document.createTextNode(KIND_LABEL[kind] || kind));
-      btn.addEventListener("click", function () {
-        visibleKinds[kind] = !visibleKinds[kind];
-        btn.setAttribute("aria-pressed", String(visibleKinds[kind]));
-        applyFilter(true);
-      });
-      el.filters.appendChild(btn);
-      // The transitive toggle rides beside the dependency chip it refines.
-      if (kind === "dependency" && hasTransitive) el.filters.appendChild(makeTransitiveChip());
     });
+    if (!el.filters) return; // no filter rail in the minimal view
+  }
+
+  /* ---------------------------------------------------------------- exposure overlay
+     Advisory "exposure" layer. Where the data comes from: a single GET
+     /api/enrichment?repo=<name> (same-origin), fired per live-repo view (ACME
+     "demo" and "pluginreports") and cached per repo in ENRICH across view
+     switches. On 503 ("scan not ready") a couple of retries back off; on 404 /
+     a view with no live repo / offline / any network error the overlay simply
+     never appears — no error UI, no console spam. Stale fetches are dropped by a
+     viewToken + currentViewKey check, so switching bundles can't paint the wrong
+     overlay. Everything here is additive context on entry points. */
+
+  var EXP_VALUE = {
+    "internet-facing": { cls: "expo--public",   label: "PUBLIC" },
+    "internal":        { cls: "expo--internal", label: "INTERNAL" },
+    "unknown":         { cls: "expo--unknown",  label: "unverified" }
+  };
+  var EXP_ORIGIN = { doc: "doc-cited", inferred: "AI-inferred" };
+
+  // Entry-point node's exposure tag for the graph ("public" | "internal" | "").
+  function exposureTagFor(id) {
+    var ex = exposureOn ? exposure[id] : null;
+    if (!ex) return "";
+    return ex.value === "internet-facing" ? "public" : (ex.value === "internal" ? "internal" : "");
+  }
+
+  // The exposure value badge. `compact` (entry-point list) drops the quiet
+  // "unverified" so the list stays uncluttered; the drawer shows it.
+  function exposureValueChip(ex, compact) {
+    var v = EXP_VALUE[ex.value];
+    if (!v) return "";
+    if (compact && ex.value !== "internet-facing" && ex.value !== "internal") return "";
+    return '<span class="expo ' + v.cls + '">' + esc(v.label) + '</span>';
+  }
+
+  // The chip row shared by the list and the drawer header: value badge, an AUTH
+  // lock chip when auth is required, and a quiet origin + confidence tag. Every
+  // piece is built only from esc()'d server text.
+  function exposureChips(ex, compact) {
+    if (!ex) return "";
+    var html = exposureValueChip(ex, compact);
+    if (ex.authentication === "required") {
+      html += '<span class="expo expo--auth" title="Authentication required">AUTH</span>';
+    }
+    var origin = exposureOriginLabel(ex);
+    var parts = [];
+    if (origin) parts.push(esc(origin));
+    if (ex.confidence) parts.push(esc(ex.confidence) + " confidence");
+    if (parts.length) {
+      html += '<span class="expo-tag" title="Advisory: exposure provenance and confidence">' +
+        parts.join(" · ") + '</span>';
+    }
+    return html;
+  }
+
+  // The drawer exposure section: the chip row, the rationale and the source
+  // citations (doc path + snippet), all escaped, in a cool dashed card flagged
+  // ADVISORY so it never reads as a deterministic verdict.
+  function exposureSectionHtml(ex) {
+    var origin = exposureOriginLabel(ex) || "assessment";
+    var html = '<section class="dsec exposure-sec"><h2 class="dsec__h">Exposure ' +
+      '<span class="advisory-flag advisory-flag--expo">Advisory · ' + esc(origin) + '</span></h2>' +
+      '<div class="exposure-card">' +
+      '<div class="expo-chips expo-chips--drawer">' + exposureChips(ex, false) + '</div>';
+    if (ex.rationale) {
+      html += '<p class="prose prose--quote clamp">' + esc(ex.rationale) + '</p>' + moreBtn();
+    }
+    var srcs = Array.isArray(ex.sources) ? ex.sources : [];
+    if (srcs.length) {
+      html += '<div class="ctxgroup"><div class="ctxgroup__h">Sources ' +
+        '<span class="dsec__count">' + srcs.length + '</span></div>';
+      srcs.forEach(function (s) {
+        html += '<div class="docref"><span class="docref__src">' + esc((s && s.doc) || "doc") + '</span>' +
+          '<div class="snip__text clamp">' + esc(String((s && s.snippet) || "").trim()) + '</div>' + moreBtn() + '</div>';
+      });
+      html += '</div>';
+    }
+    html += '<p class="advisory-foot">An advisory exposure assessment — where this route is reachable from and whether it needs auth. It adds context; it does not change the deterministic vulnerability verdicts.</p>' +
+      '</div></section>';
+    return html;
+  }
+
+  // Refresh the entry-point rings on the live graph when the overlay changes
+  // (toggle, or the fetch resolving after the first render).
+  function tintExposureNodes() {
+    if (!cy) return;
+    cy.batch(function () {
+      cy.nodes().forEach(function (node) {
+        if (node.data("kind") !== "entrypoint") return;
+        node.data("expo", exposureTagFor(node.id()));
+      });
+    });
+  }
+
+  // The per-repo cache entry (created on demand). `note`/`provenance` carry a
+  // degraded server note and the enrichment provenance; `warming`/`attackWarming`
+  // are true while a 503 poll is still in flight (so "warming" never looks like a
+  // clean result). `polling`/`attackPolling` guard against duplicate poll loops.
+  function enrichEntry(repo) {
+    if (!repo) return null;
+    return ENRICH[repo] ||
+      (ENRICH[repo] = { fetched: false, exposure: null, inferred: [], likely: [],
+                        note: null, provenance: null, warming: false, polling: false,
+                        attackFetched: false, attack: null,
+                        attackNote: null, attackWarming: false, attackPolling: false });
+  }
+
+  // 503 ("scan not ready") backoff schedule. Per-repo overlays warm on the backend
+  // over MINUTES (sequential model calls), so a page opened during warm-up must keep
+  // polling on a widening interval — not cache empty after ~1.5s and show nothing
+  // until a manual reload. Widens to 30s and caps near ~3 min total, then degrades.
+  var WARM_RETRY_MS = [1500, 3000, 6000, 12000, 20000, 30000, 30000, 30000, 30000];
+
+  // The degraded/warming copy for an overlay drawer section that has no data yet:
+  // surface the server note, else a "still warming…" line — so a scan opened during
+  // warm-up or a degraded endpoint never looks identical to "nothing found".
+  function overlayWarmHtml(warming, note, label) {
+    if (note) return '<section class="dsec"><p class="dim-note">' + esc(String(note)) + '</p></section>';
+    if (warming) return '<section class="dsec"><p class="dim-note">' + esc(label + " analysis still warming…") + '</p></section>';
+    return "";
+  }
+
+  // The exposure origin tag: "doc-cited" vs "AI-inferred" by the finding's origin.
+  // But if NO model ran (provenance "offline-heuristic"), an inferred finding came
+  // from a heuristic, not the AI — so prefer a neutral "heuristic" label rather than
+  // implying a model produced it. Absent provenance keeps the plain origin label.
+  function exposureOriginLabel(ex) {
+    var base = EXP_ORIGIN[ex && ex.origin];
+    if (!base) return null;
+    var en = currentRepo && ENRICH[currentRepo];
+    if (en && en.provenance === "offline-heuristic" && ex && ex.origin === "inferred") return "heuristic";
+    return base;
+  }
+  function buildLikelyIndex() {
+    likelyByDep = {};
+    (likelyReachable || []).forEach(function (l) {
+      if (l && l.dependency_id) likelyByDep[l.dependency_id] = l;
+    });
+  }
+
+  // Point the current-view enrichment (exposure + inferred + likely) at the cached
+  // entry for this view's repo, or clear it when the view has no live repo. Resets
+  // the Proven/Likely toggle to its default (Proven) on every view switch. Called
+  // BEFORE a (re)render so a synchronous pass already carries the overlays when the
+  // cache is warm.
+  function applyViewEnrichment(key) {
+    currentViewKey = key;
+    currentRepo = (key && BUNDLES[key] && BUNDLES[key].repo) || null;
+    reachMode = "proven";
+    var entry = currentRepo && ENRICH[currentRepo];
+    exposure = (entry && entry.exposure) ? entry.exposure : {};
+    inferredEdges = (entry && entry.inferred) ? entry.inferred : [];
+    likelyReachable = (entry && entry.likely) ? entry.likely : [];
+    buildLikelyIndex();
+    // Point the current-view attack surface at this repo's cache (or clear it),
+    // and close any open Danger Overview so a view switch never shows stale leads.
+    var atk = (entry && entry.attack) ? entry.attack : null;
+    attackSurface = (atk && atk.entrypoints) ? atk.entrypoints : {};
+    attackSummary = (atk && atk.summary) ? atk.summary : null;
+    if (dangerOpen) closeDangerOverview();
+  }
+
+  // Fire the one enrichment fetch for a live-repo view (no-op once fetched). The
+  // repo rides the query string so one backend can serve several warm scans;
+  // ACME ("acme-api") also works with no param, so this stays backward-compatible.
+  function ensureEnrichment(key, token) {
+    var repo = (BUNDLES[key] && BUNDLES[key].repo) || null;
+    if (!repo) { updateExposureLegend(); updateReachModeUI(); return; }
+    var entry = enrichEntry(repo);
+    if (entry.fetched) { afterEnrichment(key, repo, token); return; }
+    if (typeof fetch !== "function") {
+      entry.fetched = true; updateExposureLegend(); updateReachModeUI(); return;
+    }
+    if (entry.polling) { afterEnrichment(key, repo, token); return; } // a poll is already running
+    entry.polling = true;
+    var tries = 0;
+    function attempt() {
+      fetch("/api/enrichment?repo=" + encodeURIComponent(repo),
+            { headers: { "Accept": "application/json" } }).then(function (r) {
+        if (r.status === 503) {                         // scan not ready — keep polling, widening
+          if (tries < WARM_RETRY_MS.length) {
+            entry.warming = true;
+            var delay = WARM_RETRY_MS[tries++];
+            reapplyEnrichment(repo);                    // reflect "warming" in the live view
+            setTimeout(attempt, delay);
+            return null;
+          }
+          throw new Error("not ready");                 // hard cap — give up, degrade
+        }
+        if (!r.ok) throw new Error("http " + r.status); // 404 / 5xx — degrade silently
+        return r.json();
+      }).then(function (d) {
+        if (d === null) return;                         // a 503 retry is already scheduled
+        entry.fetched = true; entry.polling = false; entry.warming = false;
+        entry.exposure = (d && d.exposure && typeof d.exposure === "object") ? d.exposure : null;
+        entry.inferred = Array.isArray(d && d.inferred_edges) ? d.inferred_edges : [];
+        entry.likely = Array.isArray(d && d.likely_reachable) ? d.likely_reachable : [];
+        entry.note = (d && typeof d.note === "string" && d.note) ? d.note : null;
+        entry.provenance = (d && typeof d.provenance === "string") ? d.provenance : null;
+        reapplyEnrichment(repo);                        // re-apply to whatever view is now live
+      }).catch(function () {
+        entry.fetched = true; entry.polling = false; entry.warming = false;
+        entry.exposure = null; entry.inferred = []; entry.likely = []; // degrade: no overlay
+        reapplyEnrichment(repo);
+      });
+    }
+    attempt();
+  }
+
+  // Re-apply enrichment to the view that is live NOW (not the one that started the
+  // fetch), so a response arriving after a slow warm-up still paints — and a switch
+  // away is still respected, because afterEnrichment's own viewToken/currentViewKey
+  // guard passes only when the live view is this repo's.
+  function reapplyEnrichment(repo) {
+    if (currentRepo === repo && currentViewKey && BUNDLES[currentViewKey] &&
+        BUNDLES[currentViewKey].repo === repo) {
+      afterEnrichment(currentViewKey, repo, viewToken);
+    } else {
+      updateExposureLegend(); updateReachModeUI();
+    }
+  }
+
+  // Apply the enrichment once it arrives, unless the user switched away mid-flight
+  // (guarded by both the view token and the live view key, so a late response can
+  // never paint the wrong scan's overlay).
+  function afterEnrichment(key, repo, token) {
+    if (token !== viewToken || currentViewKey !== key) {
+      updateExposureLegend(); updateReachModeUI();
+      return;
+    }
+    var entry = enrichEntry(repo);
+    exposure = entry.exposure || {};
+    inferredEdges = entry.inferred || [];
+    likelyReachable = entry.likely || [];
+    buildLikelyIndex();
+    // Exposure side (Phase 1): repaint the route list + graph rings.
+    renderEntryPoints();
+    if (selectedEp) updateEpButtons(selectedEp);
+    tintExposureNodes();
+    // Inferred side (Phase 2): the graph may have been built before the fetch
+    // resolved, so (re)inject the inferred edges, then apply the current mode.
+    refreshInferredElements();
+    applyReachMode();
+    updateExposureLegend();
+    var sel = selectedNodeId && model.index[selectedNodeId];
+    if (sel) showDetail(sel); // repaint the open drawer with exposure + likely sections
+  }
+
+  /* ---------------------------------------------------------------- inferred edges / likely view
+     Phase 2 presentation layer. Inferred edges are added to cytoscape ONLY — never
+     to the data model — so trace(), computeDepths(), the funnel and every verdict
+     are computed on the deterministic graph exactly as before. The Proven/Likely
+     toggle just shows/hides these overlay edges and re-skins the likely-reachable
+     deps; it changes nothing about reachability or the counts. */
+
+  // (Re)inject the current view's inferred edges into the live graph. Idempotent:
+  // existing inferred edges are removed first, so it is safe to call after a fresh
+  // render AND again when a late enrichment response arrives. Endpoints already
+  // exist as real nodes (the bundle declares them), so no layout is needed.
+  function refreshInferredElements() {
+    if (!cy) return;
+    cy.edges("[inferred]").remove();
+    cy.edges('[onlikely = 1]').data("onlikely", 0); // reset before re-flagging
+    var toAdd = [], inferredPair = {};
+    // Genuine AI-inferred call edges (the reflective function -> dep hops).
+    inferredEdges.forEach(function (ie, i) {
+      if (!ie || !model.index[ie.src] || !model.index[ie.dst]) return;
+      inferredPair[ie.src + "\u0000" + ie.dst] = true;
+      toAdd.push({ group: "edges", data: {
+        id: "inf\u0000" + ie.src + "\u0000" + ie.dst + "\u0000" + i,
+        source: ie.src, target: ie.dst, kind: "calls", inferred: 1
+      }});
+    });
+    if (toAdd.length) cy.add(toAdd);
+    // Complete each likely-reachable dep's path so the violet chain spans the
+    // whole graph: flag the RESOLVED hops on its `via` (entry -> ... -> the
+    // function that holds the inferred hop) so they render dashed violet too.
+    // These are the real resolved edges (flagged, not duplicated), so the data
+    // model, the trace and the counts are untouched. The final hop is already the
+    // inferred overlay edge above, so it is skipped here.
+    likelyReachable.forEach(function (l) {
+      var via = (l && Array.isArray(l.via)) ? l.via : [];
+      for (var k = 0; k < via.length - 1; k++) {
+        var s = via[k], d = via[k + 1];
+        if (inferredPair[s + "\u0000" + d]) continue; // the genuine inferred hop
+        cy.edges().forEach(function (ed) {
+          if (ed.source().id() === s && ed.target().id() === d) ed.data("onlikely", 1);
+        });
+      }
+    });
+  }
+
+  function hasInferredData() {
+    return inferredEdges.length > 0 || Object.keys(likelyByDep).length > 0;
+  }
+
+  // AI-inferred reachability is ALWAYS ON in the minimal view (no Proven/Likely
+  // toggle). The dashed violet inferred edges are shown, and likely-reachable deps
+  // wear the distinct violet marker — treated as a first-class but clearly ADVISORY
+  // state (the hover tooltip and pop-out label it AI-inferred / advisory). This
+  // never touches vuln/vreach/tainted flags, so a dep's deterministic verdict
+  // colour is preserved underneath, and it never changes the reachability model
+  // or the funnel counts. The dep label stays plain — the violet ring + tooltip
+  // carry the advisory meaning.
+  function applyReachMode() {
+    document.body.classList.add("reach-likely");
+    document.body.classList.remove("reach-proven");
+    if (cy) {
+      cy.batch(function () {
+        cy.edges("[inferred]").style("display", "element");
+        cy.nodes().forEach(function (node) {
+          if (node.data("kind") !== "dependency") return;
+          node.data("likely", likelyByDep[node.id()] ? 1 : 0);
+        });
+      });
+    }
+    updateReachModeUI();
+  }
+
+  function setReachMode(mode) {
+    if (mode === reachMode) return;
+    if (mode === "likely" && !hasInferredData()) return; // inert without enrichment
+    reachMode = mode;
+    applyReachMode();
+    // The drawer's "Likely reachable (inferred)" copy is mode-independent, so no
+    // repaint is needed here (which also avoids re-firing the live AI fetch).
+  }
+
+  // Reflect mode + availability on the toggle control and its caption.
+  function updateReachModeUI() {
+    var ctrl = document.getElementById("reachmode");
+    if (!ctrl) return;
+    var has = hasInferredData();
+    ctrl.setAttribute("data-mode", reachMode);
+    ctrl.classList.toggle("is-inert", !has);
+    document.body.classList.toggle("has-inferred", has);
+    var pb = document.getElementById("reach-proven");
+    var lb = document.getElementById("reach-likely");
+    if (pb) pb.setAttribute("aria-pressed", String(reachMode === "proven"));
+    if (lb) {
+      lb.setAttribute("aria-pressed", String(reachMode === "likely"));
+      lb.disabled = !has;
+      lb.title = has ? "Show AI-inferred likely-reachable edges"
+                     : "No AI-inferred edges for this scan";
+    }
+    var cap = document.getElementById("reachmode-cap");
+    if (cap) {
+      cap.textContent = reachMode === "likely"
+        ? "Likely view · dashed violet edges and LIKELY markers are AI-inferred and advisory — verdicts and counts are unchanged."
+        : (has ? "Proven view · deterministic static paths only. Switch to Likely for AI-inferred edges."
+               : "Proven view · deterministic static paths only.");
+    }
+  }
+
+  // The exposure overlay is ALWAYS ON in the minimal view — there is no toggle and
+  // no legend swatch group to build (the one-line key lives in index.html and the
+  // deep meaning is in the hover tooltip + pop-out). Kept as a no-op so the boot
+  // call and updateExposureLegend() (which still toggles the body class the graph
+  // tinting reads) stay wired without a control.
+  function setupExposureLegend() { /* no overlay toggle in the minimal view */ }
+
+  // Show the exposure legend + toggle only when the current view actually has
+  // enrichment exposure data, and reflect the on/off state on the toggle + body.
+  function updateExposureLegend() {
+    var has = !!currentRepo && !!exposure && Object.keys(exposure).length > 0;
+    document.body.classList.toggle("has-exposure", has);
+    document.body.classList.toggle("exposure-off", has && !exposureOn);
+    if (expToggleBtn) {
+      expToggleBtn.setAttribute("aria-pressed", String(exposureOn));
+      var lbl = expToggleBtn.querySelector(".exp-toggle__lbl");
+      if (lbl) lbl.textContent = exposureOn ? "Exposure overlay" : "Exposure overlay · hidden";
+    }
+  }
+
+  /* ---------------------------------------------------------------- attack surface (Tier-A AI)
+     ADVISORY code-level attack-surface layer (live GET /api/attack-surface?repo=<name>).
+     For each public entry point the Tier-A AI pen-tester flags candidate CODE-LEVEL
+     vulnerabilities in the app's OWN code as UNVERIFIED HYPOTHESES (provenance
+     "ai-hypothesis", advisory true). They are DISTINCT from the deterministic
+     dependency findings and are NEVER shown as proven/confirmed/exploitable. This
+     layer is additive only: it drives a danger marker on entry-point nodes, an
+     advisory drawer section, a dedicated Danger Overview panel and a legend row —
+     it never touches the funnel, the dependency verdicts/colors, the exposure/
+     likely overlays, or the reachability model. The fetch mirrors the enrichment
+     overlay (503-retry, 404/offline silent-degrade, stale-fetch guard). */
+
+  // One entry point's findings (always an array; [] when absent).
+  function epFindings(epId) {
+    var e = attackSurface && attackSurface[epId];
+    return (e && Array.isArray(e.findings)) ? e.findings : [];
+  }
+  // Worst severity across a set of findings ("" when none / all unrated).
+  function worstSeverity(findings) {
+    var best = "", bestRank = 0;
+    (findings || []).forEach(function (f) {
+      var s = String((f && f.severity) || "").toLowerCase();
+      var r = DANGER_SEV_RANK[s] || 0;
+      if (r > bestRank) { bestRank = r; best = s; }
+    });
+    return best;
+  }
+  // The danger severity for an entry-point node, or "" (no marker).
+  function dangerSevFor(epId) {
+    if (!dangerDataPresent()) return "";
+    return worstSeverity(epFindings(epId));
+  }
+  // Does the current view carry ANY attack-surface finding at all?
+  function dangerDataPresent() {
+    if (!attackSurface) return false;
+    return Object.keys(attackSurface).some(function (id) { return epFindings(id).length > 0; });
+  }
+  // Order: severity (critical→low), then confidence (high→low).
+  function cmpFinding(a, b) {
+    var sa = DANGER_SEV_RANK[String((a && a.severity) || "").toLowerCase()] || 0;
+    var sb = DANGER_SEV_RANK[String((b && b.severity) || "").toLowerCase()] || 0;
+    if (sb !== sa) return sb - sa;
+    var ca = CONF_RANK[String((a && a.confidence) || "").toLowerCase()] || 0;
+    var cb = CONF_RANK[String((b && b.confidence) || "").toLowerCase()] || 0;
+    return cb - ca;
+  }
+  // Location of a finding — the backend puts file/line/function at the top level,
+  // but the contract also allows a nested `location` object, so handle both.
+  function findingLoc(f) {
+    var loc = (f && f.location && typeof f.location === "object") ? f.location : {};
+    function pick(k) { return loc[k] != null ? loc[k] : (f ? f[k] : null); }
+    return { file: pick("file"), line: pick("line"), fn: pick("function") };
+  }
+  // A severity chip, graded by danger severity (never a deterministic-verdict tag).
+  function dangerSevChip(sev) {
+    var s = String(sev || "").toLowerCase();
+    var cls = DANGER_SEV_RANK[s] ? s : "unrated";
+    return '<span class="dsev dsev--' + cls + '">' + esc(s ? s.toUpperCase() : "UNRATED") + '</span>';
+  }
+  // One finding card — shared by the drawer section and the Danger Overview. ALL
+  // server text is escaped (rationale through the Markdown-safe renderer, which
+  // escapes first). `endpoint` adds a route line (used in a non-grouped context).
+  function findingCardHtml(f, endpoint) {
+    f = f || {};
+    var loc = findingLoc(f);
+    var locStr = (loc.file ? String(loc.file) : "") + (loc.line != null ? ":" + loc.line : "");
+    var html = '<article class="dfind">';
+    html += '<header class="dfind__head">' + dangerSevChip(f.severity) +
+      '<span class="dfind__class">' + esc(f.vuln_class || "unspecified") + '</span>' +
+      (f.confidence ? '<span class="dfind__conf">' + esc(String(f.confidence)) + ' confidence</span>' : "") +
+      '</header>';
+    if (f.title) html += '<p class="dfind__title">' + esc(String(f.title)) + '</p>';
+    if (endpoint) html += '<p class="dfind__ep"><span class="dfind__k">ENTRY POINT</span> ' + esc(String(endpoint)) + '</p>';
+    if (locStr || loc.fn) {
+      html += '<p class="dfind__loc">' + (locStr ? esc(locStr) : "") +
+        (loc.fn ? ' · <span class="dfind__fn">' + esc(String(loc.fn)) + '()</span>' : "") + '</p>';
+    }
+    if (f.rationale) html += aiParasHtml(String(f.rationale), "dfind__rationale");
+    if (f.data_flow) {
+      html += '<p class="dfind__flow"><span class="dfind__k">DATA FLOW</span> ' +
+        '<code>' + esc(String(f.data_flow)) + '</code></p>';
+    }
+    if (f.snippet) html += '<pre class="codeblock dfind__snip">' + esc(String(f.snippet)) + '</pre>';
+    html += '</article>';
+    return html;
+  }
+  // The drawer "Attack surface" section for one entry point. Empty string (no-op)
+  // when the route has no findings. Clearly headed + footed as UNVERIFIED and
+  // separate from the dependency verdicts.
+  function attackSurfaceSectionHtml(epId) {
+    var findings = epFindings(epId);
+    if (!findings.length) return "";
+    var sorted = findings.slice().sort(cmpFinding);
+    var html = '<section class="dsec attack-sec"><h2 class="dsec__h">Attack surface ' +
+      '<span class="advisory-flag advisory-flag--danger">AI · UNVERIFIED</span></h2>' +
+      '<div class="attack-card">' +
+      '<p class="attack-banner">ATTACK SURFACE · AI-IDENTIFIED · UNVERIFIED</p>' +
+      '<p class="advisory-foot">AI-identified candidate vulnerabilities in this app’s own code — ' +
+      'hypotheses, not proven, confirmed or exploitable. They are separate from the dependency ' +
+      'verdicts below and do not change them or the funnel.</p>';
+    sorted.forEach(function (f) { html += findingCardHtml(f, null); });
+    html += '<button type="button" class="danger-open" data-ep="' + esc(String(epId)) + '">' +
+      'Open in Danger Overview →</button>';
+    html += '</div></section>';
+    return html;
+  }
+
+  // Repaint the entry-point danger rings + label glyphs on the live graph (after
+  // the fetch resolves, or on a toggle). Mirrors tintExposureNodes().
+  function tintDangerNodes() {
+    if (!cy) return;
+    cy.batch(function () {
+      cy.nodes().forEach(function (node) {
+        if (node.data("kind") !== "entrypoint") return;
+        var sev = dangerSevFor(node.id());
+        node.data("danger", sev ? 1 : 0);
+        node.data("dangersev", sev || "");
+        var m = model.index[node.id()];
+        if (m) node.data("label", (sev ? "⚠ " : "") + labelFor(m));
+      });
+    });
+  }
+
+  // The per-repo attack-surface cache entry fetch (no-op once fetched). Mirrors
+  // ensureEnrichment: 503 retries a couple of times, 404 / offline / any error
+  // degrades silently to no findings.
+  function ensureAttackSurface(key, token) {
+    var repo = (BUNDLES[key] && BUNDLES[key].repo) || null;
+    if (!repo) { updateDangerUI(); return; }
+    var entry = enrichEntry(repo);
+    if (entry.attackFetched) { afterAttackSurface(key, repo, token); return; }
+    if (typeof fetch !== "function") { entry.attackFetched = true; updateDangerUI(); return; }
+    if (entry.attackPolling) { afterAttackSurface(key, repo, token); return; } // poll already running
+    entry.attackPolling = true;
+    var tries = 0;
+    function attempt() {
+      fetch("/api/attack-surface?repo=" + encodeURIComponent(repo),
+            { headers: { "Accept": "application/json" } }).then(function (r) {
+        if (r.status === 503) {                         // analysis not ready — keep polling, widening
+          if (tries < WARM_RETRY_MS.length) {
+            entry.attackWarming = true;
+            var delay = WARM_RETRY_MS[tries++];
+            reapplyAttackSurface(repo);                 // reflect "warming" in the live view
+            setTimeout(attempt, delay);
+            return null;
+          }
+          throw new Error("not ready");                 // hard cap — give up, degrade
+        }
+        if (!r.ok) throw new Error("http " + r.status); // 404 / 5xx — degrade silently
+        return r.json();
+      }).then(function (d) {
+        if (d === null) return;                         // a 503 retry is already scheduled
+        entry.attackFetched = true; entry.attackPolling = false; entry.attackWarming = false;
+        entry.attack = (d && d.entrypoints && typeof d.entrypoints === "object")
+          ? { entrypoints: d.entrypoints, summary: (d.summary && typeof d.summary === "object") ? d.summary : null }
+          : null;
+        entry.attackNote = (d && typeof d.note === "string" && d.note) ? d.note : null;
+        reapplyAttackSurface(repo);                     // re-apply to whatever view is now live
+      }).catch(function () {
+        entry.attackFetched = true; entry.attackPolling = false; entry.attackWarming = false;
+        entry.attack = null;                            // degrade: no markers, no overview
+        reapplyAttackSurface(repo);
+      });
+    }
+    attempt();
+  }
+
+  // Re-apply the attack surface to the view that is live NOW, so a response from a
+  // slow warm-up still paints; afterAttackSurface's viewToken/currentViewKey guard
+  // keeps a switch-away from painting the wrong scan.
+  function reapplyAttackSurface(repo) {
+    if (currentRepo === repo && currentViewKey && BUNDLES[currentViewKey] &&
+        BUNDLES[currentViewKey].repo === repo) {
+      afterAttackSurface(currentViewKey, repo, viewToken);
+    } else {
+      updateDangerUI();
+    }
+  }
+
+  // Apply the attack surface once it arrives, unless the user switched away
+  // mid-flight (guarded by both the view token and the live view key).
+  function afterAttackSurface(key, repo, token) {
+    if (token !== viewToken || currentViewKey !== key) { updateDangerUI(); return; }
+    var entry = enrichEntry(repo);
+    var atk = entry.attack;
+    attackSurface = (atk && atk.entrypoints) ? atk.entrypoints : {};
+    attackSummary = (atk && atk.summary) ? atk.summary : null;
+    tintDangerNodes();
+    updateDangerUI();
+    if (dangerOpen) renderDangerOverview(dangerFocusEp);
+    // Repaint the open entry-point drawer so a late response fills its section.
+    var sel = selectedNodeId && model.index[selectedNodeId];
+    if (sel && sel.kind === "entrypoint") showDetail(sel);
+  }
+
+  // Show/hide the Danger Overview toggle + legend row to match data availability.
+  function updateDangerUI() {
+    var has = dangerDataPresent();
+    document.body.classList.toggle("has-danger", has);
+    var tgl = document.getElementById("danger-toggle");
+    if (tgl) {
+      tgl.hidden = !has;
+      var c = document.getElementById("danger-toggle-count");
+      if (c) {
+        var n = (attackSummary && attackSummary.total_findings != null) ? attackSummary.total_findings : 0;
+        c.textContent = n ? String(n) : "";
+      }
+    }
+    if (!has && dangerOpen) closeDangerOverview();
+  }
+
+  // Render the Danger Overview body: a summary header (total + by-severity), then
+  // every candidate finding across the public surface, grouped by entry point and
+  // ranked by worst severity (then count), each finding fully detailed. Framed as
+  // unverified AI static analysis that does not change the deterministic results.
+  function renderDangerOverview(focusEp) {
+    var sumEl = document.getElementById("danger-summary");
+    var bodyEl = document.getElementById("danger-body");
+    if (!sumEl || !bodyEl) return;
+    var ids = Object.keys(attackSurface || {}).filter(function (id) { return epFindings(id).length > 0; });
+    var s = attackSummary || {};
+    var total = (s.total_findings != null) ? s.total_findings
+      : ids.reduce(function (acc, id) { return acc + epFindings(id).length; }, 0);
+    var bySev = s.by_severity || {};
+    var sevChips = ["critical", "high", "medium", "low"].filter(function (k) { return bySev[k]; })
+      .map(function (k) {
+        return '<span class="dover-sum__sev dsev dsev--' + k + '">' + esc(k.toUpperCase()) +
+          ' <b>' + esc(String(bySev[k])) + '</b></span>';
+      }).join("");
+    sumEl.innerHTML =
+      '<div class="dover-sum__counts">' +
+        '<span class="dover-sum__total"><b>' + esc(String(total)) + '</b> candidate finding' +
+          (total === 1 ? "" : "s") + '</span>' +
+        '<span class="dover-sum__eps">' + esc(String(s.entrypoints_with_findings != null ? s.entrypoints_with_findings : ids.length)) +
+          ' entry point' + ((s.entrypoints_with_findings != null ? s.entrypoints_with_findings : ids.length) === 1 ? "" : "s") + ' affected</span>' +
+        sevChips +
+      '</div>';
+
+    if (!ids.length) {
+      // Distinguish "still warming" / degraded from a genuinely clean surface.
+      var ea = currentRepo && ENRICH[currentRepo];
+      if (ea && ea.attackWarming && !ea.attackFetched) {
+        bodyEl.innerHTML = '<p class="dim-note">Attack-surface analysis still warming…</p>';
+      } else if (ea && ea.attackNote) {
+        bodyEl.innerHTML = '<p class="dim-note">' + esc(String(ea.attackNote)) + '</p>';
+      } else {
+        bodyEl.innerHTML = '<p class="dim-note">No AI-identified code-level risks for this scan.</p>';
+      }
+      return;
+    }
+    ids.sort(function (a, b) {
+      var wa = DANGER_SEV_RANK[worstSeverity(epFindings(a))] || 0;
+      var wb = DANGER_SEV_RANK[worstSeverity(epFindings(b))] || 0;
+      if (wb !== wa) return wb - wa;
+      return epFindings(b).length - epFindings(a).length;
+    });
+    var html = "";
+    ids.forEach(function (id) {
+      var entry = attackSurface[id] || {};
+      var findings = epFindings(id).slice().sort(cmpFinding);
+      var label = entry.label || id;
+      var focusCls = (focusEp && id === focusEp) ? " is-focus" : "";
+      html += '<section class="dover-group' + focusCls + '">' +
+        '<header class="dover-group__head">' +
+          '<h3 class="dover-group__ep">' + esc(String(label)) + '</h3>' +
+          (entry.exposure ? '<span class="dover-group__expo">' + esc(String(entry.exposure)) + '</span>' : "") +
+          '<span class="dover-group__count">' + findings.length + ' finding' + (findings.length === 1 ? "" : "s") + '</span>' +
+        '</header>';
+      findings.forEach(function (f) { html += findingCardHtml(f, null); });
+      html += '</section>';
+    });
+    bodyEl.innerHTML = html;
+    var fg = bodyEl.querySelector(".dover-group.is-focus");
+    if (fg && fg.scrollIntoView) fg.scrollIntoView({ block: "start" });
+  }
+
+  // Open / close / toggle the Danger Overview panel. Opening is a no-op when the
+  // current view carries no attack-surface data. Closing returns to the graph.
+  function openDangerOverview(focusEp) {
+    if (!dangerDataPresent()) return;
+    dangerFocusEp = focusEp || null;
+    dangerOpen = true;
+    renderDangerOverview(dangerFocusEp);
+    var panel = document.getElementById("danger-overview");
+    if (panel) panel.hidden = false;
+    document.body.classList.add("danger-open");
+    var tgl = document.getElementById("danger-toggle");
+    if (tgl) tgl.setAttribute("aria-pressed", "true");
+    if (panel && panel.focus) { try { panel.focus(); } catch (e) {} }
+  }
+  function closeDangerOverview() {
+    dangerOpen = false;
+    dangerFocusEp = null;
+    var panel = document.getElementById("danger-overview");
+    if (panel) panel.hidden = true;
+    document.body.classList.remove("danger-open");
+    var tgl = document.getElementById("danger-toggle");
+    if (tgl) tgl.setAttribute("aria-pressed", "false");
+  }
+  function toggleDangerOverview() {
+    if (dangerOpen) closeDangerOverview(); else openDangerOverview(null);
   }
 
   /* ---------------------------------------------------------------- graph events */
@@ -1921,33 +2752,48 @@
     cy.on("pan zoom drag", function () { hideTip(); });
   }
 
+  // A SHORT, high-level one-liner. No file:line, no snippet, no data flow — the
+  // deep detail lives in the pop-out and the chat agent. AI-advisory states are
+  // clearly labelled (AI / advisory / unverified) and never read as proven.
   function showTip(node) {
-    var n = model.index[node.id()];
+    if (!el.tooltip) return;
+    var id = node.id();
+    var n = model.index[id];
     if (!n) return;
     var a = n.attrs || {};
-    var extra = "";
-    if (n.kind === "dependency") extra = (a.ecosystem || "") + (a.version ? " · " + a.version : "");
-    else if (n.kind === "entrypoint") extra = (a.method || "") + " " + (a.path || "");
-    else if (a.relpath) extra = a.relpath;
-    // In bundle mode, a vulnerable dependency names its findings in the tooltip.
-    var vuln = "";
-    var vs = vulnByDep[node.id()];
-    if (vs) {
-      var cves = [];
-      vs.findings.forEach(function (f) {
-        (f.cve_ids && f.cve_ids.length ? f.cve_ids : [f.vuln_id]).forEach(function (c) {
-          if (c && cves.indexOf(c) < 0) cves.push(c);
-        });
-      });
-      vuln = (vs.kev ? "KEV · " : "") +
-        vs.findings.length + (vs.findings.length === 1 ? " finding" : " findings") +
-        (vs.reachable ? " · reachable" : "") +
-        (cves.length ? "<br>" + esc(cves.slice(0, 4).join(", ")) : "");
+    var line = "";
+    if (n.kind === "entrypoint") {
+      var route = (a.method ? a.method + " " : "") + (a.path || n.name || id);
+      var parts = [];
+      if (exposureTagFor(id) === "public") parts.push('<span class="t-ai">PUBLIC</span>');
+      if (dangerSevFor(id)) parts.push('<span class="t-danger">⚠ code-level risk (AI, unverified)</span>');
+      var w = worstReachedVuln(id);
+      if (w) parts.push(w.tainted
+        ? '<span class="t-exploit">reaches EXPLOITABLE ' + esc(w.dep.name || w.dep.id) + '</span>'
+        : 'reaches ' + esc(w.dep.name || w.dep.id) + ' (reachable)');
+      line = '<b>' + esc(route) + '</b>' + (parts.length ? ' — ' + parts.join(' · ') : '');
+    } else if (n.kind === "dependency") {
+      var name = esc(n.name || id);
+      var vs = vulnByDep[id];
+      var likely = likelyByDep[id];
+      if (vs && vs.tainted) {
+        var route2 = taintRoute(findings.filter(function (f) { return f.dependency_id === id; })) ||
+          vs.entrypoints[0] || "a public route";
+        line = '<b>' + name + '</b> — <span class="t-exploit">EXPLOITABLE</span> via ' + esc(route2);
+      } else if (vs && vs.reachable) {
+        line = '<b>' + name + '</b> — reachable, not proven exploitable';
+      } else if (likely) {
+        line = '<b>' + name + '</b> — <span class="t-ai">likely reachable (AI-inferred, advisory)</span>';
+      } else if (vs) {
+        line = '<b>' + name + '</b> — vulnerable, not reached';
+      } else {
+        line = '<b>' + name + '</b>' + (a.version ? ' · ' + esc(a.version) : '');
+      }
+    } else {
+      line = '<b>' + esc(n.name || id) + '</b>' +
+        (KIND_EYEBROW[n.kind] ? ' · ' + esc(KIND_EYEBROW[n.kind]) : '');
     }
-    el.tooltip.innerHTML = '<b>' + esc(n.name || n.id) + '</b>' +
-      (extra ? '<br>' + esc(extra) : '') +
-      (vuln ? '<br><span class="t-vuln">' + vuln + '</span>' : '') +
-      '<br><span class="t-id">' + esc(n.id) + '</span>';
+    el.tooltip.innerHTML = line; /* all dynamic pieces went through esc() */
     el.tooltip.hidden = false;
     var bb = node.renderedBoundingBox();
     el.tooltip.style.left = (bb.x1 + bb.w / 2) + "px";
@@ -1979,6 +2825,10 @@
     renderDetailInitial();
     renderVulns();
     renderGraph();
+    // Phase-2 overlay: inject inferred edges (if any for this view) and apply the
+    // current Proven/Likely mode. No-op visuals when there is no enrichment.
+    refreshInferredElements();
+    applyReachMode();
     document.body.classList.toggle("has-vulns", !!(bundleMeta && findings.length));
     document.body.classList.toggle("has-transitive", model.nodes.some(isTransitiveDep));
     document.body.classList.toggle("is-focused", focusedMode);
@@ -2108,8 +2958,11 @@
     var reader = new FileReader();
     reader.onload = function () {
       try {
+        applyViewEnrichment(null); // a loaded file has no live repo — no enrichment
         loadAuto(JSON.parse(reader.result), f.name);
         setActiveView(null); // a loaded file is none of the switcher views
+        updateExposureLegend();
+        updateReachModeUI();
       } catch (err) {
         el.scanname.textContent = "Could not read " + f.name +
           " — expected a scan graph (nodes array) or an audit bundle.";
@@ -2142,14 +2995,13 @@
   /* ---------------------------------------------------------------- views */
   function setActiveView(which) {
     el.viewDemo.setAttribute("aria-pressed", which === "demo" ? "true" : "false");
-    el.viewRedash.setAttribute("aria-pressed", which === "redash" ? "true" : "false");
-    el.viewTransitive.setAttribute("aria-pressed", which === "transitive" ? "true" : "false");
-    el.viewSample.setAttribute("aria-pressed", which === "sample" ? "true" : "false");
+    if (el.viewPlugin) el.viewPlugin.setAttribute("aria-pressed", which === "pluginreports" ? "true" : "false");
   }
 
   // The inline sample (vulnerable-app) — always available, and the only option
   // when the page is opened via file:// (no fetch).
   function showSample() {
+    applyViewEnrichment("sample"); // the inline sample has no live repo — no enrichment
     if (window.SAMPLE_BUNDLE && isBundle(window.SAMPLE_BUNDLE)) {
       loadBundle(window.SAMPLE_BUNDLE, "sample · vulnerable-app · audit");
     } else if (window.SAMPLE_GRAPH) {
@@ -2158,20 +3010,24 @@
       el.reachBody.innerHTML = '<p class="reach-none">No bundled sample found. Use “Load a scan” to open a graph.json or an audit bundle.</p>';
     }
     setActiveView("sample");
+    updateExposureLegend();
+    updateReachModeUI();
+    updateDangerUI();
   }
 
   // Served bundles, fetched lazily on first use and cached. Each is rendered
   // through the normal path; focused mode for big graphs is decided by the
   // existing node-count threshold, not by which bundle this is.
+  // `repo` (optional) names the live warm scan behind a view, used for the
+  // /api/enrichment?repo=<name> overlay fetch. Views without one show no live
+  // enrichment (static bundle only).
   var BUNDLES = {
     demo:   { file: "demo-bundle.json",   label: "ACME API · layered Flask service · audit", btn: el.viewDemo,
+              repo: "acme-api",
               hint: "Open the dashboard from a local web server to load the ACME API demo bundle." },
-    redash: { file: "redash-bundle.json", label: "redash · real-world repo (200 deps) · audit", btn: el.viewRedash,
-              hint: "Open the dashboard from a local web server to load the redash bundle." },
-    transitive: { file: "transitive-bundle.json", label: "transitive-app · npm direct+transitive", btn: el.viewTransitive,
-              hint: "Open the dashboard from a local web server to load the transitive-app bundle." },
-    sample: { file: "healthy-bundle.json", label: "Healthy API · modern FastAPI service · audit", btn: el.viewSample,
-              hint: "Open the dashboard from a local web server to load the Healthy API bundle." }
+    pluginreports: { file: "plugin-reports-bundle.json", label: "Plugin Reports · reflective Jinja2 render · audit", btn: el.viewPlugin,
+              repo: "plugin-reports",
+              hint: "Open the dashboard from a local web server to load the Plugin Reports bundle." }
   };
   var viewToken = 0; // latest requested view wins if fetches resolve out of order
 
@@ -2187,7 +3043,12 @@
            .then(function (r) { if (!r.ok) throw new Error("http " + r.status); return r.json(); })
            .then(function (b) { bundleCache[key] = b; return b; }));
     return ready.then(function (b) {
-      if (token === viewToken) loadBundle(b, spec.label);
+      if (token === viewToken) {
+        applyViewEnrichment(key);      // place the cached overlays (if any) before render
+        loadBundle(b, spec.label);
+        if (spec.repo) { ensureEnrichment(key, token); ensureAttackSurface(key, token); }
+        else { updateExposureLegend(); updateReachModeUI(); updateDangerUI(); }
+      }
       return true;
     }, function () {
       spec.btn.disabled = true;
@@ -2197,14 +3058,78 @@
     });
   }
 
-  el.viewSample.addEventListener("click", function () { showBundle("sample"); });
   el.viewDemo.addEventListener("click", function () { showBundle("demo"); });
-  el.viewRedash.addEventListener("click", function () { showBundle("redash"); });
-  el.viewTransitive.addEventListener("click", function () { showBundle("transitive"); });
+  if (el.viewPlugin) el.viewPlugin.addEventListener("click", function () { showBundle("pluginreports"); });
+
+  // The Proven/Likely toggle, the Exposure toggle, the Danger Overview panel and
+  // the big legend are all gone from the minimal view: AI-advisory states are
+  // always on and folded into the node visual language + the hover tooltip, and
+  // deep detail is delegated to the chat agent. Their functions remain for the
+  // data pipeline but have no controls to wire here.
 
   /* ---------------------------------------------------------------- boot */
   // Default to the served demo bundle (a small, clean showcase app whose deep
   // reachable paths render in full). If the fetch fails (e.g. opened via
   // file://), fall back to the inline sample exactly as before.
+  setupExposureLegend();
   showBundle("demo");
+
+  /* ------------------------------------------------------ presentation mode */
+  // ?demo=1 reveals the UI in stages for a recorded demo (0 graph only, 1 left
+  // rail, 2 right drawer with the first entry point selected, 3 funnel bar).
+  // Space / ArrowRight advance, ArrowLeft goes back; &auto=<ms> auto-advances.
+  // Purely a visibility layer (CSS keyed off root-element classes); no data is touched.
+  (function () {
+    var q = new URLSearchParams(location.search);
+    if (q.get("demo") !== "1") return;
+    var LAST = 3, stage = -1, timer = null;
+    document.documentElement.classList.add("demo");
+
+    function setStage(n) {
+      n = Math.max(0, Math.min(LAST, n));
+      if (n === stage) return;
+      var prev = stage;
+      stage = n;
+      for (var i = 1; i <= LAST; i++) document.documentElement.classList.toggle("demo-s" + i, i === n);
+      var btn = el.eplist.querySelector('.ep[data-id*="documents/import"]') ||
+        Array.prototype.filter.call(el.eplist.querySelectorAll(".ep"), function (b) {
+          return /POST/.test(b.textContent) && b.textContent.indexOf("/documents/import") >= 0;
+        })[0];
+      if (btn) {
+        var on = btn.getAttribute("aria-pressed") === "true";
+        if (n >= 2 && !on) btn.click();            // same handler as the left-hand button
+        else if (n < 2 && on && prev >= 2) btn.click(); // toggles selection back off
+      }
+      followResize();
+    }
+    function step(d) { setStage(stage + d); }
+
+    // Layout reflows over the 0.6s transition; re-fit the graph on every frame
+    // (existing cy.resize + fit-to-spine) so it scales smoothly with its box
+    // instead of snapping once the transition ends.
+    function followResize() {
+      if (REDUCED) { if (cy) { cy.resize(); cy.fit(graphFitEles, GRAPH_PAD); } return; }
+      var t0 = performance.now();
+      (function frame() {
+        if (cy) { cy.resize(); cy.fit(graphFitEles, GRAPH_PAD); }
+        if (performance.now() - t0 < 700) requestAnimationFrame(frame);
+      })();
+    }
+
+    document.addEventListener("keydown", function (e) {
+      var t = e.target, tag = t && t.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || (t && t.isContentEditable)) return;
+      if (e.key === " " || e.key === "ArrowRight") { e.preventDefault(); step(1); }
+      else if (e.key === "ArrowLeft") { e.preventDefault(); step(-1); }
+    });
+
+    var auto = parseInt(q.get("auto"), 10);
+    if (auto > 0) {
+      timer = setInterval(function () {
+        if (stage >= LAST) { clearInterval(timer); return; }
+        step(1);
+      }, auto);
+    }
+    setStage(0);
+  })();
 })();

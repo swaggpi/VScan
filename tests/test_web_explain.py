@@ -123,10 +123,15 @@ def test_offline_reachable_does_not_claim_exploitable():
     assert "5.4" in remediation
 
 
-def test_offline_not_reached_says_not_exploitable_from_outside():
+def test_offline_not_reached_states_reachability_not_safety():
+    # Honesty: the not-reached narrative makes a REACHABILITY statement and a
+    # lower-bound caveat -- it must never assert the finding is "not exploitable"
+    # (static non-reachability is not a proof of safety).
     narrative, _ = explain_mod.offline_explanation(_not_reached(), "not_reached")
     lowered = narrative.lower()
-    assert "no entry point" in lowered and "not exploitable" in lowered
+    assert "not exploitable" not in lowered
+    assert "reach" in lowered  # it is phrased as reachability, not exploitability
+    assert "lower bound" in lowered or "not a proof of safety" in lowered
 
 
 def test_offline_remediation_handles_missing_fixed_versions():
@@ -219,6 +224,15 @@ def test_claims_exploitable_flags_affirmative_not_negated():
     assert claims("The attacker can reach the vulnerable function.")
     assert claims("A real source -> sink path exists.")
     assert claims("This allows arbitrary code execution.")
+    # Broadened guard: more affirmative phrasings are now caught.
+    assert claims("This can be exploited by a remote user.")
+    assert claims("An attacker could simply exploit this flaw.")
+    assert claims("This leads to remote code execution.")
+    assert claims("The bug results in arbitrary code execution.")
+    assert claims("This gives an attacker RCE on the host.")
+    assert claims("The attacker can inject a shell command here.")
+    assert claims("The attacker can run arbitrary commands.")
+    assert claims("The handler is vulnerable to SSTI and can be abused remotely.")
     # Negated / safe phrasing -> NOT flagged (common reachable-tier wording).
     assert not claims("reachable but not proven exploitable")
     assert not claims("no proven taint path was found")
@@ -226,25 +240,47 @@ def test_claims_exploitable_flags_affirmative_not_negated():
     assert not claims("the attacker can't reach the sink")
     assert not claims("exploitability is unconfirmed")
     assert not claims("it does not allow arbitrary code execution")
+    assert not claims("this cannot be exploited from outside")
+    assert not claims("there is no remote code execution risk here")
     assert not claims("")
 
 
-def test_response_body_shape_and_model_label(monkeypatch):
+_BODY_KEYS = {
+    "dependency_id",
+    "vuln_id",
+    "dependency_name",
+    "cve_ids",
+    "verdict",
+    "narrative",
+    "remediation",
+    "provenance",
+    "model",
+}
+
+
+def test_response_body_shape_and_llm_model_label(monkeypatch):
+    # When the model actually produced the prose, the branded label is shown.
     monkeypatch.setenv("LLM_MODEL", "llama-4-maverick")
-    out = explain_mod.explain_finding(_exploitable(), _StubClient(None, available=False))
-    assert set(out) == {
-        "dependency_id",
-        "vuln_id",
-        "dependency_name",
-        "cve_ids",
-        "verdict",
-        "narrative",
-        "remediation",
-        "provenance",
-        "model",
-    }
+    out = explain_mod.explain_finding(
+        _exploitable(), _StubClient({"narrative": "N", "remediation": "R"})
+    )
+    assert set(out) == _BODY_KEYS
     assert out["cve_ids"] == ["CVE-2020-1747"]
+    assert out["provenance"] == "llm"
     assert out["model"] == "Meta Muse (llama-4-maverick)"
+
+
+def test_offline_path_does_not_show_model_brand(monkeypatch):
+    # Honesty (Fix 5): on the offline-heuristic path no model ran, so the
+    # ``model`` field must NOT name "Meta Muse" beside an offline analysis.
+    monkeypatch.setenv("LLM_MODEL", "llama-4-maverick")
+    out = explain_mod.explain_finding(
+        _exploitable(), _StubClient(None, available=False)
+    )
+    assert set(out) == _BODY_KEYS
+    assert out["provenance"] == "offline-heuristic"
+    assert out["model"] == "offline heuristic"
+    assert "Meta Muse" not in out["model"]
 
 
 def test_model_label_without_env(monkeypatch):
@@ -265,10 +301,11 @@ def test_find_finding_matches_on_both_keys():
 # -- endpoint routing (200 / 404 / 503) ---------------------------------------
 
 
-def _scan(status: str, findings: list[dict[str, Any]]):
-    from scanner.web.app import _ScanState
+def _scan(status: str, findings: list[dict[str, Any]], repo_path: str = ""):
+    from scanner.web.app import _ScanState, _repo_name
 
-    state = _ScanState(repo="acme-api")
+    repo = _repo_name(repo_path) if repo_path else "acme-api"
+    state = _ScanState(repo=repo, repo_path=repo_path)
     if status == "ready":
         state.set_ready(
             findings_total=len(findings),
@@ -285,7 +322,10 @@ def test_endpoint_returns_explanation_for_match(monkeypatch):
     from scanner.web import app as app_mod
 
     finding = _exploitable()
-    app_mod.app.state.scans = [_scan("ready", [finding])]
+    scan = _scan("ready", [finding])
+    # No ``repo`` param -> the primary scan (``app.state.scan``).
+    app_mod.app.state.scan = scan
+    app_mod.app.state.scans = [scan]
     # Force the offline path so no network is touched.
     monkeypatch.setattr(app_mod, "LLMClient", lambda: _StubClient(None, available=False))
 
@@ -297,12 +337,14 @@ def test_endpoint_returns_explanation_for_match(monkeypatch):
     assert out["provenance"] == "offline-heuristic"
 
 
-def test_endpoint_404_when_absent_and_all_warmed():
+def test_endpoint_404_when_absent_in_ready_primary():
     from fastapi import HTTPException
 
     from scanner.web import app as app_mod
 
-    app_mod.app.state.scans = [_scan("ready", [_exploitable()])]
+    scan = _scan("ready", [_exploitable()])
+    app_mod.app.state.scan = scan
+    app_mod.app.state.scans = [scan]
     req = app_mod.ExplainRequest(dependency_id="dep:PyPI:PyYAML", vuln_id="missing")
     with pytest.raises(HTTPException) as exc:
         app_mod.explain(req)
@@ -310,15 +352,69 @@ def test_endpoint_404_when_absent_and_all_warmed():
     assert exc.value.detail == "finding not in live scan"
 
 
-def test_endpoint_503_while_still_warming():
+def test_endpoint_503_while_primary_still_warming():
     from fastapi import HTTPException
 
     from scanner.web import app as app_mod
 
-    # One scan still warming, another ready but without the finding.
-    app_mod.app.state.scans = [_scan("scanning", []), _scan("ready", [])]
+    # The primary scan is still warming -> nothing to look the finding up in yet.
+    scanning = _scan("scanning", [])
+    app_mod.app.state.scan = scanning
+    app_mod.app.state.scans = [scanning, _scan("ready", [])]
     req = app_mod.ExplainRequest(dependency_id="dep:PyPI:PyYAML", vuln_id="whatever")
     with pytest.raises(HTTPException) as exc:
         app_mod.explain(req)
     assert exc.value.status_code == 503
     assert exc.value.detail == "scan not ready"
+
+
+# -- per-repo routing (?repo= selects a warmed scan by repo_path basename) -----
+
+
+def _secondary_finding() -> dict[str, Any]:
+    # Same (dependency_id, vuln_id) as _exploitable(), but a DIFFERENT verdict,
+    # so cross-resolution between repos is observable in the response.
+    finding = _exploitable()
+    finding["taint"] = "not_proven"
+    finding["taint_evidence"] = None
+    finding["reachable"] = False
+    finding["reachable_entrypoints"] = []
+    finding["example_path"] = []
+    return finding
+
+
+def test_endpoint_repo_param_uses_matched_scan_not_primary(monkeypatch):
+    from scanner.web import app as app_mod
+
+    monkeypatch.setattr(app_mod, "LLMClient", lambda: _StubClient(None, available=False))
+    primary = _scan("ready", [_exploitable()], repo_path="/app/samples/acme-api")
+    secondary = _scan(
+        "ready", [_secondary_finding()], repo_path="/app/samples/plugin-reports"
+    )
+    app_mod.app.state.scan = primary
+    app_mod.app.state.scans = [primary, secondary]
+
+    req = app_mod.ExplainRequest(
+        dependency_id="dep:PyPI:PyYAML", vuln_id="GHSA-6757-jp84-gxfx"
+    )
+    # Same ids resolve to the PRIMARY with no param (exploitable)...
+    assert app_mod.explain(req)["verdict"] == "exploitable"
+    # ... and to the SECONDARY scan's own finding when ?repo= selects it.
+    assert app_mod.explain(req, repo="plugin-reports")["verdict"] == "not_reached"
+
+
+def test_endpoint_repo_param_unknown_404():
+    from fastapi import HTTPException
+
+    from scanner.web import app as app_mod
+
+    primary = _scan("ready", [_exploitable()], repo_path="/app/samples/acme-api")
+    app_mod.app.state.scan = primary
+    app_mod.app.state.scans = [primary]
+    req = app_mod.ExplainRequest(
+        dependency_id="dep:PyPI:PyYAML", vuln_id="GHSA-6757-jp84-gxfx"
+    )
+    with pytest.raises(HTTPException) as exc:
+        app_mod.explain(req, repo="does-not-exist")
+    assert exc.value.status_code == 404
+    assert exc.value.detail == "unknown repo"

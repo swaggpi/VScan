@@ -5,7 +5,10 @@
 (function () {
   "use strict";
 
-  var ENDPOINT = "/api/chat";
+  // The chat page is the PRIMARY-project assistant, so the repo is explicit on
+  // the endpoint — the backend resolves findings against this scan, not whichever
+  // one happens to be primary server-side.
+  var ENDPOINT = "/api/chat?repo=acme-api";
   var TIMEOUT_MS = 120000;
   var STARTERS = [
     "What's actually exploitable in this project?",
@@ -225,4 +228,17 @@
 
   autosize();
   input.focus();
+
+  /* Bridge from the dashboard's "Ask the agent" buttons: a ?q=<question> in the
+     URL pre-fills the composer and auto-sends it once, so a pop-out can hand the
+     conversation a grounded question. Any extra text the user types still routes
+     through the same send flow. */
+  try {
+    var q = new URLSearchParams(location.search).get("q");
+    if (q && q.trim()) {
+      input.value = q;
+      autosize();
+      send(q);
+    }
+  } catch (e) { /* no URLSearchParams / blocked — the page still works manually */ }
 })();

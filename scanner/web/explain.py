@@ -136,8 +136,9 @@ _SYSTEM_PROMPT = (
     "source, sink, CVE, version, or fix that is not in the facts.\n"
     "- Do not change the verdict. If the facts say the vulnerable code is "
     "reachable but attacker input was NOT proven to reach it, do NOT claim it "
-    "is exploitable. If the facts say nothing reaches the package, say it is "
-    "not exploitable from outside.\n"
+    "is exploitable. If the facts say nothing reaches the package, say static "
+    "analysis found no resolved public call path reaching it (a lower bound, "
+    "not a proof of safety) -- never claim it is or is not exploitable.\n"
     "- Keep it concrete and short (a few sentences each). No markdown headings.\n"
     "- Respond with STRICT JSON and nothing else: "
     '{"narrative": "<string>", "remediation": "<string>"}.'
@@ -185,9 +186,10 @@ def _facts_block(finding: dict[str, Any], verdict: str) -> str:
             + (" -> ".join(str(h) for h in path) if path else "unknown")
         )
     else:  # NOT_REACHED
-        lines.append("reachability: NO entry point reaches this package in the "
-                     "scanned code, so the vulnerability is not exploitable from "
-                     "outside this application as built.")
+        lines.append("reachability: no resolved public call path reaches this "
+                     "package in the scanned code, so static analysis did not "
+                     "find it reachable. This is a lower bound, not a proof of "
+                     "safety -- do not claim it is (or is not) exploitable.")
 
     return "\n".join(lines)
 
@@ -211,10 +213,12 @@ def build_prompt(finding: dict[str, Any], verdict: str) -> tuple[str, str]:
         )
     else:
         ask = (
-            "Write a narrative that says the CVE exists in this dependency but no "
-            "entry point reaches the package, so it is not exploitable from "
-            "outside this application as built. Then write a remediation that "
-            "upgrades to a fixed version for defense-in-depth / future-proofing."
+            "Write a narrative that says the CVE exists in this dependency but "
+            "no resolved public call path reaches the package in the scanned "
+            "code, so static analysis did not find it reachable. Make clear this "
+            "is a lower bound, not a proof of safety, and do NOT claim it is (or "
+            "is not) exploitable. Then write a remediation that upgrades to a "
+            "fixed version for defense-in-depth / future-proofing."
         )
 
     user = (
@@ -298,10 +302,10 @@ def offline_explanation(
     else:  # NOT_REACHED
         narrative = (
             f"{dep} is affected by {cve}{sev_clause}: {summary}. "
-            "No entry point in the scanned code reaches this package, so the "
-            "vulnerability is not exploitable from outside this application as "
-            "built. It remains a latent risk if the code later starts calling "
-            "into the affected package."
+            "No resolved public call path reaches this package in the scanned "
+            "code, so static analysis did not find it reachable. This is a lower "
+            "bound, not a proof of safety. It remains a latent risk if the code "
+            "later starts calling into the affected package."
         )
 
     return narrative, _remediation_text(finding, verdict)
@@ -338,17 +342,23 @@ _NEGATION = re.compile(
 # when no negation sits in its negation window (see :func:`_claims_exploitable`).
 _EXPLOIT_CLAIMS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bexploitable\b", re.IGNORECASE),
+    re.compile(r"\bcan\s+be\s+exploited\b", re.IGNORECASE),
+    re.compile(r"\bexploit\s+this\b", re.IGNORECASE),
     re.compile(r"\bproven\s+(?:taint|exploit|flow|path)", re.IGNORECASE),
     re.compile(r"\bsource\s*(?:->|→|to)\s*sink\b", re.IGNORECASE),
-    re.compile(
-        r"\b(?:can|could|able\s+to|allow(?:s|ed)?|enabl(?:e|es|ed)|leads?\s+to|"
-        r"results?\s+in|achiev(?:e|es|ed)|triggers?)\b[^.!?\n]{0,40}?"
-        r"\barbitrary\s+code\s+execution\b",
-        re.IGNORECASE,
-    ),
+    # Remote / arbitrary code execution asserted of the shown code (standalone,
+    # so a bare "arbitrary code execution" or "RCE" also counts), plus the
+    # common abbreviation. Negation-awareness still clears "no RCE" etc.
+    re.compile(r"\b(?:remote|arbitrary)\s+code\s+execution\b", re.IGNORECASE),
+    re.compile(r"\bRCE\b", re.IGNORECASE),
     re.compile(
         r"\battacker\b[^.!?\n]{0,30}?\b(?:can|is\s+able\s+to|able\s+to|proven)\b"
-        r"[^.!?\n]{0,30}?\b(?:execute|reach)\b",
+        r"[^.!?\n]{0,30}?\b(?:execute|reach|run|inject)\b",
+        re.IGNORECASE,
+    ),
+    # "is vulnerable to <X> and can be [exploited/...]" -- a compound affirmative.
+    re.compile(
+        r"\bvulnerable\s+to\b[^.!?\n]{0,80}?\band\s+can\s+be\b",
         re.IGNORECASE,
     ),
 )
@@ -444,5 +454,7 @@ def explain_finding(finding: dict[str, Any], client: Any) -> dict[str, Any]:
         "narrative": narrative,
         "remediation": remediation,
         "provenance": provenance,
-        "model": model_label(),
+        # Honest label: only name the model when it actually produced the prose.
+        # On the offline-heuristic path no model ran, so never show the brand.
+        "model": model_label() if provenance == "llm" else "offline heuristic",
     }

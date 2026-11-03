@@ -435,10 +435,28 @@ def _build_bundle(
                 k: v for k, v in ep["verdict_by_dep"].items() if k in vuln_ids
             }
     repo_roll = reachability.get("repo")
-    if isinstance(repo_roll, dict) and "verdict_by_dep" in repo_roll:
-        repo_roll["verdict_by_dep"] = {
-            k: v for k, v in repo_roll["verdict_by_dep"].items() if k in vuln_ids
-        }
+    if isinstance(repo_roll, dict):
+        if "verdict_by_dep" in repo_roll:
+            repo_roll["verdict_by_dep"] = {
+                k: v for k, v in repo_roll["verdict_by_dep"].items() if k in vuln_ids
+            }
+        # Trim the repo roll-up dep lists to the same vulnerable scope so the
+        # serialized reachability is internally consistent with the per-finding
+        # view above (the live reach object / CLI / MCP keep the full scope).
+        for _key in ("reachable_deps", "unreachable_deps", "deps_without_call_site"):
+            if isinstance(repo_roll.get(_key), list):
+                repo_roll[_key] = [
+                    d
+                    for d in repo_roll[_key]
+                    if not isinstance(d, dict) or d.get("id") in vuln_ids
+                ]
+        # Recompute verdict_counts from the trimmed verdict_by_dep so the counts
+        # match the trimmed maps/lists rather than the full declared scope.
+        if "verdict_counts" in repo_roll:
+            counts: dict[str, int] = {}
+            for _verdict in repo_roll.get("verdict_by_dep", {}).values():
+                counts[_verdict] = counts.get(_verdict, 0) + 1
+            repo_roll["verdict_counts"] = counts
     return {
         "graph": graph.to_dict(),
         "reachability": reachability,

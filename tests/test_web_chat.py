@@ -432,3 +432,95 @@ def test_real_registry_exposes_only_the_eight_read_only_tools():
         assert "refresh" not in props
         assert "offline" not in props
     assert set(dispatch) == names
+
+
+# -- endpoint routing (?repo= selects a warmed scan by repo_path basename) -----
+#
+# These exercise the thin ``/api/chat`` transport in :mod:`scanner.web.app`: it
+# resolves the optional ``repo`` param to a warmed scan (no param -> primary;
+# given -> match by basename; unknown -> 404; not ready -> 503) and runs the
+# agent over the MATCHED scan's ``repo_path``. ``run_chat`` itself is stubbed so
+# no model/registry is built and no network is touched.
+
+
+def _chat_scan(status: str, repo_path: str):
+    from scanner.web.app import _ScanState, _repo_name
+
+    state = _ScanState(repo=_repo_name(repo_path), repo_path=repo_path)
+    if status == "ready":
+        state.set_ready(findings_total=0, exploitable=0, findings=[])
+    return state
+
+
+def _stub_chat_endpoint(monkeypatch):
+    """Stub out ``run_chat`` (capturing ``repo_path``), the registry and client."""
+    from scanner.web import app as app_mod
+
+    captured: dict[str, Any] = {}
+
+    def _fake_run_chat(messages, client, *, repo_path, registry, **kwargs):
+        captured["repo_path"] = repo_path
+        return {"reply": "ok", "tool_calls": [], "model": "stub"}
+
+    monkeypatch.setattr(app_mod.chat_mod, "run_chat", _fake_run_chat)
+    monkeypatch.setattr(app_mod, "_chat_registry", lambda: None)
+    monkeypatch.setattr(app_mod, "LLMClient", lambda: object())
+    return app_mod, captured
+
+
+def test_chat_endpoint_no_param_uses_primary(monkeypatch):
+    app_mod, captured = _stub_chat_endpoint(monkeypatch)
+    primary = _chat_scan("ready", "/app/samples/acme-api")
+    secondary = _chat_scan("ready", "/app/samples/plugin-reports")
+    app_mod.app.state.scan = primary
+    app_mod.app.state.scans = [primary, secondary]
+
+    req = app_mod.ChatRequest(messages=[app_mod.ChatMessage(role="user", content="hi")])
+    out = app_mod.chat(req)
+    assert out["reply"] == "ok"
+    assert captured["repo_path"] == "/app/samples/acme-api"
+
+
+def test_chat_endpoint_repo_param_selects_secondary(monkeypatch):
+    app_mod, captured = _stub_chat_endpoint(monkeypatch)
+    primary = _chat_scan("ready", "/app/samples/acme-api")
+    secondary = _chat_scan("ready", "/app/samples/plugin-reports")
+    app_mod.app.state.scan = primary
+    app_mod.app.state.scans = [primary, secondary]
+
+    req = app_mod.ChatRequest(messages=[app_mod.ChatMessage(role="user", content="hi")])
+    out = app_mod.chat(req, repo="plugin-reports")
+    assert out["reply"] == "ok"
+    # The agent ran over the MATCHED (secondary) scan, not the primary.
+    assert captured["repo_path"] == "/app/samples/plugin-reports"
+
+
+def test_chat_endpoint_unknown_repo_404(monkeypatch):
+    from fastapi import HTTPException
+
+    app_mod, _ = _stub_chat_endpoint(monkeypatch)
+    primary = _chat_scan("ready", "/app/samples/acme-api")
+    app_mod.app.state.scan = primary
+    app_mod.app.state.scans = [primary]
+
+    req = app_mod.ChatRequest(messages=[app_mod.ChatMessage(role="user", content="hi")])
+    with pytest.raises(HTTPException) as exc:
+        app_mod.chat(req, repo="does-not-exist")
+    assert exc.value.status_code == 404
+    assert exc.value.detail == "unknown repo"
+
+
+def test_chat_endpoint_matched_but_not_ready_503(monkeypatch):
+    from fastapi import HTTPException
+
+    app_mod, _ = _stub_chat_endpoint(monkeypatch)
+    primary = _chat_scan("ready", "/app/samples/acme-api")
+    secondary = _chat_scan("scanning", "/app/samples/plugin-reports")
+    app_mod.app.state.scan = primary
+    app_mod.app.state.scans = [primary, secondary]
+
+    req = app_mod.ChatRequest(messages=[app_mod.ChatMessage(role="user", content="hi")])
+    with pytest.raises(HTTPException) as exc:
+        app_mod.chat(req, repo="plugin-reports")
+    assert exc.value.status_code == 503
+    assert exc.value.detail == "scan not ready"
