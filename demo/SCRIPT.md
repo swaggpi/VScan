@@ -3,7 +3,7 @@
 Target: **2:55**. Hard limit 3:00. ~430 words at ~150 wpm.
 
 Segment boundaries (the recorded clips line up with these):
-`seg1 0:00–0:48 · seg2 0:48–1:53 · seg3 1:53–2:10 · seg4 2:10–2:25 · seg5 2:25–2:41 · seg6 2:41–2:55`
+`seg1 0:00–0:44 · seg2 0:44–1:45 · seg3 1:45–2:03 · seg7 2:03–2:16 (Plugin Reports) · seg4 2:16–2:31 (chat) · seg5 2:31–2:42 · seg6 2:42–2:56`
 
 Read the voiceover from `demo/teleprompter.html` (open it in a browser, press
 Space to start). Every number below is from a real run on `samples/acme-api`;
@@ -40,15 +40,14 @@ Terminal: large font, dark background, nothing but the prompt.
 **Screen:** `vscan audit samples/acme-api` — let it run live, it takes ~14s.
 Land on the Summary + Funnel lines.
 
-> VScan builds a call graph of the repo with tree-sitter, traces every public
-> route into your dependencies, and then runs taint analysis to see whether
-> attacker-controlled input actually reaches the vulnerable call.
+> VScan builds a call graph with tree-sitter, and traces every public route
+> into your dependencies, then runs taint analysis to see whether
+> attacker-controlled input reaches the vulnerable call.
 > Nineteen dependencies. A hundred and forty-five CVEs. Sixteen reachable.
 > One where the vulnerable function is really called — and that one is
-> genuinely exploitable.
-> It's honest about the gap, too: sixty-eight percent of call sites resolve,
-> and whatever it can't resolve is flagged potentially reachable, never
-> dismissed.
+> exploitable.
+> It's honest about the gap: sixty-eight percent of call sites resolve, and the
+> rest are flagged potentially reachable, never dismissed.
 
 ## Beat 3 — The graph, staged (0:40 – 1:36)
 
@@ -83,8 +82,7 @@ cue below.
 **Stage 3 — press → , funnel bar (1:25 – 1:36)**
 
 > A conventional scanner hands you a hundred and forty-five alerts. VScan
-> proves one is exploitable. That's a ninety-nine percent cut in what you have
-> to read.
+> proves one is exploitable.
 
 ## Beat 4 — Muse (1:36 – 2:21)
 
@@ -98,7 +96,15 @@ CVE-2024-35195), then to `chat.html`.
 > Muse triages every reachable CVE at symbol level — here it clears `requests`
 > CVE-2024-35195, because the project only calls `requests.post` and never
 > reuses a pooled `Session`, which is what that CVE needs.
-> It also reads your docs to judge which routes are internet-facing.
+> And it only gets to say that when the CVE names a function the code
+> demonstrably never calls.
+
+**Screen:** switch to the **Plugin Reports** scan.
+
+> On a second project, it reads your docs to judge which routes are
+> internet-facing.
+> And where static analysis hits dynamic dispatch, Muse proposes the edges it
+> can't resolve — marked likely, never proven.
 > And you can just ask it.
 
 **Screen:** chat — send "What's actually exploitable in this project?"
@@ -114,18 +120,17 @@ let the tool-call list show under it.
 **Screen:** the generated PR comment markdown, then the SARIF in GitHub code
 scanning, then `--fail-on`.
 
-> It runs where you work. A GitHub Action posts the reachability-aware comment
-> on every pull request, uploads SARIF to code scanning, and
-> `--fail-on reachable` gates CI — so you block the build on an exploitable
-> path, not on a CVE count.
+> It runs where you work: a GitHub Action posts this reachability-aware comment
+> on every pull request, uploads SARIF to code scanning, and gates CI on an
+> exploitable path, not a CVE count.
 
 ## Beat 6 — Close (2:42 – 2:58)
 
 **Screen:** repo README, then the funnel one more time.
 
-> Everything here was built during the hackathon: the call-graph scanner, the
-> taint engine, the four Muse layers, the MCP server, the Action and this
-> dashboard — all open source.
+> Everything here was built during the hackathon: the scanner, the taint
+> engine, the four Muse layers, the MCP server, the Action and this dashboard —
+> all open source.
 > One hundred and forty-five alerts in. One that matters out.
 
 ---
