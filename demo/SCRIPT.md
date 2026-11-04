@@ -1,9 +1,9 @@
 # VScan — 3-minute demo script
 
-Target: **2:55**. Hard limit 3:00. ~430 words at ~150 wpm.
+Target: **2:51**. Hard limit 3:00. ~430 words at ~150 wpm.
 
 Segment boundaries (the recorded clips line up with these):
-`seg1 0:00–0:44 · seg2 0:44–1:45 · seg3 1:45–2:03 · seg7 2:03–2:16 (Plugin Reports) · seg4 2:16–2:31 (chat) · seg5 2:31–2:42 · seg6 2:42–2:56`
+`seg0 0:00–0:14 (intro card) · seg1 0:14–0:48 · seg2 0:48–1:43 · seg3 1:43–2:01 · seg7 2:01–2:14 (Plugin Reports) · seg4 2:14–2:28 (chat) · seg5 2:28–2:38 · seg6 2:38–2:51`
 
 Read the voiceover from `demo/teleprompter.html` (open it in a browser, press
 Space to start). Every number below is from a real run on `samples/acme-api`;
@@ -25,15 +25,30 @@ Terminal: large font, dark background, nothing but the prompt.
 
 ---
 
-## Beat 1 — The problem (0:00 – 0:14)
+## Beat 0 — Why now (0:00 – 0:14)
 
-**Screen:** terminal. Run a plain `pip-audit`-style list, or scroll the raw
-`vscan audit samples/acme-api` findings fast so the wall of CVEs flies past.
+**Screen:** a still, typographic card. Three statements fade in one after
+another and stay. Sources shown small and dim beneath each.
 
-> Here's the dependency scan for a small Flask service. A hundred and
-> forty-five known CVEs. Every one of them is real. And almost none of them are
-> reachable from the app's public routes.
-> That's the job: finding the ones that are.
+> AI is finding vulnerabilities faster than anyone can triage them. Twenty
+> twenty-six is on track for about sixty-six thousand CVEs — roughly double
+> last year.
+> But volume isn't risk. Of a thousand AI-assisted findings, fourteen were ever
+> seen exploited.
+> So the hard part isn't finding flaws any more. It's knowing which one reaches
+> your code — and turns a request into a shell.
+
+The two figures are attributed on screen (FIRST's 2026 forecast; VulnCheck).
+Published counts for 2026 vary by source and date — these two are the ones the
+card cites, and nothing is rounded or embellished beyond what they say.
+
+## Beat 1 — The noise (0:14 – 0:20)
+
+**Screen:** terminal. Scroll the raw `vscan audit samples/acme-api` findings
+fast so the wall of CVEs flies past.
+
+> Here's that problem in one small Flask service: a hundred and forty-five
+> known CVEs, and no idea which of them matter.
 
 ## Beat 2 — The scan (0:14 – 0:40)
 
@@ -46,8 +61,8 @@ Land on the Summary + Funnel lines.
 > Nineteen dependencies. A hundred and forty-five CVEs. Sixteen reachable.
 > One where the vulnerable function is really called — and that one is
 > exploitable.
-> It's honest about the gap: sixty-eight percent of call sites resolve, and the
-> rest are flagged potentially reachable, never dismissed.
+> Sixty-eight percent of call sites resolve; the rest are flagged, not
+> dismissed.
 
 ## Beat 3 — The graph, staged (0:40 – 1:36)
 
@@ -120,9 +135,9 @@ let the tool-call list show under it.
 **Screen:** the generated PR comment markdown, then the SARIF in GitHub code
 scanning, then `--fail-on`.
 
-> It runs where you work: a GitHub Action posts this reachability-aware comment
-> on every pull request, uploads SARIF to code scanning, and gates CI on an
-> exploitable path, not a CVE count.
+> It runs where you work: a GitHub Action posts this comment on every pull
+> request, uploads SARIF to code scanning, and gates CI on an exploitable path,
+> not a CVE count.
 
 ## Beat 6 — Close (2:42 – 2:58)
 
@@ -131,7 +146,7 @@ scanning, then `--fail-on`.
 > Everything here was built during the hackathon: the scanner, the taint
 > engine, the four Muse layers, the MCP server, the Action and this dashboard —
 > all open source.
-> One hundred and forty-five alerts in. One that matters out.
+> A hundred and forty-five alerts in. One that matters out.
 
 ---
 

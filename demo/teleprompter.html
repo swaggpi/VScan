@@ -115,25 +115,27 @@
 <script>
 // Each line: [seconds, text, cue?]  — cue shows the screen action to take as the line starts.
 const SCRIPT = [
-  ["Beat 1 · the problem", [
-    [6, "Here's the dependency scan for a small Flask service. A hundred and forty-five known CVEs.", "TERMINAL · scroll the CVE wall"],
-    [5, "Every one of them is real. And almost none are reachable from the app's public routes."],
-    [3, "That's the job: finding the ones that are."],
+  ["Beat 0 · why now", [
+    [5, "AI is finding vulnerabilities faster than anyone can triage them. 2026 is on track for about sixty-six thousand CVEs — roughly double last year.", "CARD · the AI-CVE surge"],
+    [4, "But volume isn't risk. Of a thousand AI-assisted findings, fourteen were ever seen exploited."],
+    [5, "So the hard part isn't finding flaws any more. It's knowing which one reaches your code — and turns a request into a shell."],
+  ]],
+  ["Beat 1 · the noise", [
+    [6, "Here's that problem in one small Flask service: a hundred and forty-five known CVEs, and no idea which of them matter.", "TERMINAL · scroll the CVE wall"],
   ]],
   ["Beat 2 · the scan", [
     [7, "VScan builds a call graph with tree-sitter, and traces every public route into your dependencies,", "RUN · vscan audit samples/acme-api"],
     [6, "then runs taint analysis to see whether attacker-controlled input reaches the vulnerable call."],
     [6, "Nineteen dependencies. A hundred and forty-five CVEs. Sixteen reachable.", "LAND ON · the Funnel line"],
     [5, "One where the vulnerable function is really called — and that one is exploitable."],
-    [6, "It's honest about the gap: sixty-eight percent of call sites resolve, and the rest are flagged potentially reachable, never dismissed."],
+    [4, "Sixty-eight percent of call sites resolve; the rest are flagged, not dismissed."],
   ]],
   ["Beat 3 · the graph", [
     [8, "This is the whole attack surface. Public entry points on the left, your functions in the middle, dependencies on the right.", "SWITCH · dashboard ?demo=1 (stage 0)"],
-    [3, "Grey means a package has a CVE that nothing reaches."],
-    [4, "Ten public routes do reach a vulnerable package.", "PRESS → · left panel in"],
-    [5, "These are the ones worth your afternoon — everything else is noise."],
+    [4, "Ten public routes reach a vulnerable package.", "PRESS → · left panel in"],
+    [3, "These are the ones worth your afternoon."],
     [5, "Here's the one that matters. POST /documents/import takes the request body,", "PRESS → · drawer + path"],
-    [6, "hands it through two service layers into a config loader, and calls yaml.full_load on it —"],
+    [5, "hands it through two service layers into a config loader, and calls yaml.full_load on it —"],
     [5, "PyYAML 5.3.1, CVE-2020-14343, arbitrary code execution."],
     [7, "That chain is the proof: attacker input to vulnerable call, rendered straight from the call graph."],
     [7, "A conventional scanner hands you a hundred and forty-five alerts. VScan proves one is exploitable.", "PRESS → · funnel bar in"],
@@ -148,15 +150,15 @@ const SCRIPT = [
     [8, "And where static analysis hits dynamic dispatch, Muse proposes the edges it can't resolve — marked likely, never proven."],
     [3, "And you can just ask it.", "SWITCH · chat.html, send the question"],
     [6, "Muse answers by calling VScan's own tools over MCP, and it shows you every call it made.", "CUT · jump to the rendered answer"],
-    [6, "Nothing it says can change a verdict — the model advises, the static analysis decides."],
+    [5, "Nothing it says can change a verdict — the model advises, the static analysis decides."],
   ]],
   ["Beat 5 · shipping it", [
-    [6, "It runs where you work: a GitHub Action posts this reachability-aware comment on every pull request,", "SWITCH · PR comment"],
+    [5, "It runs where you work: a GitHub Action posts this comment on every pull request,", "SWITCH · PR comment"],
     [5, "uploads SARIF to code scanning, and gates CI on an exploitable path, not a CVE count."],
   ]],
   ["Beat 6 · close", [
-    [9, "Everything here was built during the hackathon: the scanner, the taint engine, the four Muse layers, the MCP server, the Action and this dashboard — all open source.", "SWITCH · README"],
-    [5, "One hundred and forty-five alerts in. One that matters out.", "SWITCH · the funnel, hold"],
+    [8, "Everything here was built during the hackathon: the scanner, the taint engine, the four Muse layers, the MCP server, the Action and this dashboard — all open source.", "SWITCH · README"],
+    [5, "A hundred and forty-five alerts in. One that matters out.", "SWITCH · the funnel, hold"],
   ]],
 ];
 
