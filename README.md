@@ -113,6 +113,14 @@ Built for the Meta Global AI Developer Hackathon. The repository starts from an 
 - OSV matching needs exact pinned versions. Unpinned dependencies are reported as skipped, not as clean.
 - The AI layers are advisory and can be wrong. They are labelled as such everywhere they appear, and they cannot change a verdict.
 
-## License
+## Self-scan
 
-MIT.
+VScan runs against its own repository on every pull request and on pushes to
+`main` (`.github/workflows/vscan.yml`, consuming the action with `uses: ./`).
+It uploads SARIF to code scanning and posts the funnel as a PR comment.
+
+Note what that scan covers: the repo bundles deliberately vulnerable fixture
+apps under `samples/`, and the reachable findings it reports come from those,
+not from VScan's own dependencies. The gate is set to `fail-on: tainted`, so
+CI blocks on a proven attacker-input-to-vulnerable-call path rather than on a
+CVE count.

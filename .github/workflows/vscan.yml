@@ -27,4 +27,4 @@ jobs:
       - uses: ./
         with:
           path: .
-          fail-on: reachable
+          fail-on: tainted
