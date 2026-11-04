@@ -1,6 +1,9 @@
 # VScan — 3-minute demo script
 
-Target: **2:58**. Hard limit 3:00. ~430 words at ~150 wpm.
+Target: **2:51**. Hard limit 3:00. ~430 words at ~150 wpm.
+
+Segment boundaries (the recorded clips line up with these):
+`seg0 0:00–0:14 (intro card) · seg1 0:14–0:48 · seg2 0:48–1:43 · seg3 1:43–2:01 · seg7 2:01–2:14 (Plugin Reports) · seg4 2:14–2:28 (chat) · seg5 2:28–2:38 · seg6 2:38–2:51`
 
 Read the voiceover from `demo/teleprompter.html` (open it in a browser, press
 Space to start). Every number below is from a real run on `samples/acme-api`;
@@ -22,27 +25,44 @@ Terminal: large font, dark background, nothing but the prompt.
 
 ---
 
-## Beat 1 — The problem (0:00 – 0:14)
+## Beat 0 — Why now (0:00 – 0:14)
 
-**Screen:** terminal. Run a plain `pip-audit`-style list, or scroll the raw
-`vscan audit samples/acme-api` findings fast so the wall of CVEs flies past.
+**Screen:** a still, typographic card. Three statements fade in one after
+another and stay. Sources shown small and dim beneath each.
 
-> Here's the dependency scan for a small Flask service. A hundred and
-> forty-five known CVEs. Every one of them is real. And almost none of them
-> matter, because nothing in this codebase ever calls the vulnerable code.
-> That's the job: finding the one that does.
+> AI is finding vulnerabilities faster than anyone can triage them. Twenty
+> twenty-six is on track for about sixty-six thousand CVEs — roughly double
+> last year.
+> But volume isn't risk. Of a thousand AI-assisted findings, fourteen were ever
+> seen exploited.
+> So the hard part isn't finding flaws any more. It's knowing which one reaches
+> your code — and turns a request into a shell.
+
+The two figures are attributed on screen (FIRST's 2026 forecast; VulnCheck).
+Published counts for 2026 vary by source and date — these two are the ones the
+card cites, and nothing is rounded or embellished beyond what they say.
+
+## Beat 1 — The noise (0:14 – 0:20)
+
+**Screen:** terminal. Scroll the raw `vscan audit samples/acme-api` findings
+fast so the wall of CVEs flies past.
+
+> Here's that problem in one small Flask service: a hundred and forty-five
+> known CVEs, and no idea which of them matter.
 
 ## Beat 2 — The scan (0:14 – 0:40)
 
 **Screen:** `vscan audit samples/acme-api` — let it run live, it takes ~14s.
 Land on the Summary + Funnel lines.
 
-> VScan builds a call graph of the repo with tree-sitter, traces every public
-> route into your dependencies, and then runs taint analysis to see whether
-> attacker-controlled input actually reaches the vulnerable call.
+> VScan builds a call graph with tree-sitter, and traces every public route
+> into your dependencies, then runs taint analysis to see whether
+> attacker-controlled input reaches the vulnerable call.
 > Nineteen dependencies. A hundred and forty-five CVEs. Sixteen reachable.
-> Four where we confirmed the vulnerable function is really called. And one
-> that is genuinely exploitable.
+> One where the vulnerable function is really called — and that one is
+> exploitable.
+> Sixty-eight percent of call sites resolve; the rest are flagged, not
+> dismissed.
 
 ## Beat 3 — The graph, staged (0:40 – 1:36)
 
@@ -77,8 +97,7 @@ cue below.
 **Stage 3 — press → , funnel bar (1:25 – 1:36)**
 
 > A conventional scanner hands you a hundred and forty-five alerts. VScan
-> proves one is exploitable. That's a ninety-nine percent cut in what you have
-> to read.
+> proves one is exploitable.
 
 ## Beat 4 — Muse (1:36 – 2:21)
 
@@ -86,14 +105,21 @@ cue below.
 `likely_unaffected` triage entry in the terminal output (`requests` /
 CVE-2024-35195), then to `chat.html`.
 
-> That red card is an AI pen-tester's hypothesis — labelled unverified, and
-> here it independently lands on the same call. It's one of four layers running
-> on Meta's Muse Spark Open.
+> That red card is an AI pen-tester's hypothesis — labelled unverified, and it
+> lands on the same call. It's one of four layers running on Meta's Muse Spark
+> Open.
 > Muse triages every reachable CVE at symbol level — here it clears `requests`
-> CVE-2024-35195, because the project only calls `requests.post`, never a
-> `Session`, and Session pooling is what that CVE needs.
-> It also reads your docs to judge which routes are internet-facing, and
-> proposes call edges static analysis can't resolve.
+> CVE-2024-35195, because the project only calls `requests.post` and never
+> reuses a pooled `Session`, which is what that CVE needs.
+> And it only gets to say that when the CVE names a function the code
+> demonstrably never calls.
+
+**Screen:** switch to the **Plugin Reports** scan.
+
+> On a second project, it reads your docs to judge which routes are
+> internet-facing.
+> And where static analysis hits dynamic dispatch, Muse proposes the edges it
+> can't resolve — marked likely, never proven.
 > And you can just ask it.
 
 **Screen:** chat — send "What's actually exploitable in this project?"
@@ -109,19 +135,18 @@ let the tool-call list show under it.
 **Screen:** the generated PR comment markdown, then the SARIF in GitHub code
 scanning, then `--fail-on`.
 
-> It runs where you work. A GitHub Action posts the reachability-aware comment
-> on every pull request, uploads SARIF to code scanning, and
-> `--fail-on reachable` gates CI — so you block the build on an exploitable
-> path, not on a CVE count.
+> It runs where you work: a GitHub Action posts this comment on every pull
+> request, uploads SARIF to code scanning, and gates CI on an exploitable path,
+> not a CVE count.
 
 ## Beat 6 — Close (2:42 – 2:58)
 
 **Screen:** repo README, then the funnel one more time.
 
-> Everything here was built during the hackathon: the call-graph scanner, the
-> taint engine, the four Muse layers, the MCP server, the Action and this
-> dashboard. It's open source and it runs on your laptop.
-> One hundred and forty-five alerts in. One that matters out.
+> Everything here was built during the hackathon: the scanner, the taint
+> engine, the four Muse layers, the MCP server, the Action and this dashboard —
+> all open source.
+> A hundred and forty-five alerts in. One that matters out.
 
 ---
 

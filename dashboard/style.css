@@ -519,6 +519,7 @@ a { color: inherit; }
   border-radius: 0 var(--radius) var(--radius) 0;
 }
 .pop__fix b { color: var(--signal-ink); }
+.pop__ai { display: flex; flex-direction: column; gap: 0.6rem; margin-top: 0.35rem; padding-top: 0.85rem; border-top: 1px dashed var(--danger); }
 .pop__advisory { font-size: 0.68rem; color: var(--ink-mut); line-height: 1.4; margin: 0; font-style: italic; }
 
 .askbtn {

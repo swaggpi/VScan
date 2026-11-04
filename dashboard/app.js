@@ -1764,18 +1764,9 @@
     var worst = worstReachedVuln(n.id);
     var html = detailHead("entrypoint", label) + '<div class="pop">';
 
-    if (dsev && afs.length) {
-      // Lead with the AI code-level hypothesis — distinct magenta badge, clearly
-      // unverified. NEVER a proven verdict.
-      var topF = afs.slice().sort(cmpFinding)[0] || {};
-      var klass = topF.vuln_class || topF.title || "possible vulnerability";
-      html += popBadge("danger", "⚠ Code-level risk · AI (unverified)");
-      if (topF.title) html += '<p class="pop__title">' + esc(String(topF.title)) + '</p>';
-      html += '<p class="pop__line">An AI pen-tester flagged a candidate vulnerability in this ' +
-        'route’s own code. This is an <strong>unverified AI hypothesis</strong>, not a proven finding.</p>';
-      if (isPublic) html += '<p class="pop__line">This route is <strong>internet-facing</strong>.</p>';
-      html += askBtnHtml("Explain the code-level " + klass + " risk on " + route + " in " + repo);
-    } else if (worst) {
+    // DETERMINISTIC result first, always — independent of any AI overlay. The
+    // advisory AI section (if any) is appended BELOW it, never in place of it.
+    if (worst) {
       html += popBadge(worst.tainted ? "exploit" : "reach",
         worst.tainted ? "Exploitable" : "Reachable vulnerability");
       html += '<p class="pop__line">This route reaches <b>' + esc(worst.dep.name || worst.dep.id) + '</b>' +
@@ -1791,6 +1782,20 @@
         (isPublic ? 'This route is <strong>internet-facing</strong>. ' : '') +
         'No known-vulnerable dependency is reachable from this route.</p>';
       html += askBtnHtml("What is the attack surface of " + route + " in " + repo + "?");
+    }
+
+    if (dsev && afs.length) {
+      // ADVISORY AI code-level hypothesis — secondary, visually separated, clearly
+      // unverified. NEVER a proven verdict and never replaces the block above.
+      var topF = afs.slice().sort(cmpFinding)[0] || {};
+      var klass = topF.vuln_class || topF.title || "possible vulnerability";
+      html += '<div class="pop__ai">';
+      html += popBadge("danger", "⚠ Code-level risk · AI (unverified)");
+      if (topF.title) html += '<p class="pop__title">' + esc(String(topF.title)) + '</p>';
+      html += '<p class="pop__line">An AI pen-tester flagged a candidate vulnerability in this ' +
+        'route’s own code. This is an <strong>unverified AI hypothesis</strong>, not a proven finding.</p>';
+      html += askBtnHtml("Explain the code-level " + klass + " risk on " + route + " in " + repo);
+      html += '</div>';
     }
     return html + '</div>';
   }
@@ -3100,20 +3105,74 @@
         if (n >= 2 && !on) btn.click();            // same handler as the left-hand button
         else if (n < 2 && on && prev >= 2) btn.click(); // toggles selection back off
       }
-      followResize();
+      followResize(prev, n);
     }
     function step(d) { setStage(stage + d); }
 
-    // Layout reflows over the 0.6s transition; re-fit the graph on every frame
-    // (existing cy.resize + fit-to-spine) so it scales smoothly with its box
-    // instead of snapping once the transition ends.
-    function followResize() {
-      if (REDUCED) { if (cy) { cy.resize(); cy.fit(graphFitEles, GRAPH_PAD); } return; }
-      var t0 = performance.now();
-      (function frame() {
-        if (cy) { cy.resize(); cy.fit(graphFitEles, GRAPH_PAD); }
-        if (performance.now() - t0 < 700) requestAnimationFrame(frame);
-      })();
+    // The proof shot: at stage 2 (kept at 3) the camera zooms onto the traced path.
+    // The path is the existing trace() result for the selected entry point (the
+    // same set lightTrace lights), so nothing is recomputed here.
+    var DEMO_MS = 650, DEMO_ZOOM_MS = 1500, DEMO_PATH_PAD = 80, LABEL_PX = 15, motion = 0;
+    function pathEles() {
+      if (!cy || !selectedEp) return null;
+      var res = trace(selectedEp);
+      var nodes = cy.nodes().filter(function (n) { return res.nodes[n.id()]; });
+      var edges = cy.edges().filter(function (e) { return res.edges[e.data("tkey")]; });
+      return nodes.union(edges);
+    }
+    // Labels are 12 model units (~6px at the fitted zoom). Once the path's target
+    // zoom is known, size lit-node labels so they render at ~LABEL_PX on screen
+    // (demo mode only; the stylesheet cap does not apply to this override).
+    function fitZoom(eles, w, h, pad) {
+      var bb = eles.boundingBox({ includeLabels: false });
+      var z = Math.min((w - 2 * pad) / Math.max(bb.w, 1), (h - 2 * pad) / Math.max(bb.h, 1));
+      return Math.max(cy.minZoom(), Math.min(cy.maxZoom(), z));
+    }
+    function boostPathLabels(eles, w, h) {
+      var z = fitZoom(eles, w, h, DEMO_PATH_PAD);
+      cy.style().selector("node.lit").style({
+        "font-size": Math.max(12, LABEL_PX / z), "text-max-width": 380, "text-margin-y": 10 / z,
+        "text-background-color": "#0A1B2D", "text-background-opacity": 0.85,
+        "text-background-padding": 3 / z, "text-background-shape": "roundrectangle"
+      }).update();
+    }
+
+    // The grid layout reflows over a 0.6s CSS transition. Re-fitting every frame
+    // against a box that is still animating makes the camera jitter, so instead the
+    // container's FINAL size is measured once (running transitions are fast-forwarded,
+    // measured, then rewound) and a single eased zoom+pan is run towards the target
+    // viewport. `onPath` keeps the path framed (2 <-> 3); a 2 -> 1 move returns to
+    // the whole spine (graphFitEles). cy.resize() runs once, after the move. Reduced motion jumps
+    // straight to the target with no animation.
+    function followResize(from, to) {
+      var id = ++motion;
+      if (!cy) return;
+      cy.stop();
+      var zoomIn = from < 2 && to >= 2, zoomOut = from >= 2 && to < 2;
+      var onPath = from >= 2 && to >= 2;
+      var box = cy.container();
+      var trs = document.getAnimations().filter(function (a) {
+        return typeof CSSTransition !== "undefined" && a instanceof CSSTransition;
+      });
+      trs.forEach(function (a) { a.finish(); });
+      var w = box.clientWidth, h = box.clientHeight;
+      trs.forEach(function (a) { a.currentTime = 0; a.play(); });
+
+      var p = (zoomIn || onPath) ? pathEles() : null;
+      var usePath = !!(p && p.length), pad = usePath ? DEMO_PATH_PAD : GRAPH_PAD;
+      var tgt = usePath ? p : graphFitEles;
+      if (zoomIn && usePath) boostPathLabels(p, w, h);
+      // Label extents are excluded: lit labels grow progressively as the trace
+      // energizes, so including them would make the 2 -> 3 refit change the zoom.
+      // The pad leaves room for the (wide) boosted labels instead.
+      var bb = usePath ? tgt.boundingBox({ includeLabels: false }) : tgt.boundingBox();
+      var z = Math.min((w - 2 * pad) / Math.max(bb.w, 1), (h - 2 * pad) / Math.max(bb.h, 1));
+      z = Math.max(cy.minZoom(), Math.min(cy.maxZoom(), z));
+      var pan = { x: w / 2 - z * (bb.x1 + bb.x2) / 2, y: h / 2 - z * (bb.y1 + bb.y2) / 2 };
+      if (REDUCED) { cy.resize(); cy.viewport({ zoom: z, pan: pan }); return; }
+      var dur = zoomIn ? DEMO_ZOOM_MS : DEMO_MS;
+      cy.animate({ zoom: z, pan: pan }, { duration: dur, easing: "ease-in-out" });
+      setTimeout(function () { if (id === motion && cy) cy.resize(); }, dur + 80);
     }
 
     document.addEventListener("keydown", function (e) {

@@ -21,16 +21,20 @@ from __future__ import annotations
 import re
 
 # Generic trailing identifiers that, on their own, are too weak to treat as a
-# vulnerable-symbol match (they appear constantly in English/CVE prose). A bare
-# last component in this set never fires the AFFECTED trigger; the full dotted
-# symbol (e.g. "yaml.load") still does. The generous matcher (used only to
-# WITHHOLD a "safe" verdict) ignores this set, staying conservative.
+# vulnerable-symbol match (they appear constantly in English/CVE prose, and are
+# also common function names). A bare last component in this set never fires
+# the AFFECTED trigger; the full dotted symbol (e.g. "yaml.load") still does.
+# The generous matcher (used only to WITHHOLD a "safe" verdict) ignores this
+# set, staying conservative.
 _GENERIC_TOKENS = frozenset(
     {
         "get", "set", "put", "post", "open", "read", "write", "load", "dump",
         "run", "call", "make", "use", "add", "new", "init", "close", "send",
         "list", "copy", "parse", "data", "value", "object", "request",
         "response", "handler", "main", "start", "stop", "update",
+        "escape", "render", "filter", "format", "select", "sanitize", "quote",
+        "unquote", "encode", "decode", "join", "split", "resolve", "execute",
+        "sandbox", "verify", "validate", "serialize", "deserialize",
     }
 )
 
@@ -50,10 +54,12 @@ def _symbol_tokens(symbol: str, *, strict: bool) -> set[str]:
     """Candidate text tokens that represent ``symbol`` in CVE prose.
 
     Always includes the full dotted symbol (``yaml.load``) and its last two
-    components (``Image.open``). The bare final component (``load``, ``open``) is
-    included only in the GENEROUS mode, because on its own it is too generic to
-    be a reliable AFFECTED trigger -- but it is a fine reason to WITHHOLD a
-    "safe" verdict (the conservative direction).
+    components (``Image.open``). The bare final component (``load``, ``open``)
+    is always included in the GENEROUS mode (a fine reason to WITHHOLD a "safe"
+    verdict -- the conservative direction). In STRICT mode it is a *candidate*
+    only when >=4 chars and not in ``_GENERIC_TOKENS``; even then it must also
+    be distinctive in the advisory text (see :func:`_bare_token_fires`), which
+    :func:`_match_called_symbol` enforces because it depends on the text.
     """
     parts = symbol.split(".")
     tokens: set[str] = {symbol.lower()}
@@ -74,18 +80,38 @@ def _token_in_text(token: str, lower_text: str) -> bool:
     return re.search(r"\b" + re.escape(token) + r"\b", lower_text) is not None
 
 
+def _bare_token_fires(token: str, lower_text: str) -> bool:
+    """Whether a bare final component may fire the STRICT trigger in this text.
+
+    Only when it is identifier-like rather than an ordinary English word:
+    (a) it contains an underscore or digit (``full_load``, ``b64decode``), or
+    (b) the text uses it in explicit function form -- as the tail of a dotted
+    path (``jinja2.escape``) or followed by ``()`` (``escape()``).
+    """
+    if "_" in token or any(c.isdigit() for c in token):
+        return True
+    esc = re.escape(token)
+    return re.search(r"\b\w+\." + esc + r"\b|\b" + esc + r"\s*\(\)", lower_text) is not None
+
+
 def _match_called_symbol(
     called_symbols: list[str], lower_text: str, *, strict: bool
 ) -> tuple[str, str] | None:
     """First ``(symbol, matched_token)`` whose token occurs in ``lower_text``.
 
     Longer tokens are tried first so the most specific match (the full dotted
-    symbol) is preferred and cited.
+    symbol) is preferred and cited. In strict mode a bare final component must
+    additionally pass :func:`_bare_token_fires`.
     """
     for symbol in called_symbols:
+        bare = symbol.split(".")[-1].lower()
+        dotted = {symbol.lower(), ".".join(symbol.split(".")[-2:]).lower()}
         for token in sorted(_symbol_tokens(symbol, strict=strict), key=len, reverse=True):
-            if _token_in_text(token, lower_text):
-                return symbol, token
+            if not _token_in_text(token, lower_text):
+                continue
+            if strict and token == bare and token not in dotted and not _bare_token_fires(token, lower_text):
+                continue
+            return symbol, token
     return None
 
 
@@ -109,8 +135,10 @@ def advisory_matches_called_symbol(called_symbols: list[str], text: str) -> bool
     """Whether any ``called_symbols`` entry is the advisory's named sink.
 
     Uses the STRICT token set (the full dotted symbol, its last two components,
-    and a non-generic >=4-char final component) so this positive claim -- "the
-    vulnerable function is actually called" -- stays conservative and never
-    fires on a generic word shared with the prose.
+    and a non-generic >=4-char final component that is also distinctive in the
+    text: underscore/digit-bearing, or written in function form such as
+    ``mod.name`` / ``name()``) so this positive claim -- "the vulnerable
+    function is actually called" -- stays conservative and never fires on an
+    ordinary English word shared with the prose (e.g. "sandbox escape").
     """
     return _match_called_symbol(called_symbols, text.lower(), strict=True) is not None

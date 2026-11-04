@@ -24,7 +24,7 @@ Reachability is a **lower bound**: VScan only follows call edges it can resolve,
 `vscan audit samples/acme-api` on the bundled sample service:
 
 ```
-Funnel: 19 deps · 145 known CVEs · 16 reachable · 4 vulnerable-function confirmed · 1 exploitable
+Funnel: 19 deps · 145 known CVEs · 16 reachable · 1 vulnerable-function confirmed · 1 exploitable
 
  6. PyYAML 5.3.1 [PyPI] -- CVE-2020-14343
     severity: CRITICAL   EPSS 0.060
