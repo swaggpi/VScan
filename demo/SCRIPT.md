@@ -1,6 +1,6 @@
 # VScan — 3-minute demo script
 
-**2:51.** 316 words at ~111 wpm — paced to be read aloud comfortably, with the
+**2:51.** 355 words at ~125 wpm — paced to be read aloud comfortably, with the
 emphasis lines (PyYAML, "genuinely exploitable") deliberately slow.
 
 `demo/teleprompter.html` is the source of truth for wording and timing; this
@@ -33,11 +33,11 @@ card cites only those two and rounds nothing.
 
 **0:00 — CARD · the AI-CVE surge**
 
-> Sixty-six thousand CVEs this year. Double last year.
+> Sixty-six thousand CVEs this year — about double last year.
 
 > AI finds them faster than anyone can triage.
 
-> But volume isn't risk. Which one reaches your code?
+> But volume isn't risk. Which one actually reaches your code?
 
 
 ## Beat 1 · the noise  (0:14 – 0:20)
@@ -53,28 +53,28 @@ card cites only those two and rounds nothing.
 
 > VScan builds a call graph with tree-sitter, and traces every public route into your dependencies,
 
-> then checks whether attacker input actually reaches the vulnerable call.
+> then runs taint analysis to see whether attacker input reaches the vulnerable call.
 
 **0:33 — LAND ON · the Funnel line**
 
-> Nineteen dependencies. A hundred and forty-five CVEs. Sixteen reachable.
+> Nineteen dependencies. A hundred and forty-five known CVEs. Sixteen of them reachable.
 
-> One of them is genuinely exploitable.
+> And exactly one of them turns out to be genuinely exploitable.
 
-> Sixty-eight percent of call sites resolve.
+> Sixty-eight percent of call sites resolve, never guessed.
 
 
 ## Beat 3 · the graph  (0:48 – 1:32)
 
 **0:48 — SWITCH · dashboard ?demo=1 (stage 0)**
 
-> This is the whole attack surface — entry points, your functions, your dependencies.
+> This is the whole attack surface: public entry points on the left, your functions, dependencies on the right.
 
 **0:56 — PRESS → · left panel in**
 
-> Ten public routes reach a vulnerable package.
+> Ten of those public routes reach a vulnerable package.
 
-> These are worth your afternoon.
+> These are the ones worth your afternoon.
 
 **1:03 — PRESS → · drawer + path**
 
@@ -82,7 +82,7 @@ card cites only those two and rounds nothing.
 
 > hands it down two service layers, and calls yaml.full_load on it.
 
-> PyYAML 5.3.1. Arbitrary code execution.
+> That's PyYAML 5.3.1, CVE-2020-14343 — arbitrary code execution.
 
 > That chain is the proof — attacker input to vulnerable call, straight from the call graph.
 
@@ -97,13 +97,13 @@ card cites only those two and rounds nothing.
 
 > That red card is an AI pen-tester's hypothesis — unverified, and it lands on the same call.
 
-> One of four Muse Spark Open layers.
+> One of four layers on Meta's Muse Spark Open.
 
 **1:43 — SWITCH · triage output in terminal**
 
 > Muse triages every reachable CVE — here it clears requests CVE-2024-35195,
 
-> because the project only calls requests.post, never a pooled Session.
+> because the project only ever calls requests.post, and never reuses a pooled Session.
 
 > Only when the CVE names a function you never call.
 
@@ -121,16 +121,16 @@ card cites only those two and rounds nothing.
 
 > Muse answers by calling VScan's own tools over MCP, showing every call.
 
-> The model advises. The static analysis decides.
+> Nothing it says changes a verdict. The model only advises.
 
 
 ## Beat 5 · shipping it  (2:28 – 2:38)
 
 **2:28 — SWITCH · PR comment**
 
-> A GitHub Action posts this on every pull request,
+> A GitHub Action posts this comment on every pull request,
 
-> uploads SARIF, and gates CI on an exploitable path.
+> uploads SARIF to code scanning, and gates CI on exploitable paths.
 
 
 ## Beat 6 · close  (2:38 – 2:51)
