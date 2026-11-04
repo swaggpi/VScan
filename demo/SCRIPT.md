@@ -1,6 +1,6 @@
 # VScan — 3-minute demo script
 
-**2:51.** 320 words at ~112 wpm — paced to be read aloud comfortably, with the
+**2:51.** 316 words at ~111 wpm — paced to be read aloud comfortably, with the
 emphasis lines (PyYAML, "genuinely exploitable") deliberately slow.
 
 `demo/teleprompter.html` is the source of truth for wording and timing; this
@@ -33,11 +33,11 @@ card cites only those two and rounds nothing.
 
 **0:00 — CARD · the AI-CVE surge**
 
-> AI is finding flaws faster than anyone can triage them.
+> Sixty-six thousand CVEs this year. Double last year.
 
-> But volume isn't risk. Almost none are ever exploited.
+> AI finds them faster than anyone can triage.
 
-> The hard part is knowing which one reaches your code.
+> But volume isn't risk. Which one reaches your code?
 
 
 ## Beat 1 · the noise  (0:14 – 0:20)
