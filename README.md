@@ -113,6 +113,12 @@ Built for the Meta Global AI Developer Hackathon. The repository starts from an 
 - OSV matching needs exact pinned versions. Unpinned dependencies are reported as skipped, not as clean.
 - The AI layers are advisory and can be wrong. They are labelled as such everywhere they appear, and they cannot change a verdict.
 
+## Demo
+
+`demo/demo.mp4` — a 2:56 walkthrough: the scan, the proven attack path, the
+four Muse layers, the MCP chat, and the GitHub Action. `demo/SCRIPT.md` is the
+narration, and `demo/teleprompter.html` is the tool it was read from.
+
 ## Self-scan
 
 VScan runs against its own repository on every pull request and on pushes to
