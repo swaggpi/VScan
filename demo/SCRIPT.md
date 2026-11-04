@@ -1,13 +1,15 @@
 # VScan — 3-minute demo script
 
-Target: **2:51**. Hard limit 3:00. ~430 words at ~150 wpm.
+**2:51.** 320 words at ~112 wpm — paced to be read aloud comfortably, with the
+emphasis lines (PyYAML, "genuinely exploitable") deliberately slow.
 
-Segment boundaries (the recorded clips line up with these):
+`demo/teleprompter.html` is the source of truth for wording and timing; this
+file is generated from it. Open the teleprompter in a browser and press Space
+to run it, or read along with `demo-karaoke.mp4`, which has the same lines
+burned in.
+
+The recorded clips line up with these segment boundaries:
 `seg0 0:00–0:14 (intro card) · seg1 0:14–0:48 · seg2 0:48–1:43 · seg3 1:43–2:01 · seg7 2:01–2:14 (Plugin Reports) · seg4 2:14–2:28 (chat) · seg5 2:28–2:38 · seg6 2:38–2:51`
-
-Read the voiceover from `demo/teleprompter.html` (open it in a browser, press
-Space to start). Every number below is from a real run on `samples/acme-api`;
-re-run before recording so what is on screen matches what is said.
 
 ## Setup before recording
 
@@ -19,163 +21,148 @@ python3 demo/serve.py                                                           
 
 Wait for `curl localhost:8080/api/health` to report `"status":"ready"` **and**
 `/api/attack-surface` to stop returning 503 — the AI overlays warm for ~2 min
-after startup. Record at 1600×900.
+after startup. Record at 1600x900.
 
-Terminal: large font, dark background, nothing but the prompt.
+The two figures on the intro card are attributed on screen (FIRST's 2026
+forecast; VulnCheck). Published 2026 CVE counts vary by source and date — the
+card cites only those two and rounds nothing.
 
 ---
 
-## Beat 0 — Why now (0:00 – 0:14)
+## Beat 0 · why now  (0:00 – 0:14)
 
-**Screen:** a still, typographic card. Three statements fade in one after
-another and stay. Sources shown small and dim beneath each.
+**0:00 — CARD · the AI-CVE surge**
 
-> AI is finding vulnerabilities faster than anyone can triage them. Twenty
-> twenty-six is on track for about sixty-six thousand CVEs — roughly double
-> last year.
-> But volume isn't risk. Of a thousand AI-assisted findings, fourteen were ever
-> seen exploited.
-> So the hard part isn't finding flaws any more. It's knowing which one reaches
-> your code — and turns a request into a shell.
+> AI is finding flaws faster than anyone can triage them.
 
-The two figures are attributed on screen (FIRST's 2026 forecast; VulnCheck).
-Published counts for 2026 vary by source and date — these two are the ones the
-card cites, and nothing is rounded or embellished beyond what they say.
+> But volume isn't risk. Almost none are ever exploited.
 
-## Beat 1 — The noise (0:14 – 0:20)
+> The hard part is knowing which one reaches your code.
 
-**Screen:** terminal. Scroll the raw `vscan audit samples/acme-api` findings
-fast so the wall of CVEs flies past.
 
-> Here's that problem in one small Flask service: a hundred and forty-five
-> known CVEs, and no idea which of them matter.
+## Beat 1 · the noise  (0:14 – 0:20)
 
-## Beat 2 — The scan (0:14 – 0:40)
+**0:14 — TERMINAL · scroll the CVE wall**
 
-**Screen:** `vscan audit samples/acme-api` — let it run live, it takes ~14s.
-Land on the Summary + Funnel lines.
+> Here's one small Flask service. A hundred and forty-five known CVEs.
 
-> VScan builds a call graph with tree-sitter, and traces every public route
-> into your dependencies, then runs taint analysis to see whether
-> attacker-controlled input reaches the vulnerable call.
+
+## Beat 2 · the scan  (0:20 – 0:48)
+
+**0:20 — RUN · vscan audit samples/acme-api**
+
+> VScan builds a call graph with tree-sitter, and traces every public route into your dependencies,
+
+> then checks whether attacker input actually reaches the vulnerable call.
+
+**0:33 — LAND ON · the Funnel line**
+
 > Nineteen dependencies. A hundred and forty-five CVEs. Sixteen reachable.
-> One where the vulnerable function is really called — and that one is
-> exploitable.
-> Sixty-eight percent of call sites resolve; the rest are flagged, not
-> dismissed.
 
-## Beat 3 — The graph, staged (0:40 – 1:36)
+> One of them is genuinely exploitable.
 
-**Screen:** `http://localhost:8080/index.html?demo=1`. Advance with → on each
-cue below.
+> Sixty-eight percent of call sites resolve.
 
-**Stage 0 — graph only (0:40 – 0:55)**
 
-> This is the whole attack surface. Public entry points on the left, your
-> functions in the middle, dependencies on the right. Grey means a package has
-> a CVE that nothing reaches.
+## Beat 3 · the graph  (0:48 – 1:32)
 
-**Stage 1 — press → , left panel (0:55 – 1:08)**
+**0:48 — SWITCH · dashboard ?demo=1 (stage 0)**
 
-> Ten public routes do reach a vulnerable package. These are the ones worth
-> your afternoon — everything else is noise.
+> This is the whole attack surface — entry points, your functions, your dependencies.
 
-**Stage 2 — press → , right drawer + highlighted path (1:08 – 1:25)**
+**0:56 — PRESS → · left panel in**
 
-> Here's the one that matters. `POST /documents/import` takes the request body,
-> hands it through two service layers into a config loader, and calls
-> `yaml.full_load` on it — PyYAML 5.3.1, CVE-2020-14343, arbitrary code
-> execution. That chain is the proof: attacker input to vulnerable call,
-> rendered straight from the call graph.
+> Ten public routes reach a vulnerable package.
 
-> **Note:** once the AI layer has warmed, the drawer's top card is the *AI
-> pen-tester hypothesis*, labelled unverified — not the deterministic verdict.
-> So don't say "that's not a guess" here; the proof you're pointing at is the
-> highlighted chain in the graph and the `EXPLOITABLE` badge in the left rail.
-> Beat 4 picks that card up deliberately.
+> These are worth your afternoon.
 
-**Stage 3 — press → , funnel bar (1:25 – 1:36)**
+**1:03 — PRESS → · drawer + path**
 
-> A conventional scanner hands you a hundred and forty-five alerts. VScan
-> proves one is exploitable.
+> Here's the one that matters. POST /documents/import takes the request body,
 
-## Beat 4 — Muse (1:36 – 2:21)
+> hands it down two service layers, and calls yaml.full_load on it.
 
-**Screen:** hold on the drawer's AI card for the first two lines, then cut to a
-`likely_unaffected` triage entry in the terminal output (`requests` /
-CVE-2024-35195), then to `chat.html`.
+> PyYAML 5.3.1. Arbitrary code execution.
 
-> That red card is an AI pen-tester's hypothesis — labelled unverified, and it
-> lands on the same call. It's one of four layers running on Meta's Muse Spark
-> Open.
-> Muse triages every reachable CVE at symbol level — here it clears `requests`
-> CVE-2024-35195, because the project only calls `requests.post` and never
-> reuses a pooled `Session`, which is what that CVE needs.
-> And it only gets to say that when the CVE names a function the code
-> demonstrably never calls.
+> That chain is the proof — attacker input to vulnerable call, straight from the call graph.
 
-**Screen:** switch to the **Plugin Reports** scan.
+**1:25 — PRESS → · funnel bar in**
 
-> On a second project, it reads your docs to judge which routes are
-> internet-facing.
-> And where static analysis hits dynamic dispatch, Muse proposes the edges it
-> can't resolve — marked likely, never proven.
+> A conventional scanner hands you a hundred and forty-five alerts. VScan proves one.
+
+
+## Beat 4 · Muse  (1:32 – 2:28)
+
+**1:32 — HOLD · the drawer's AI card**
+
+> That red card is an AI pen-tester's hypothesis — unverified, and it lands on the same call.
+
+> One of four Muse Spark Open layers.
+
+**1:43 — SWITCH · triage output in terminal**
+
+> Muse triages every reachable CVE — here it clears requests CVE-2024-35195,
+
+> because the project only calls requests.post, never a pooled Session.
+
+> Only when the CVE names a function you never call.
+
+**2:01 — SWITCH · Plugin Reports scan**
+
+> On a second project, it reads the docs to judge exposure.
+
+> And where static analysis hits dynamic dispatch, Muse proposes the edges it can't resolve. Likely, never proven.
+
+**2:14 — SWITCH · chat.html, send the question**
+
 > And you can just ask it.
 
-**Screen:** chat — send "What's actually exploitable in this project?"
-**Cut here.** The answer takes ~65 seconds; jump-cut to the rendered reply and
-let the tool-call list show under it.
+**2:17 — CUT · jump to the rendered answer**
 
-> Muse answers by calling VScan's own tools over MCP, and it shows you every
-> call it made. Nothing it says can change a verdict — the model advises, the
-> static analysis decides.
+> Muse answers by calling VScan's own tools over MCP, showing every call.
 
-## Beat 5 — Shipping it (2:18 – 2:42)
+> The model advises. The static analysis decides.
 
-**Screen:** the generated PR comment markdown, then the SARIF in GitHub code
-scanning, then `--fail-on`.
 
-> It runs where you work: a GitHub Action posts this comment on every pull
-> request, uploads SARIF to code scanning, and gates CI on an exploitable path,
-> not a CVE count.
+## Beat 5 · shipping it  (2:28 – 2:38)
 
-## Beat 6 — Close (2:42 – 2:58)
+**2:28 — SWITCH · PR comment**
 
-**Screen:** repo README, then the funnel one more time.
+> A GitHub Action posts this on every pull request,
 
-> Everything here was built during the hackathon: the scanner, the taint
-> engine, the four Muse layers, the MCP server, the Action and this dashboard —
-> all open source.
+> uploads SARIF, and gates CI on an exploitable path.
+
+
+## Beat 6 · close  (2:38 – 2:51)
+
+**2:38 — SWITCH · README**
+
+> All of this was built during the hackathon — scanner, taint engine, Muse layers, MCP server, dashboard.
+
+**2:46 — SWITCH · the funnel, hold**
+
 > A hundred and forty-five alerts in. One that matters out.
+
 
 ---
 
-## Capturing it
+## Recording the voiceover
 
-Record at 1600×900 so the dashboard matches what the script was timed against.
-Put the teleprompter on a second screen (or a phone) — not in the captured area.
-
-Screen + mic in one pass, with ffmpeg:
+Play `demo-karaoke.mp4` and read the lines as they highlight; the clock in the
+corner keeps you honest. Record the audio separately, then mux:
 
 ```sh
-ffmpeg -video_size 1600x900 -framerate 30 -f x11grab -i :0.0+0,0 \
-       -f pulse -i default \
-       -c:v libx264 -preset veryfast -crf 18 -pix_fmt yuv420p \
-       -c:a aac -b:a 192k demo-take.mp4
+arecord -D plughw:5,0 -f cd -c 1 voice.wav     # pick your mic with `arecord -l`
+ffmpeg -i demo-clean.mp4 -i voice.wav -c:v copy -c:a aac -b:a 192k -shortest final.mp4
 ```
 
-Adjust `+0,0` to the window's top-left corner. If the voiceover is recorded
-separately, drop the `-f pulse -i default` and `-c:a`/`-b:a` pair and mux the
-audio afterwards.
+Check sync at the three context switches: 0:14 (card to terminal), 1:43
+(dashboard to triage), 2:14 (plugin to chat).
 
-Record Beat 4's chat answer as its own take (see the latency note below) and
-cut the two together.
+## Notes
 
-## Recording notes
-
-- The 66s chat latency is the one thing that cannot be shown in real time.
-  Record it as its own take and jump-cut; don't speed-ramp the typing, it looks
-  fake.
+- The chat answer takes ~70s in reality. The cut jumps from the sent question
+  to the rendered reply; that is a deliberate jump cut, not a trim of the wait.
 - `/api/attack-surface` returns 503 while the AI layer warms. If the legend's
   AI states are missing from the graph, you started recording too early.
 - `vscan audit` is ~14s warm, ~50s cold — OSV results cache for 7 days, so do a
